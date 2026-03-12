@@ -9,12 +9,11 @@ import { PageTitle } from "@/components/shared/PageTitle";
 export function Account() {
   const { user, updateUser, logout, toast } = useAuth();
   const { isMobile } = useBreakpoint();
+  const [name, setName] = useState(user?.name || "");
+  const [goal, setGoal] = useState(user?.goal || "");
+  const [level, setLevel] = useState(user?.level || "");
 
   if (!user) return null;
-
-  const [name, setName] = useState(user.name);
-  const [goal, setGoal] = useState(user.goal);
-  const [level, setLevel] = useState(user.level);
 
   const save = async () => {
     await updateUser({ ...user, name, goal, level });
