@@ -1,5 +1,18 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import { auth, fetchUser, saveUser, onAuthStateChanged, signOut as fbSignOut } from "@/lib/firebase";
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  type ReactNode,
+} from "react";
+import {
+  auth,
+  fetchUser,
+  saveUser,
+  onAuthStateChanged,
+  signOut as fbSignOut,
+} from "@/lib/firebase";
 
 export interface MK2User {
   uid: string;
@@ -15,6 +28,17 @@ export interface MK2User {
   points: number;
   createdAt: number;
 }
+
+// Ensures arrays are never undefined — fixes "Cannot read filter of undefined"
+const normalizeUser = (data: any): MK2User => ({
+  ...data,
+  workouts: Array.isArray(data.workouts) ? data.workouts : [],
+  bookings: Array.isArray(data.bookings) ? data.bookings : [],
+  weights: Array.isArray(data.weights) ? data.weights : [],
+  checkIns: Array.isArray(data.checkIns) ? data.checkIns : [],
+  points: data.points ?? 0,
+  createdAt: data.createdAt ?? Date.now(),
+});
 
 interface AuthContextType {
   user: MK2User | null;
@@ -32,13 +56,16 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<MK2User | null>(null);
   const [booting, setBooting] = useState(true);
-  const [toastData, setToastData] = useState<{ msg: string; type: string } | null>(null);
+  const [toastData, setToastData] = useState<{
+    msg: string;
+    type: string;
+  } | null>(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         const data = await fetchUser(fbUser.uid);
-        if (data) setUser(data as MK2User);
+        if (data) setUser(normalizeUser(data));
         else setUser(null);
       } else {
         setUser(null);
@@ -49,8 +76,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateUser = useCallback(async (u: MK2User) => {
-    await saveUser(u.uid, u);
-    setUser(u);
+    const normalized = normalizeUser(u);
+    await saveUser(u.uid, normalized);
+    setUser(normalized);
   }, []);
 
   const logout = useCallback(async () => {
@@ -65,7 +93,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearToast = useCallback(() => setToastData(null), []);
 
   return (
-    <AuthContext.Provider value={{ user, booting, setUser, updateUser, logout, toast, toastData, clearToast }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        booting,
+        setUser,
+        updateUser,
+        logout,
+        toast,
+        toastData,
+        clearToast,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

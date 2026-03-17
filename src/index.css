@@ -1,8 +1,8 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Lato:wght@400;700;900&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;600;700&display=swap');
 
 @layer base {
   :root {
@@ -49,9 +49,19 @@
     --mk2-red: 0 84% 51%;
     --mk2-gold: 38 92% 44%;
 
-    /* Fonts */
-    --font-display: 'Bebas Neue', Impact, sans-serif;
-    --font-body: 'DM Sans', system-ui, sans-serif;
+    /* Fonts — Barlow Condensed for display, Lato for body */
+    --font-display: "Barlow Condensed", Impact, sans-serif;
+    --font-body: "Lato", system-ui, sans-serif;
+
+    /* Type scale */
+    --text-main-title: 30px;
+    --text-h1: 24px;
+    --text-h2: 18px;
+    --text-h3: 18px;
+    --text-h4: 16px;
+    --text-h5: 14px;
+    --text-h6: 12px;
+    --text-body: 16px;
 
     /* Shadows */
     --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.4);
@@ -79,6 +89,49 @@
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-body);
+    font-size: var(--text-body);
+    font-weight: 400;
+    line-height: 1.6;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: var(--text-h1);
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: 0.04em;
+  }
+  h2 {
+    font-family: var(--font-display);
+    font-size: var(--text-h2);
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.03em;
+  }
+  h3 {
+    font-family: var(--font-display);
+    font-size: var(--text-h3);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: 0.03em;
+  }
+  h4 {
+    font-family: var(--font-body);
+    font-size: var(--text-h4);
+    font-weight: 400;
+    line-height: 1.4;
+  }
+  h5 {
+    font-family: var(--font-body);
+    font-size: var(--text-h5);
+    font-weight: 400;
+    line-height: 1.4;
+  }
+  h6 {
+    font-family: var(--font-body);
+    font-size: var(--text-h6);
+    font-weight: 400;
+    line-height: 1.4;
   }
 
   ::-webkit-scrollbar {
@@ -95,19 +148,27 @@
   select option {
     background: hsl(var(--surface-high));
   }
-
   input::placeholder {
     color: hsl(var(--dim));
   }
 }
 
 @layer components {
+  .mk2-title {
+    font-family: var(--font-display);
+    font-size: var(--text-main-title);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: 0.05em;
+  }
+
   .mk2-card {
     @apply bg-card border border-border rounded-xl p-5;
   }
 
   .mk2-input {
     @apply w-full bg-secondary border border-input rounded-lg px-3.5 py-2.5 text-foreground text-sm outline-none font-body transition-colors duration-200;
+    font-size: var(--text-h5);
   }
 
   .mk2-input:focus {
@@ -134,6 +195,7 @@
     @apply border border-primary/25 rounded-xl p-4 mt-3.5 font-body text-sm leading-relaxed whitespace-pre-wrap min-h-[60px];
     background: hsl(0 0% 3%);
     color: #ccc;
+    font-size: var(--text-h5);
   }
 }
 
@@ -144,30 +206,92 @@
   .font-body {
     font-family: var(--font-body);
   }
+  .text-main-title {
+    font-family: var(--font-display);
+    font-size: var(--text-main-title);
+    font-weight: 800;
+    letter-spacing: 0.05em;
+  }
+  .text-h1 {
+    font-family: var(--font-display);
+    font-size: var(--text-h1);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+  .text-h2 {
+    font-family: var(--font-display);
+    font-size: var(--text-h2);
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .text-h3 {
+    font-family: var(--font-display);
+    font-size: var(--text-h3);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+  }
+  .text-h4 {
+    font-family: var(--font-body);
+    font-size: var(--text-h4);
+    font-weight: 400;
+  }
+  .text-h5 {
+    font-family: var(--font-body);
+    font-size: var(--text-h5);
+    font-weight: 400;
+  }
+  .text-h6 {
+    font-family: var(--font-body);
+    font-size: var(--text-h6);
+    font-weight: 400;
+  }
 }
 
 /* Animations */
 @keyframes slideUp {
-  from { transform: translateY(16px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
-
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
-
 @keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
-
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
-
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 hsl(20 100% 50% / 0.4); }
-  50% { box-shadow: 0 0 20px 4px hsl(20 100% 50% / 0.2); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 hsl(20 100% 50% / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px 4px hsl(20 100% 50% / 0.2);
+  }
 }

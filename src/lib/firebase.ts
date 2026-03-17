@@ -8,16 +8,20 @@ import {
   onAuthStateChanged,
 } from "firebase/auth";
 import {
-  getFirestore,
-  doc,
-  setDoc,
-  getDoc,
-} from "firebase/firestore";
+  getDatabase,
+  ref,
+  set,
+  get,
+  update,
+  remove,
+  push,
+} from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBmT8tgFZIjz6f6xIAyCTiq-ChETClnC4w",
   authDomain: "gym-pro-20ee6.firebaseapp.com",
-  databaseURL: "https://gym-pro-20ee6-default-rtdb.europe-west1.firebasedatabase.app",
+  databaseURL:
+    "https://gym-pro-20ee6-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "gym-pro-20ee6",
   storageBucket: "gym-pro-20ee6.firebasestorage.app",
   messagingSenderId: "816966119755",
@@ -28,18 +32,36 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const analytics = getAnalytics(firebaseApp);
 const auth = getAuth(firebaseApp);
-const db = getFirestore(firebaseApp);
-
-// Firestore helpers
-const getUserDoc = (uid: string) => doc(db, "users", uid);
+const db = getDatabase(firebaseApp);
 
 const fetchUser = async (uid: string) => {
-  const s = await getDoc(getUserDoc(uid));
-  return s.exists() ? s.data() : null;
+  const snap = await get(ref(db, `mk2_users/${uid}`));
+  return snap.exists() ? snap.val() : null;
 };
 
 const saveUser = async (uid: string, data: any) => {
-  await setDoc(getUserDoc(uid), data, { merge: true });
+  await set(ref(db, `mk2_users/${uid}`), data);
+};
+
+const fetchCollection = async (path: string) => {
+  const snap = await get(ref(db, path));
+  if (!snap.exists()) return [];
+  const val = snap.val();
+  return Object.entries(val).map(([id, data]: any) => ({ id, ...data }));
+};
+
+const addToCollection = async (path: string, data: any) => {
+  const newRef = push(ref(db, path));
+  await set(newRef, { ...data, createdAt: Date.now() });
+  return newRef.key;
+};
+
+const updateInCollection = async (path: string, id: string, data: any) => {
+  await update(ref(db, `${path}/${id}`), { ...data, updatedAt: Date.now() });
+};
+
+const deleteFromCollection = async (path: string, id: string) => {
+  await remove(ref(db, `${path}/${id}`));
 };
 
 const logEvent = (event: string, params?: Record<string, any>) => {
@@ -54,8 +76,18 @@ export {
   fetchUser,
   saveUser,
   logEvent,
+  fetchCollection,
+  addToCollection,
+  updateInCollection,
+  deleteFromCollection,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  ref,
+  set,
+  get,
+  update,
+  remove,
+  push,
 };
