@@ -1,3 +1,4 @@
+/* ── FONTS — must be first line before @tailwind ── */
 @import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Lato:wght@400;700;900&display=swap");
 
 @tailwind base;
@@ -6,54 +7,38 @@
 
 @layer base {
   :root {
+    /* ── Dark mode (default) ── */
     --background: 0 0% 3%;
     --foreground: 0 0% 94%;
-
     --card: 0 0% 6%;
     --card-foreground: 0 0% 94%;
-
     --popover: 0 0% 6%;
     --popover-foreground: 0 0% 94%;
-
     --primary: 20 100% 50%;
     --primary-foreground: 0 0% 0%;
-
     --secondary: 0 0% 9%;
     --secondary-foreground: 0 0% 94%;
-
     --muted: 0 0% 9%;
     --muted-foreground: 0 0% 35%;
-
     --accent: 20 100% 62%;
     --accent-foreground: 0 0% 0%;
-
     --destructive: 0 84% 51%;
     --destructive-foreground: 0 0% 100%;
-
     --border: 0 0% 11%;
     --input: 0 0% 15%;
     --ring: 20 100% 50%;
-
     --radius: 0.75rem;
-
-    /* Custom MK2 tokens */
     --surface: 0 0% 6%;
     --surface-high: 0 0% 9%;
     --border-bright: 0 0% 15%;
     --dim: 0 0% 22%;
-
-    /* Accent palette */
     --mk2-green: 142 72% 37%;
     --mk2-blue: 217 91% 53%;
     --mk2-purple: 263 85% 58%;
     --mk2-red: 0 84% 51%;
     --mk2-gold: 38 92% 44%;
-
-    /* Fonts — Barlow Condensed for display, Lato for body */
-    --font-display: "Barlow Condensed", Impact, sans-serif;
+    --font-display: "University", "Barlow Condensed", Impact, sans-serif;
     --font-body: "Lato", system-ui, sans-serif;
-
-    /* Type scale */
     --text-main-title: 30px;
     --text-h1: 24px;
     --text-h2: 18px;
@@ -62,12 +47,9 @@
     --text-h5: 14px;
     --text-h6: 12px;
     --text-body: 16px;
-
-    /* Shadows */
     --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.4);
     --shadow-elevated: 0 32px 80px rgba(0, 0, 0, 0.7);
     --shadow-glow: 0 0 40px hsl(20 100% 50% / 0.15);
-
     --sidebar-background: 0 0% 4%;
     --sidebar-foreground: 0 0% 94%;
     --sidebar-primary: 20 100% 50%;
@@ -76,6 +58,47 @@
     --sidebar-accent-foreground: 0 0% 94%;
     --sidebar-border: 0 0% 11%;
     --sidebar-ring: 20 100% 50%;
+  }
+
+  /* ── Light mode ── */
+  .light,
+  [data-theme="light"] {
+    --background: 0 0% 97%;
+    --foreground: 0 0% 8%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 8%;
+    --primary: 20 90% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 94%;
+    --secondary-foreground: 0 0% 12%;
+    --muted: 0 0% 94%;
+    --muted-foreground: 0 0% 40%;
+    --accent: 20 80% 48%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 88%;
+    --input: 0 0% 92%;
+    --ring: 20 90% 42%;
+    --surface: 0 0% 96%;
+    --surface-high: 0 0% 92%;
+    --border-bright: 0 0% 80%;
+    --dim: 0 0% 60%;
+    --mk2-green: 142 60% 32%;
+    --mk2-blue: 217 80% 46%;
+    --mk2-purple: 263 75% 50%;
+    --mk2-red: 0 72% 46%;
+    --mk2-gold: 38 85% 40%;
+    --sidebar-background: 0 0% 96%;
+    --sidebar-foreground: 0 0% 8%;
+    --sidebar-primary: 20 90% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 92%;
+    --sidebar-accent-foreground: 0 0% 8%;
+    --sidebar-border: 0 0% 88%;
+    --sidebar-ring: 20 90% 42%;
   }
 }
 
@@ -161,40 +184,32 @@
     line-height: 1.1;
     letter-spacing: 0.05em;
   }
-
   .mk2-card {
     @apply bg-card border border-border rounded-xl p-5;
   }
-
   .mk2-input {
     @apply w-full bg-secondary border border-input rounded-lg px-3.5 py-2.5 text-foreground text-sm outline-none font-body transition-colors duration-200;
     font-size: var(--text-h5);
   }
-
   .mk2-input:focus {
     @apply border-primary ring-1 ring-primary/30;
   }
-
   .mk2-select {
     @apply mk2-input appearance-none;
   }
-
   .mk2-textarea {
     @apply mk2-input resize-y min-h-[88px];
   }
-
   .mk2-label {
     @apply text-[10px] font-bold tracking-[0.1em] uppercase text-muted-foreground block mb-1.5;
   }
-
   .mk2-divider {
     @apply border-t border-border my-4;
   }
-
   .mk2-ai-box {
     @apply border border-primary/25 rounded-xl p-4 mt-3.5 font-body text-sm leading-relaxed whitespace-pre-wrap min-h-[60px];
-    background: hsl(0 0% 3%);
-    color: #ccc;
+    background: hsl(var(--surface));
+    color: hsl(var(--foreground));
     font-size: var(--text-h5);
   }
 }
@@ -247,7 +262,7 @@
   }
 }
 
-/* Animations */
+/* ── Animations ── */
 @keyframes slideUp {
   from {
     transform: translateY(16px);

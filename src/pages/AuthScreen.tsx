@@ -10,8 +10,44 @@ import {
 } from "@/lib/firebase";
 import { saveUser } from "@/lib/firebase";
 import { GOALS, LEVELS, ACCENT_COLORS } from "@/lib/constants";
-import { Btn } from "@/components/shared/Btn";
 import { motion, AnimatePresence } from "framer-motion";
+
+// MK2R CHANGE: Logo helper — falls back to text if image not found
+// Place your logo file at /public/mk2r-logo.png (or .svg)
+function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+  const heights: Record<string, number> = { sm: 36, md: 52, lg: 72 };
+  const [imgError, setImgError] = useState(false);
+
+  if (!imgError) {
+    return (
+      <img
+        src="/mk2r-logo.jpg"
+        alt="MK2 Rivers Fitness"
+        height={heights[size]}
+        style={{ height: heights[size], width: "auto", objectFit: "contain" }}
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  // Fallback text logo if image missing
+  return (
+    <div>
+      <div
+        className="font-display tracking-[0.2em] text-white leading-none"
+        style={{ fontSize: heights[size] * 0.45 }}
+      >
+        MK2 RIVERS
+      </div>
+      <div
+        className="text-[9px] tracking-[0.25em] uppercase"
+        style={{ color: "hsl(187 100% 40%)" }}
+      >
+        FITNESS HUB
+      </div>
+    </div>
+  );
+}
 
 export function AuthScreen() {
   const { isMobile } = useBreakpoint();
@@ -79,6 +115,7 @@ export function AuthScreen() {
         weights: [],
         checkIns: [],
         points: 0,
+        membership: "basic",
         createdAt: Date.now(),
       };
       await saveUser(uid, newUser);
@@ -114,8 +151,7 @@ export function AuthScreen() {
             backgroundImage: `
             radial-gradient(ellipse 80% 60% at 20% 50%, hsl(20 100% 50% / 0.12) 0%, transparent 60%),
             radial-gradient(ellipse 60% 80% at 80% 30%, hsl(187 100% 40% / 0.10) 0%, transparent 55%),
-            radial-gradient(ellipse 40% 40% at 50% 90%, hsl(20 100% 50% / 0.06) 0%, transparent 50%)
-          `,
+            radial-gradient(ellipse 40% 40% at 50% 90%, hsl(20 100% 50% / 0.06) 0%, transparent 50%)`,
           }}
         />
         <div
@@ -142,29 +178,8 @@ export function AuthScreen() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <div className="flex items-center gap-3">
-              <div className="relative w-10 h-10">
-                <div
-                  className="absolute inset-0 rounded-lg rotate-45"
-                  style={{ background: "hsl(187 100% 40%)" }}
-                />
-                <div className="absolute inset-[3px] rounded-md rotate-45 bg-black" />
-                <div className="absolute inset-0 flex items-center justify-center font-display text-[13px] text-white">
-                  2R
-                </div>
-              </div>
-              <div>
-                <div className="font-display text-[18px] tracking-[0.2em] text-white leading-none">
-                  MK2 RIVERS
-                </div>
-                <div
-                  className="text-[9px] tracking-[0.25em] uppercase"
-                  style={{ color: "hsl(187 100% 40%)" }}
-                >
-                  FITNESS HUB
-                </div>
-              </div>
-            </div>
+            {/* MK2R CHANGE: real logo image, falls back to text */}
+            <Logo size="md" />
           </motion.div>
 
           <div>
@@ -177,7 +192,7 @@ export function AuthScreen() {
                 className="text-[11px] font-bold tracking-[0.3em] uppercase mb-4"
                 style={{ color: "hsl(20 100% 50%)" }}
               >
-                ★ ★ ★ &nbsp; HONEYDEW, JOHANNESBURG &nbsp; ★ ★ ★
+                ★ ★ ★ &nbsp; RUIMSIG, JOHANNESBURG &nbsp; ★ ★ ★
               </div>
               <h1
                 className="font-display leading-[0.9] mb-6"
@@ -231,7 +246,7 @@ export function AuthScreen() {
             transition={{ delay: 0.8 }}
             className="text-[10px] tracking-[0.2em] text-white/20 uppercase"
           >
-            © 2026 MK2 Rivers Fitness · Honeydew, Johannesburg
+            © 2026 MK2 Rivers Fitness · Ruimsig, Johannesburg
           </motion.div>
         </div>
       )}
@@ -247,16 +262,9 @@ export function AuthScreen() {
           className="w-full max-w-[420px]"
         >
           {isMobile && (
-            <div className="text-center mb-8">
-              <div className="font-display text-[32px] tracking-[0.15em] text-white mb-1">
-                MK2 RIVERS
-              </div>
-              <div
-                className="text-[10px] tracking-[0.25em] uppercase"
-                style={{ color: "hsl(187 100% 40%)" }}
-              >
-                FITNESS HUB
-              </div>
+            <div className="flex justify-center mb-8">
+              {/* MK2R CHANGE: logo on mobile auth screen */}
+              <Logo size="lg" />
             </div>
           )}
 
@@ -322,7 +330,6 @@ export function AuthScreen() {
                     />
                   </div>
                 )}
-
                 <div className="mb-3">
                   <label className={lbl}>Email Address</label>
                   <input
@@ -333,7 +340,6 @@ export function AuthScreen() {
                     onChange={(e) => setEmail(e.target.value)}
                   />
                 </div>
-
                 <div className={mode === "register" ? "mb-3" : "mb-5"}>
                   <label className={lbl}>Password</label>
                   <input
@@ -351,7 +357,6 @@ export function AuthScreen() {
                     }
                   />
                 </div>
-
                 {mode === "register" && (
                   <div className="grid grid-cols-2 gap-2.5 mb-5">
                     <div>
@@ -384,7 +389,6 @@ export function AuthScreen() {
                     </div>
                   </div>
                 )}
-
                 <button
                   onClick={mode === "login" ? login : register}
                   disabled={loading}
@@ -436,7 +440,7 @@ export function AuthScreen() {
             <span>★★★★★</span>
             <span className="font-bold">MK2 Rivers Fitness</span>
             <span style={{ color: "rgba(255,255,255,0.3)" }}>
-              · Honeydew, Johannesburg
+              · Ruimsig, Johannesburg
             </span>
           </div>
         </motion.div>

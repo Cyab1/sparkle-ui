@@ -15,11 +15,13 @@ import { NewsEvents } from "@/pages/NewsEvents";
 import { Account } from "@/pages/Account";
 import { Leaderboard } from "@/pages/Leaderboard";
 import { Notifications } from "@/pages/Notifications";
-import { InBody } from "./pages/Inbody";
+import { InBody } from "@/pages/Inbody";
 import { BMR } from "@/pages/BMR";
 import { Admin } from "@/pages/Admin";
+import { PRLogbook } from "@/pages/PRLogbook";
 import { Toast } from "@/components/shared/Toast";
 import { motion } from "framer-motion";
+import { MembershipGate } from "@/components/MembershipGate";
 
 function AppContent() {
   const { user, booting, toastData, clearToast } = useAuth();
@@ -69,21 +71,108 @@ function AppContent() {
 
   return (
     <Layout page={page} setPage={setPage}>
+      {/* Free pages */}
       {page === "Dashboard" && <Dashboard setPage={setPage} />}
-      {page === "Workout" && <WorkoutPlanner />}
-      {page === "Nutrition" && <NutritionCoach />}
-      {page === "Progress" && <ProgressTracker />}
       {page === "Classes" && <ClassBooking />}
       {page === "Checkin" && <CheckIn />}
-      {page === "Membership" && <Membership />}
-      {page === "Community" && <Community />}
       {page === "Gallery" && <Gallery />}
       {page === "News" && <NewsEvents />}
-      {page === "Account" && <Account />}
-      {page === "Leaderboard" && <Leaderboard />}
-      {page === "Notifications" && <Notifications />}
-      {page === "InBody" && <InBody />}
-      {page === "BMR" && <BMR />}
+      {page === "Membership" && <Membership setPage={setPage} />}
+      {page === "Account" && <Account setPage={setPage} />}
+
+      {/* Silver tier */}
+      {page === "Notifications" && (
+        <MembershipGate
+          required="silver"
+          feature="Push Notifications"
+          icon="notifications"
+          setPage={setPage}
+        >
+          <Notifications />
+        </MembershipGate>
+      )}
+      {page === "Community" && (
+        <MembershipGate
+          required="silver"
+          feature="Community Chat"
+          icon="group"
+          setPage={setPage}
+        >
+          <Community />
+        </MembershipGate>
+      )}
+      {page === "Leaderboard" && (
+        <MembershipGate
+          required="silver"
+          feature="Leaderboard"
+          icon="emoji_events"
+          setPage={setPage}
+        >
+          <Leaderboard />
+        </MembershipGate>
+      )}
+      {page === "PRLogbook" && (
+        <MembershipGate
+          required="silver"
+          feature="PR Logbook"
+          icon="emoji_events"
+          setPage={setPage}
+        >
+          <PRLogbook />
+        </MembershipGate>
+      )}
+
+      {/* Gold tier */}
+      {page === "Workout" && (
+        <MembershipGate
+          required="gold"
+          feature="AI Workout Planner"
+          icon="bolt"
+          setPage={setPage}
+        >
+          <WorkoutPlanner />
+        </MembershipGate>
+      )}
+      {page === "Nutrition" && (
+        <MembershipGate
+          required="gold"
+          feature="Nutrition & Meal Plans"
+          icon="restaurant"
+          setPage={setPage}
+        >
+          <NutritionCoach />
+        </MembershipGate>
+      )}
+      {page === "BMR" && (
+        <MembershipGate
+          required="gold"
+          feature="BMR Calculator"
+          icon="monitor_heart"
+          setPage={setPage}
+        >
+          <BMR />
+        </MembershipGate>
+      )}
+      {page === "InBody" && (
+        <MembershipGate
+          required="gold"
+          feature="InBody Analysis"
+          icon="accessibility_new"
+          setPage={setPage}
+        >
+          <InBody />
+        </MembershipGate>
+      )}
+      {page === "Progress" && (
+        <MembershipGate
+          required="gold"
+          feature="Progress Tracker"
+          icon="trending_up"
+          setPage={setPage}
+        >
+          <ProgressTracker />
+        </MembershipGate>
+      )}
     </Layout>
   );
 }
@@ -95,7 +184,6 @@ export default function App() {
     </AuthProvider>
   );
 }
-
 
 // import { useState } from "react";
 // import { AuthProvider, useAuth } from "@/context/AuthContext";

@@ -3,6 +3,30 @@ import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { Toast } from "@/components/shared/Toast";
 import { motion, AnimatePresence } from "framer-motion";
+import { ThemeToggle } from "@/components/shared/ThemeToggle";
+
+function ensureMaterialIcons() {
+  if (typeof document === "undefined") return;
+  if (document.getElementById("material-symbols")) return;
+  const link = document.createElement("link");
+  link.id = "material-symbols";
+  link.rel = "stylesheet";
+  link.href =
+    "https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0";
+  document.head.appendChild(link);
+}
+ensureMaterialIcons();
+
+function MI({ icon, size = 22 }: { icon: string; size?: number }) {
+  return (
+    <span
+      className="material-symbols-rounded"
+      style={{ fontSize: size, lineHeight: 1, userSelect: "none" }}
+    >
+      {icon}
+    </span>
+  );
+}
 
 const NAV_GROUPS = [
   {
@@ -15,7 +39,7 @@ const NAV_GROUPS = [
     ],
   },
   {
-    label: "AI Tools",
+    label: "Tools",
     tabs: [
       { id: "Workout", label: "Workout" },
       { id: "Nutrition", label: "Nutrition" },
@@ -32,16 +56,17 @@ const NAV_GROUPS = [
       { id: "Community", label: "Community" },
       { id: "Gallery", label: "Gallery" },
       { id: "News", label: "News" },
+      { id: "PRLogbook", label: "PR Logbook" },
     ],
   },
 ];
 
 const BOTTOM_TABS = [
-  { id: "Dashboard", icon: "🏠", label: "Home" },
-  { id: "Classes", icon: "📅", label: "Classes" },
-  { id: "Checkin", icon: "✅", label: "Check-In" },
-  { id: "Workout", icon: "⚡", label: "AI Tools" },
-  { id: "Account", icon: "👤", label: "Me" },
+  { id: "Dashboard", icon: "home", label: "Home" },
+  { id: "Classes", icon: "fitness_center", label: "Classes" },
+  { id: "Checkin", icon: "where_to_vote", label: "Check-In" },
+  { id: "Workout", icon: "bolt", label: "Tools" },
+  { id: "Account", icon: "account_circle", label: "Me" },
 ];
 
 const MORE_PAGES = [
@@ -55,6 +80,7 @@ const MORE_PAGES = [
   { id: "Community", label: "Community", group: "gym" },
   { id: "Gallery", label: "Gallery", group: "gym" },
   { id: "News", label: "News & Events", group: "gym" },
+  { id: "PRLogbook", label: "PR Logbook 🏆", group: "gym" },
 ];
 
 interface LayoutProps {
@@ -82,7 +108,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
       className="min-h-screen bg-background text-foreground font-body"
       style={{ paddingBottom: isMobile ? 70 : 0 }}
     >
-      {/* Desktop top nav */}
       {!isMobile && (
         <nav className="sticky top-0 z-[200] bg-background/95 backdrop-blur-xl border-b border-border px-5 h-[58px] flex items-center justify-between gap-4">
           <div
@@ -91,7 +116,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
           >
             MK2 RIVERS
           </div>
-
           <div className="flex items-center gap-1 flex-1 justify-center">
             {NAV_GROUPS.map((group) => {
               const groupActive = group.tabs.some((t) => t.id === page);
@@ -108,14 +132,13 @@ export function Layout({ children, page, setPage }: LayoutProps) {
                     }`}
                   >
                     {group.label}
-                    {group.label === "AI Tools" && (
+                    {group.label === "Tools" && (
                       <span className="text-[8px] bg-primary text-primary-foreground px-1 py-0.5 rounded-full font-bold">
-                        AI
+                        NEW
                       </span>
                     )}
                     <span className="text-[8px] opacity-60">▼</span>
                   </button>
-
                   <AnimatePresence>
                     {isOpen && (
                       <motion.div
@@ -145,38 +168,40 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               );
             })}
           </div>
-
-          <div
-            onClick={() => navigate("Account")}
-            className="flex items-center gap-2 bg-secondary border border-border rounded-full py-1 pl-1.5 pr-3 cursor-pointer shrink-0 hover:border-primary/40 transition-colors"
-          >
+          <div className="flex items-center gap-2 shrink-0">
+            <ThemeToggle />
             <div
-              className="w-7 h-7 rounded-full flex items-center justify-center font-display text-sm"
-              style={{ background: user.color, color: "#000" }}
+              onClick={() => navigate("Account")}
+              className="flex items-center gap-2 bg-secondary border border-border rounded-full py-1 pl-1.5 pr-3 cursor-pointer hover:border-primary/40 transition-colors"
             >
-              {user.name[0]}
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center font-display text-sm"
+                style={{ background: user.color, color: "#000" }}
+              >
+                {user.name[0]}
+              </div>
+              <span
+                className={`text-xs font-bold ${page === "Account" ? "text-primary" : "text-foreground"}`}
+              >
+                {user.name.split(" ")[0]}
+              </span>
             </div>
-            <span
-              className={`text-xs font-bold ${page === "Account" ? "text-primary" : "text-foreground"}`}
-            >
-              {user.name.split(" ")[0]}
-            </span>
           </div>
         </nav>
       )}
 
-      {/* Mobile top bar */}
       {isMobile && (
         <div className="sticky top-0 z-[200] bg-background/97 border-b border-border px-4 py-3 flex items-center justify-between">
           <div className="font-display text-xl tracking-[0.15em] text-primary">
             MK2 RIVERS
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <button
               onClick={() => navigate("Notifications")}
-              className="relative bg-transparent border-none cursor-pointer p-1"
+              className="relative bg-transparent border-none cursor-pointer p-1 text-muted-foreground"
             >
-              <span className="text-xl">🔔</span>
+              <MI icon="notifications" size={24} />
               <span className="absolute top-0 right-0 w-2 h-2 bg-primary rounded-full" />
             </button>
             <div
@@ -190,7 +215,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
         </div>
       )}
 
-      {/* Page content */}
       <motion.div
         key={page}
         initial={{ opacity: 0, y: 6 }}
@@ -200,7 +224,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
         {children}
       </motion.div>
 
-      {/* Mobile bottom nav */}
       {isMobile && (
         <nav className="fixed bottom-0 left-0 right-0 z-[200] bg-background/98 border-t border-border flex h-16 backdrop-blur-xl">
           {BOTTOM_TABS.map((t) => (
@@ -214,7 +237,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
                 page === t.id ? "text-primary" : "text-muted-foreground"
               }`}
             >
-              <span className="text-lg">{t.icon}</span>
+              <MI icon={t.icon} size={22} />
               <span className="text-[9px] font-body font-bold tracking-[0.06em] uppercase">
                 {t.label}
               </span>
@@ -226,7 +249,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               showMore ? "text-primary" : "text-muted-foreground"
             }`}
           >
-            <span className="text-lg">☰</span>
+            <MI icon="grid_view" size={22} />
             <span className="text-[9px] font-body font-bold tracking-[0.06em] uppercase">
               More
             </span>
@@ -234,7 +257,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
         </nav>
       )}
 
-      {/* Mobile more drawer */}
       <AnimatePresence>
         {isMobile && showMore && (
           <motion.div
@@ -253,8 +275,8 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-4">
-                <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-2">
-                  ⚡ AI Tools
+                <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                  <MI icon="bolt" size={14} /> Tools
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   {MORE_PAGES.filter((p) => p.group === "ai").map((p) => (
@@ -268,7 +290,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
                   ))}
                 </div>
               </div>
-
               <div>
                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
                   Gym & More
