@@ -11,13 +11,11 @@ import {
 import { saveUser } from "@/lib/firebase";
 import { GOALS, LEVELS, ACCENT_COLORS } from "@/lib/constants";
 import { motion, AnimatePresence } from "framer-motion";
+import { sendPasswordResetEmail } from "firebase/auth";
 
-// MK2R CHANGE: Logo helper — falls back to text if image not found
-// Place your logo file at /public/mk2r-logo.png (or .svg)
 function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
   const heights: Record<string, number> = { sm: 36, md: 52, lg: 72 };
   const [imgError, setImgError] = useState(false);
-
   if (!imgError) {
     return (
       <img
@@ -29,8 +27,6 @@ function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
       />
     );
   }
-
-  // Fallback text logo if image missing
   return (
     <div>
       <div
@@ -59,6 +55,8 @@ export function AuthScreen() {
   const [goal, setGoal] = useState(GOALS[0]);
   const [level, setLevel] = useState(LEVELS[1]);
   const [loading, setLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const login = async () => {
     if (!email || !pw) return toast("Fill in all fields", "error");
@@ -133,6 +131,19 @@ export function AuthScreen() {
     setLoading(false);
   };
 
+  const forgotPassword = async () => {
+    if (!email.trim()) return toast("Enter your email address first", "error");
+    setResetting(true);
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setResetSent(true);
+      toast("✓ Reset email sent — check your inbox", "success");
+    } catch {
+      toast("Could not send reset email — check the address", "error");
+    }
+    setResetting(false);
+  };
+
   const inp =
     "w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white text-sm outline-none font-body placeholder:text-white/30 focus:border-[#00C4CC]/60 focus:bg-black/60 transition-all duration-200";
   const lbl =
@@ -140,7 +151,7 @@ export function AuthScreen() {
 
   return (
     <div
-      className="min-h-screen relative overflow-hidden flex items-stretch"
+      className="dark min-h-screen relative overflow-hidden flex items-stretch"
       style={{ background: "#070707" }}
     >
       {/* Background */}
@@ -149,9 +160,9 @@ export function AuthScreen() {
           className="absolute inset-0"
           style={{
             backgroundImage: `
-            radial-gradient(ellipse 80% 60% at 20% 50%, hsl(20 100% 50% / 0.12) 0%, transparent 60%),
-            radial-gradient(ellipse 60% 80% at 80% 30%, hsl(187 100% 40% / 0.10) 0%, transparent 55%),
-            radial-gradient(ellipse 40% 40% at 50% 90%, hsl(20 100% 50% / 0.06) 0%, transparent 50%)`,
+          radial-gradient(ellipse 80% 60% at 20% 50%, hsl(20 100% 50% / 0.12) 0%, transparent 60%),
+          radial-gradient(ellipse 60% 80% at 80% 30%, hsl(187 100% 40% / 0.10) 0%, transparent 55%),
+          radial-gradient(ellipse 40% 40% at 50% 90%, hsl(20 100% 50% / 0.06) 0%, transparent 50%)`,
           }}
         />
         <div
@@ -178,10 +189,8 @@ export function AuthScreen() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.6 }}
           >
-            {/* MK2R CHANGE: real logo image, falls back to text */}
             <Logo size="md" />
           </motion.div>
-
           <div>
             <motion.div
               initial={{ opacity: 0, y: 40 }}
@@ -213,7 +222,6 @@ export function AuthScreen() {
                 pushes you further.
               </p>
             </motion.div>
-
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -239,7 +247,6 @@ export function AuthScreen() {
               ))}
             </motion.div>
           </div>
-
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -263,7 +270,6 @@ export function AuthScreen() {
         >
           {isMobile && (
             <div className="flex justify-center mb-8">
-              {/* MK2R CHANGE: logo on mobile auth screen */}
               <Logo size="lg" />
             </div>
           )}
@@ -299,7 +305,10 @@ export function AuthScreen() {
               {(["login", "register"] as const).map((m) => (
                 <button
                   key={m}
-                  onClick={() => setMode(m)}
+                  onClick={() => {
+                    setMode(m);
+                    setResetSent(false);
+                  }}
                   className="flex-1 py-2.5 rounded-md border-none cursor-pointer font-body font-bold text-[11px] uppercase tracking-[0.08em] transition-all duration-200"
                   style={{
                     background: mode === m ? "hsl(20 100% 50%)" : "transparent",
@@ -330,6 +339,7 @@ export function AuthScreen() {
                     />
                   </div>
                 )}
+
                 <div className="mb-3">
                   <label className={lbl}>Email Address</label>
                   <input
@@ -340,7 +350,8 @@ export function AuthScreen() {
                     onChange={(e) => setEmail(e.target.value)}
                   />
                 </div>
-                <div className={mode === "register" ? "mb-3" : "mb-5"}>
+
+                <div className={mode === "register" ? "mb-3" : "mb-1"}>
                   <label className={lbl}>Password</label>
                   <input
                     className={inp}
@@ -357,6 +368,29 @@ export function AuthScreen() {
                     }
                   />
                 </div>
+
+                {/* Forgot password — login mode only */}
+                {mode === "login" && (
+                  <div className="flex justify-end mb-4">
+                    <button
+                      onClick={forgotPassword}
+                      disabled={resetting}
+                      className="bg-transparent border-none cursor-pointer font-body text-[11px] font-bold transition-colors"
+                      style={{
+                        color: resetSent
+                          ? "hsl(142 72% 37%)"
+                          : "rgba(255,255,255,0.35)",
+                      }}
+                    >
+                      {resetSent
+                        ? "✓ Reset email sent"
+                        : resetting
+                          ? "Sending…"
+                          : "Forgot password?"}
+                    </button>
+                  </div>
+                )}
+
                 {mode === "register" && (
                   <div className="grid grid-cols-2 gap-2.5 mb-5">
                     <div>
@@ -389,6 +423,7 @@ export function AuthScreen() {
                     </div>
                   </div>
                 )}
+
                 <button
                   onClick={mode === "login" ? login : register}
                   disabled={loading}

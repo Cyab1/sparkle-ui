@@ -310,3 +310,48 @@
     box-shadow: 0 0 20px 4px hsl(20 100% 50% / 0.2);
   }
 }
+
+/* ── ADD THIS TO THE BOTTOM OF src/index.css ──────────────────────────
+   Fixes hardcoded white text showing invisible in light mode.
+   These overrides target any rgba(255,255,255,x) patterns that
+   slipped through on plan cards and feature lists.
+──────────────────────────────────────────────────────────────────────── */
+
+/* Membership plan feature text — light mode override */
+.light .mk2-card,
+[data-theme="light"] .mk2-card {
+  --plan-text-on: hsl(var(--foreground));
+  --plan-text-off: hsl(var(--muted-foreground));
+}
+
+/* Billing toggle button muted text */
+.light button[style*="rgba(255,255,255,0.5)"],
+[data-theme="light"] button[style*="rgba(255,255,255,0.5)"] {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* Any card with inline rgba white backgrounds → use secondary token */
+.light [style*="rgba(255,255,255,0.05)"],
+[data-theme="light"] [style*="rgba(255,255,255,0.05)"] {
+  background: hsl(var(--secondary)) !important;
+}
+.light [style*="rgba(255,255,255,0.08)"],
+[data-theme="light"] [style*="rgba(255,255,255,0.08)"] {
+  background: hsl(var(--secondary)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+/* White/transparent text that becomes invisible on light backgrounds */
+.light [style*="rgba(255,255,255,0.3)"],
+[data-theme="light"] [style*="rgba(255,255,255,0.3)"] {
+  color: hsl(var(--muted-foreground)) !important;
+}
+.light [style*="rgba(255,255,255,0.2)"],
+[data-theme="light"] [style*="rgba(255,255,255,0.2)"] {
+  color: hsl(var(--muted-foreground)) !important;
+  opacity: 0.6;
+}
+.light [style*="rgba(255,255,255,0.15)"],
+[data-theme="light"] [style*="rgba(255,255,255,0.15)"] {
+  color: hsl(var(--border)) !important;
+}

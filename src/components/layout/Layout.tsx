@@ -57,6 +57,11 @@ const NAV_GROUPS = [
       { id: "Gallery", label: "Gallery" },
       { id: "News", label: "News" },
       { id: "PRLogbook", label: "PR Logbook" },
+      { id: "About", label: "About Us" },
+      { id: "Contact", label: "Contact" },
+      { id: "Terms", label: "T&Cs" },
+      { id: "Privacy", label: "Privacy Policy" },
+      { id: "Advertise", label: "Advertise" },
     ],
   },
 ];
@@ -81,6 +86,11 @@ const MORE_PAGES = [
   { id: "Gallery", label: "Gallery", group: "gym" },
   { id: "News", label: "News & Events", group: "gym" },
   { id: "PRLogbook", label: "PR Logbook 🏆", group: "gym" },
+  { id: "About", label: "About Us", group: "gym" },
+  { id: "Contact", label: "Contact Us", group: "gym" },
+  { id: "Terms", label: "T&Cs", group: "gym" },
+  { id: "Privacy", label: "Privacy Policy", group: "gym" },
+  { id: "Advertise", label: "Advertise 📣", group: "gym" },
 ];
 
 interface LayoutProps {
@@ -94,9 +104,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
   const { isMobile } = useBreakpoint();
   const [showMore, setShowMore] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
-
   if (!user) return null;
-
   const navigate = (id: string) => {
     setPage(id);
     setShowMore(false);
@@ -146,7 +154,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -4, scale: 0.97 }}
                         transition={{ duration: 0.12 }}
-                        className="absolute top-full left-0 mt-1 bg-card border border-border rounded-xl shadow-2xl overflow-hidden min-w-[160px] z-50"
+                        className="absolute top-full left-0 mt-1 bg-card border border-border rounded-xl shadow-2xl overflow-hidden min-w-[160px] z-50 max-h-[400px] overflow-y-auto"
                       >
                         {group.tabs.map((tab) => (
                           <button
@@ -245,9 +253,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
           ))}
           <button
             onClick={() => setShowMore(!showMore)}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors ${
-              showMore ? "text-primary" : "text-muted-foreground"
-            }`}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors ${showMore ? "text-primary" : "text-muted-foreground"}`}
           >
             <MI icon="grid_view" size={22} />
             <span className="text-[9px] font-body font-bold tracking-[0.06em] uppercase">
@@ -271,7 +277,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 26, stiffness: 300 }}
-              className="w-full bg-card rounded-t-2xl p-5 pb-20 border border-border"
+              className="w-full bg-card rounded-t-2xl p-5 pb-24 border border-border"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-4">

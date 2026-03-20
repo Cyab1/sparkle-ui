@@ -5,6 +5,8 @@ import { GOALS, LEVELS } from "@/lib/constants";
 import { Btn } from "@/components/shared/Btn";
 import { Tag } from "@/components/shared/Tag";
 import { PageTitle } from "@/components/shared/PageTitle";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 const MEMBERSHIP_CONFIG = {
   basic: { label: "Basic", color: "#9ca3af", price: "Free", emoji: "🔵" },
@@ -23,12 +25,26 @@ export function Account({ setPage }: { setPage?: (p: string) => void }) {
   const [name, setName] = useState(user?.name || "");
   const [goal, setGoal] = useState(user?.goal || "");
   const [level, setLevel] = useState(user?.level || "");
+  const [resetting, setResetting] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   if (!user) return null;
 
   const save = async () => {
     await updateUser({ ...user, name, goal, level });
     toast("Profile saved ✓", "success");
+  };
+
+  const sendReset = async () => {
+    setResetting(true);
+    try {
+      await sendPasswordResetEmail(auth, user.email);
+      setResetSent(true);
+      toast("Reset email sent ✓ — check your inbox", "success");
+    } catch {
+      toast("Failed to send reset email", "error");
+    }
+    setResetting(false);
   };
 
   const membership = ((user as any).membership ??
@@ -41,6 +57,8 @@ export function Account({ setPage }: { setPage?: (p: string) => void }) {
     Silver: "#94a3b8",
     Bronze: "#a16207",
   }[loyaltyTier]!;
+  const isNewUser =
+    !user.workouts?.length && !user.bookings?.length && !user.checkIns?.length;
 
   return (
     <div
@@ -51,6 +69,65 @@ export function Account({ setPage }: { setPage?: (p: string) => void }) {
       >
         My <span className="text-primary">Account</span>
       </PageTitle>
+
+      {/* Prominent Sign Out bar */}
+      <div
+        className="flex items-center justify-between mb-5 px-4 py-3 rounded-xl"
+        style={{
+          background: "hsl(0 84% 51% / 0.08)",
+          border: "1px solid hsl(0 84% 51% / 0.2)",
+        }}
+      >
+        <div>
+          <div className="font-bold text-sm">{user.name}</div>
+          <div className="text-xs text-muted-foreground">{user.email}</div>
+        </div>
+        <Btn variant="danger" onClick={logout}>
+          Sign Out
+        </Btn>
+      </div>
+
+      {/* Empty state for brand new users */}
+      {isNewUser && (
+        <div
+          className="mk2-card mb-5 text-center py-8"
+          style={{
+            borderColor: "hsl(20 100% 50% / 0.3)",
+            background: "hsl(20 100% 50% / 0.04)",
+          }}
+        >
+          <div className="text-4xl mb-3">👋</div>
+          <div
+            className="font-display text-xl mb-1"
+            style={{ color: "hsl(20 100% 50%)" }}
+          >
+            Welcome to MK2 Rivers!
+          </div>
+          <div className="text-sm text-muted-foreground mb-4">
+            Your profile is set up. Here's what to do next:
+          </div>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {[
+              { label: "📅 Book a class", page: "Classes" },
+              { label: "✅ Check in", page: "Checkin" },
+              { label: "⚡ Try a workout", page: "Workout" },
+              { label: "🏆 Log a PR", page: "PRLogbook" },
+            ].map((item) => (
+              <button
+                key={item.page}
+                onClick={() => setPage?.(item.page)}
+                className="px-4 py-2 rounded-full font-body font-bold text-xs border-none cursor-pointer transition-all"
+                style={{
+                  background: "hsl(20 100% 50% / 0.15)",
+                  color: "hsl(20 100% 50%)",
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className={`grid gap-4 ${isMobile ? "grid-cols-1" : "grid-cols-2"}`}>
         <div className="mk2-card">
@@ -81,13 +158,21 @@ export function Account({ setPage }: { setPage?: (p: string) => void }) {
               <option key={l}>{l}</option>
             ))}
           </select>
-          <div className="flex gap-2.5 flex-wrap">
+          <div className="flex gap-2.5 flex-wrap items-center">
             <Btn variant="primary" onClick={save}>
               Save Changes
             </Btn>
-            <Btn variant="danger" onClick={logout}>
-              Sign Out
-            </Btn>
+            <button
+              onClick={sendReset}
+              disabled={resetting || resetSent}
+              className="text-xs font-bold bg-transparent border-none cursor-pointer p-0 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {resetSent
+                ? "✓ Reset email sent"
+                : resetting
+                  ? "Sending…"
+                  : "🔑 Reset password"}
+            </button>
           </div>
         </div>
 
@@ -111,16 +196,15 @@ export function Account({ setPage }: { setPage?: (p: string) => void }) {
                 {loyaltyTier} Loyalty · {user.points} pts
               </Tag>
             </div>
-            {membership === "basic" && (
+            {membership === "basic" ? (
               <button
                 onClick={() => setPage?.("Membership")}
                 className="text-[11px] font-bold border-none bg-transparent cursor-pointer p-0"
                 style={{ color: "hsl(20 100% 50%)" }}
               >
-                Upgrade plan → Silver (R19/mo) or Gold (R49/mo)
+                Upgrade → Silver (R19/mo) or Gold (R49/mo)
               </button>
-            )}
-            {membership !== "basic" && (
+            ) : (
               <button
                 onClick={() => setPage?.("Membership")}
                 className="text-[11px] font-bold border-none bg-transparent cursor-pointer p-0"
@@ -135,14 +219,21 @@ export function Account({ setPage }: { setPage?: (p: string) => void }) {
             <div className="font-bold text-foreground mb-2.5">
               Activity Summary
             </div>
-            <div className="leading-[2.2]">
-              🏋️ {user.workouts.length} workouts logged
-              <br />
-              📅 {user.bookings.length} classes booked
-              <br />✅ {user.checkIns.length} check-ins
-              <br />
-              ⚖️ {user.weights.length} weight entries
-            </div>
+            {isNewUser ? (
+              <div className="text-muted-foreground text-xs leading-relaxed">
+                No activity yet — start by booking a class or checking in at the
+                gym! 💪
+              </div>
+            ) : (
+              <div className="leading-[2.2]">
+                🏋️ {user.workouts?.length ?? 0} workouts logged
+                <br />
+                📅 {user.bookings?.length ?? 0} classes booked
+                <br />✅ {user.checkIns?.length ?? 0} check-ins
+                <br />
+                ⚖️ {user.weights?.length ?? 0} weight entries
+              </div>
+            )}
           </div>
 
           <div
@@ -153,7 +244,7 @@ export function Account({ setPage }: { setPage?: (p: string) => void }) {
             }}
           >
             <div className="font-bold text-foreground mb-1.5 flex items-center gap-1.5">
-              <span>☁️</span> Firebase Status
+              ☁️ Firebase Status
             </div>
             <div className="leading-relaxed">
               Auth: <strong className="text-mk2-green">Firebase Auth ✓</strong>
@@ -162,9 +253,6 @@ export function Account({ setPage }: { setPage?: (p: string) => void }) {
               <strong className="text-mk2-green">
                 Realtime DB (europe-west1) ✓
               </strong>
-              <br />
-              Analytics:{" "}
-              <strong className="text-mk2-green">Firebase Analytics ✓</strong>
               <br />
               Project:{" "}
               <strong className="text-foreground">gym-pro-20ee6</strong>
