@@ -190,7 +190,7 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
             marginBottom: 4,
           }}
         >
-          MK2 ADMIN
+          MK2R ADMIN
         </div>
         <div
           style={{
@@ -1732,7 +1732,7 @@ export function Admin() {
             color: "hsl(20 100% 50%)",
           }}
         >
-          MK2 ADMIN
+          MK2R ADMIN
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}>

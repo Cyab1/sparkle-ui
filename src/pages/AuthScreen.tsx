@@ -11,7 +11,7 @@ import {
 import { saveUser } from "@/lib/firebase";
 import { GOALS, LEVELS, ACCENT_COLORS } from "@/lib/constants";
 import { motion, AnimatePresence } from "framer-motion";
-import { sendPasswordResetEmail } from "firebase/auth";
+import { sendPasswordResetEmail, sendEmailVerification } from "firebase/auth";
 
 function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
   const heights: Record<string, number> = { sm: 36, md: 52, lg: 72 };
@@ -45,7 +45,11 @@ function Logo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
   );
 }
 
-export function AuthScreen() {
+interface AuthScreenProps {
+  setPage?: (page: string) => void;
+}
+
+export function AuthScreen({ setPage }: AuthScreenProps) {
   const { isMobile } = useBreakpoint();
   const { setUser, toast } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -57,6 +61,9 @@ export function AuthScreen() {
   const [loading, setLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [resetting, setResetting] = useState(false);
+
+  // ── NEW: Terms checkbox state
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const login = async () => {
     if (!email || !pw) return toast("Fill in all fields", "error");
@@ -97,6 +104,9 @@ export function AuthScreen() {
   const register = async () => {
     if (!email || !pw || !name) return toast("Fill in all fields", "error");
     if (pw.length < 6) return toast("Password needs 6+ characters", "error");
+    // ── NEW: Block if terms not agreed
+    if (!agreedToTerms)
+      return toast("Please accept the Terms & Conditions to continue", "error");
     setLoading(true);
     try {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), pw);
@@ -117,9 +127,18 @@ export function AuthScreen() {
         createdAt: Date.now(),
       };
       await saveUser(uid, newUser);
+      // ── NEW: Send verification email silently
+      try {
+        await sendEmailVerification(cred.user);
+      } catch {
+        // Non-blocking — don't fail registration if verification email fails
+      }
       logEvent("sign_up", { method: "email" });
       setUser(newUser);
-      toast(`Welcome to MK2, ${name}! 🔥`, "success");
+      toast(
+        `Welcome to MK2, ${name}! Check your email to verify your account 🔥`,
+        "success",
+      );
     } catch (e: any) {
       toast(
         e.code === "auth/email-already-in-use"
@@ -160,9 +179,9 @@ export function AuthScreen() {
           className="absolute inset-0"
           style={{
             backgroundImage: `
-          radial-gradient(ellipse 80% 60% at 20% 50%, hsl(20 100% 50% / 0.12) 0%, transparent 60%),
-          radial-gradient(ellipse 60% 80% at 80% 30%, hsl(187 100% 40% / 0.10) 0%, transparent 55%),
-          radial-gradient(ellipse 40% 40% at 50% 90%, hsl(20 100% 50% / 0.06) 0%, transparent 50%)`,
+            radial-gradient(ellipse 80% 60% at 20% 50%, hsl(20 100% 50% / 0.12) 0%, transparent 60%),
+            radial-gradient(ellipse 60% 80% at 80% 30%, hsl(187 100% 40% / 0.10) 0%, transparent 55%),
+            radial-gradient(ellipse 40% 40% at 50% 90%, hsl(20 100% 50% / 0.06) 0%, transparent 50%)`,
           }}
         />
         <div
@@ -218,8 +237,8 @@ export function AuthScreen() {
               </h1>
               <p className="text-white/40 text-sm leading-relaxed max-w-[380px] font-body">
                 Your transformation begins the moment you walk through our
-                doors. Elite coaching, smart AI tools, and a community that
-                pushes you further.
+                doors. Elite coaching, smart tools, and a community that pushes
+                you further.
               </p>
             </motion.div>
             <motion.div
@@ -308,6 +327,7 @@ export function AuthScreen() {
                   onClick={() => {
                     setMode(m);
                     setResetSent(false);
+                    setAgreedToTerms(false);
                   }}
                   className="flex-1 py-2.5 rounded-md border-none cursor-pointer font-body font-bold text-[11px] uppercase tracking-[0.08em] transition-all duration-200"
                   style={{
@@ -369,7 +389,7 @@ export function AuthScreen() {
                   />
                 </div>
 
-                {/* Forgot password — login mode only */}
+                {/* Forgot password — login only */}
                 {mode === "login" && (
                   <div className="flex justify-end mb-4">
                     <button
@@ -392,58 +412,145 @@ export function AuthScreen() {
                 )}
 
                 {mode === "register" && (
-                  <div className="grid grid-cols-2 gap-2.5 mb-5">
-                    <div>
-                      <label className={lbl}>Your Goal</label>
-                      <select
-                        className={inp}
-                        value={goal}
-                        onChange={(e) => setGoal(e.target.value)}
-                      >
-                        {GOALS.map((g) => (
-                          <option key={g} style={{ background: "#111" }}>
-                            {g}
-                          </option>
-                        ))}
-                      </select>
+                  <>
+                    <div className="grid grid-cols-2 gap-2.5 mb-4">
+                      <div>
+                        <label className={lbl}>Your Goal</label>
+                        <select
+                          className={inp}
+                          value={goal}
+                          onChange={(e) => setGoal(e.target.value)}
+                        >
+                          {GOALS.map((g) => (
+                            <option key={g} style={{ background: "#111" }}>
+                              {g}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={lbl}>Level</label>
+                        <select
+                          className={inp}
+                          value={level}
+                          onChange={(e) => setLevel(e.target.value)}
+                        >
+                          {LEVELS.map((l) => (
+                            <option key={l} style={{ background: "#111" }}>
+                              {l}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                    <div>
-                      <label className={lbl}>Level</label>
-                      <select
-                        className={inp}
-                        value={level}
-                        onChange={(e) => setLevel(e.target.value)}
+
+                    {/* ── NEW: Terms & Conditions checkbox */}
+                    <div
+                      className="flex items-start gap-3 mb-5 rounded-xl px-4 py-3.5 cursor-pointer"
+                      style={{
+                        background: agreedToTerms
+                          ? "hsl(20 100% 50% / 0.08)"
+                          : "rgba(255,255,255,0.03)",
+                        border: `1px solid ${agreedToTerms ? "hsl(20 100% 50% / 0.3)" : "rgba(255,255,255,0.08)"}`,
+                        transition: "all 0.2s",
+                      }}
+                      onClick={() => setAgreedToTerms(!agreedToTerms)}
+                    >
+                      {/* Custom checkbox */}
+                      <div
+                        className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center mt-0.5 transition-all duration-200"
+                        style={{
+                          background: agreedToTerms
+                            ? "hsl(20 100% 50%)"
+                            : "transparent",
+                          border: `2px solid ${agreedToTerms ? "hsl(20 100% 50%)" : "rgba(255,255,255,0.2)"}`,
+                        }}
                       >
-                        {LEVELS.map((l) => (
-                          <option key={l} style={{ background: "#111" }}>
-                            {l}
-                          </option>
-                        ))}
-                      </select>
+                        {agreedToTerms && (
+                          <svg
+                            width="10"
+                            height="8"
+                            viewBox="0 0 10 8"
+                            fill="none"
+                          >
+                            <path
+                              d="M1 4L3.5 6.5L9 1"
+                              stroke="#000"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                      <div
+                        className="text-[11px] leading-relaxed"
+                        style={{ color: "rgba(255,255,255,0.5)" }}
+                      >
+                        I agree to the{" "}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPage?.("Terms");
+                          }}
+                          className="bg-transparent border-none cursor-pointer font-bold p-0 underline"
+                          style={{
+                            color: "hsl(20 100% 50%)",
+                            fontSize: "11px",
+                          }}
+                        >
+                          Terms & Conditions
+                        </button>{" "}
+                        and{" "}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPage?.("Privacy");
+                          }}
+                          className="bg-transparent border-none cursor-pointer font-bold p-0 underline"
+                          style={{
+                            color: "hsl(187 100% 40%)",
+                            fontSize: "11px",
+                          }}
+                        >
+                          Privacy Policy
+                        </button>{" "}
+                        of MK Two Rivers Fitness.
+                      </div>
                     </div>
-                  </div>
+                  </>
                 )}
 
                 <button
                   onClick={mode === "login" ? login : register}
-                  disabled={loading}
+                  disabled={loading || (mode === "register" && !agreedToTerms)}
                   className="w-full py-3.5 rounded-lg font-body font-bold text-sm uppercase tracking-[0.1em] transition-all duration-200 border-none cursor-pointer"
                   style={{
-                    background: loading
-                      ? "rgba(255,82,0,0.5)"
-                      : "hsl(20 100% 50%)",
+                    background:
+                      mode === "register" && !agreedToTerms
+                        ? "rgba(255,82,0,0.3)"
+                        : loading
+                          ? "rgba(255,82,0,0.5)"
+                          : "hsl(20 100% 50%)",
                     color: "#000",
                     opacity: loading ? 0.7 : 1,
-                    boxShadow: loading
-                      ? "none"
-                      : "0 4px 24px hsl(20 100% 50% / 0.4)",
+                    cursor:
+                      mode === "register" && !agreedToTerms
+                        ? "not-allowed"
+                        : "pointer",
+                    boxShadow:
+                      loading || (mode === "register" && !agreedToTerms)
+                        ? "none"
+                        : "0 4px 24px hsl(20 100% 50% / 0.4)",
                   }}
                 >
                   {loading
                     ? "Please wait…"
                     : mode === "login"
                       ? "Sign In →"
-                      : "Create Account →"}
+                      : agreedToTerms
+                        ? "Create Account →"
+                        : "Accept Terms to Continue"}
                 </button>
               </motion.div>
             </AnimatePresence>

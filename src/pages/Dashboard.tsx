@@ -1,9 +1,12 @@
+import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { Btn } from "@/components/shared/Btn";
 import { Tag } from "@/components/shared/Tag";
 import { PageTitle } from "@/components/shared/PageTitle";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import { auth } from "@/lib/firebase";
+import { sendEmailVerification } from "firebase/auth";
 
 function MI({ icon, size = 20 }: { icon: string; size?: number }) {
   return (
@@ -62,21 +65,41 @@ const NEWS_PREVIEW = [
 export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
   const { user } = useAuth();
   const { isMobile, isTablet } = useBreakpoint();
+
+  // ── NEW: email verification banner state
+  const [verifyDismissed, setVerifyDismissed] = useState(false);
+  const [resendSent, setResendSent] = useState(false);
+  const [resending, setResending] = useState(false);
+
   if (!user) return null;
+
+  // ── Check if current Firebase user has verified their email
+  const firebaseUser = auth.currentUser;
+  const emailVerified = firebaseUser?.emailVerified ?? true; // default true for existing users
+  const showVerifyBanner = !emailVerified && !verifyDismissed;
+
+  const resendVerification = async () => {
+    if (!firebaseUser) return;
+    setResending(true);
+    try {
+      await sendEmailVerification(firebaseUser);
+      setResendSent(true);
+    } catch {
+      // silently fail
+    }
+    setResending(false);
+  };
 
   const thisWeek = user.workouts.filter(
     (w: any) => Date.now() - w.date < 7 * 86400000,
   ).length;
-
   const membership = (user as any).membership ?? "basic";
   const memberConfig =
     MEMBERSHIP_CONFIG[membership as keyof typeof MEMBERSHIP_CONFIG];
-
   const loyalty = getLoyaltyTier(user.points);
   const pct = loyalty.next
     ? Math.min(100, (user.points / loyalty.next) * 100)
     : 100;
-
   const memberRank = { basic: 0, silver: 1, gold: 2 }[membership] ?? 0;
   const isLocked = (required: "basic" | "silver" | "gold") =>
     ({ basic: 0, silver: 1, gold: 2 })[required] > memberRank;
@@ -116,6 +139,63 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
     <div
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
+      {/* ── NEW: Email verification banner */}
+      <AnimatePresence>
+        {showVerifyBanner && (
+          <motion.div
+            initial={{ opacity: 0, y: -10, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: "auto" }}
+            exit={{ opacity: 0, y: -10, height: 0 }}
+            transition={{ duration: 0.25 }}
+            className="mb-5 rounded-xl px-4 py-3.5 flex items-center gap-3 flex-wrap"
+            style={{
+              background: "hsl(38 92% 44% / 0.1)",
+              border: "1px solid hsl(38 92% 44% / 0.35)",
+            }}
+          >
+            <span className="text-xl flex-shrink-0">📧</span>
+            <div className="flex-1 min-w-0">
+              <div
+                className="font-bold text-sm"
+                style={{ color: "hsl(38 92% 44%)" }}
+              >
+                Verify your email address
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                We sent a verification link to{" "}
+                <strong className="text-foreground">{user.email}</strong>. Check
+                your inbox (and spam folder).
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {!resendSent ? (
+                <button
+                  onClick={resendVerification}
+                  disabled={resending}
+                  className="text-xs font-bold border-none cursor-pointer px-3 py-1.5 rounded-lg transition-all"
+                  style={{ background: "hsl(38 92% 44%)", color: "#000" }}
+                >
+                  {resending ? "Sending…" : "Resend email"}
+                </button>
+              ) : (
+                <span
+                  className="text-xs font-bold"
+                  style={{ color: "hsl(142 72% 37%)" }}
+                >
+                  ✓ Email sent!
+                </span>
+              )}
+              <button
+                onClick={() => setVerifyDismissed(true)}
+                className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Welcome */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
@@ -219,7 +299,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
       >
         <div className="flex justify-between items-center flex-wrap gap-2.5 mb-2.5">
           <div>
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="font-display text-[22px]">REWARDS</span>
               <Tag color={loyalty.color}>{loyalty.label} Loyalty</Tag>
               <Tag color={memberConfig.color}>{memberConfig.label} Plan</Tag>
@@ -450,25 +530,24 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
               onClick={() => setPage(a.page)}
               className="mk2-card relative flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all duration-150 border-none text-left w-full"
               style={{
-                borderLeft: `3px solid ${locked ? "rgba(255,255,255,0.1)" : a.color}`,
+                borderLeft: `3px solid ${locked ? "hsl(var(--border))" : a.color}`,
                 opacity: locked ? 0.7 : 1,
               }}
             >
               <span
-                style={{ color: locked ? "rgba(255,255,255,0.3)" : a.color }}
+                style={{
+                  color: locked ? "hsl(var(--muted-foreground))" : a.color,
+                }}
               >
                 <MI icon={locked ? "lock" : a.icon} size={20} />
               </span>
               <span
-                className={`font-bold text-xs ${locked ? "text-muted-foreground" : ""}`}
+                className={`font-bold text-xs ${locked ? "text-muted-foreground" : "text-foreground"}`}
               >
                 {a.label}
               </span>
               {locked && (
-                <span
-                  className="ml-auto text-[9px] font-bold uppercase"
-                  style={{ color: "rgba(255,255,255,0.25)" }}
-                >
+                <span className="ml-auto text-[9px] font-bold uppercase text-muted-foreground">
                   {a.required}+
                 </span>
               )}

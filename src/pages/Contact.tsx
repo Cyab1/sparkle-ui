@@ -26,9 +26,10 @@ const CONTACT_INFO = [
     color: "hsl(20 100% 50%)",
     title: "Opening Hours",
     lines: [
-      "Mon–Fri: 05:00 – 21:00",
-      "Saturday: 07:00 – 14:00",
-      "Sunday: 08:00 – 12:00",
+      "Mon–Thu: 05:00 – 19:00",
+      "Fridy: 05:00 – 18:00",
+      "Saturday: 07:00 – 09:00",
+      "Sunday: Closed",
     ],
   },
   {
@@ -43,14 +44,14 @@ const CONTACT_INFO = [
     color: "hsl(217 91% 53%)",
     title: "Email Us",
     lines: ["info@mk2rivers.co.za"],
-    action: { label: "Send email →", href: "mailto:info@mk2rivers.co.za" },
+    action: { label: "Send email →", href: "mailto:mktrfitness@gmail.com " },
   },
   {
     icon: "language",
     color: "hsl(263 85% 58%)",
     title: "Website",
     lines: ["www.mk2rivers.co.za"],
-    action: { label: "Visit website →", href: "https://www.mk2rivers.co.za" },
+    action: { label: "Visit website →", href: "https://www.mktworiversfitness.co.za/" },
   },
   {
     icon: "photo_camera",

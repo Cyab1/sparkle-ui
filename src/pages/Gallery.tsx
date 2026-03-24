@@ -1,37 +1,152 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { Tag } from "@/components/shared/Tag";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { motion } from "framer-motion";
+import { ref, onValue } from "firebase/database";
+import { db } from "@/lib/firebase";
 
-const GALLERY = [
-  { id: 1, label: "HIIT Session", category: "Classes", emoji: "🔥", accent: "hsl(0 84% 51%)", desc: "Coach Sipho leading Monday HIIT — 06:00 crew never misses" },
-  { id: 2, label: "Weight Room", category: "Facilities", emoji: "🏋️", accent: "hsl(217 91% 53%)", desc: "Fully equipped free weights & rack zone" },
-  { id: 3, label: "Yoga Studio", category: "Facilities", emoji: "🧘", accent: "hsl(263 85% 58%)", desc: "Dedicated studio with natural light — morning flows" },
-  { id: 4, label: "Transformation", category: "Members", emoji: "💪", accent: "hsl(142 72% 37%)", desc: "Thabo — 6 months, -14kg, +8kg muscle" },
-  { id: 5, label: "Boxing Corner", category: "Classes", emoji: "🥊", accent: "hsl(20 100% 50%)", desc: "Coach Dlamini running evening boxing fit" },
-  { id: 6, label: "Spin Studio", category: "Facilities", emoji: "🚴", accent: "hsl(217 91% 53%)", desc: "20-bike spin studio with immersive sound" },
-  { id: 7, label: "Community Day", category: "Events", emoji: "🎉", accent: "hsl(142 72% 37%)", desc: "MK2 Family Day — 200+ members attended" },
-  { id: 8, label: "CrossFit WOD", category: "Classes", emoji: "⚡", accent: "hsl(38 92% 44%)", desc: "Saturday WOD — top 3 get free month!" },
-  { id: 9, label: "Recovery Zone", category: "Facilities", emoji: "🛁", accent: "hsl(263 85% 58%)", desc: "Ice bath, sauna & stretch zone" },
+const FALLBACK_GALLERY = [
+  {
+    id: "1",
+    label: "HIIT Session",
+    category: "Classes",
+    emoji: "🔥",
+    accent: "hsl(0 84% 51%)",
+    desc: "Coach Sipho leading Monday HIIT — 06:00 crew never misses",
+  },
+  {
+    id: "2",
+    label: "Weight Room",
+    category: "Facilities",
+    emoji: "🏋️",
+    accent: "hsl(217 91% 53%)",
+    desc: "Fully equipped free weights & rack zone",
+  },
+  {
+    id: "3",
+    label: "Transformation",
+    category: "Members",
+    emoji: "💪",
+    accent: "hsl(142 72% 37%)",
+    desc: "Thabo — 6 months, -14kg, +8kg muscle",
+  },
+  {
+    id: "4",
+    label: "Boxing Corner",
+    category: "Classes",
+    emoji: "🥊",
+    accent: "hsl(20 100% 50%)",
+    desc: "Coach Dlamini running evening boxing fit",
+  },
+  {
+    id: "5",
+    label: "Spin Studio",
+    category: "Facilities",
+    emoji: "🚴",
+    accent: "hsl(217 91% 53%)",
+    desc: "20-bike spin studio with immersive sound",
+  },
+  {
+    id: "6",
+    label: "Community Day",
+    category: "Events",
+    emoji: "🎉",
+    accent: "hsl(142 72% 37%)",
+    desc: "MK2 Family Day — 200+ members attended",
+  },
+  {
+    id: "7",
+    label: "CrossFit WOD",
+    category: "Classes",
+    emoji: "⚡",
+    accent: "hsl(38 92% 44%)",
+    desc: "Saturday WOD — top 3 get free month!",
+  },
+  {
+    id: "8",
+    label: "Recovery Zone",
+    category: "Facilities",
+    emoji: "🛁",
+    accent: "hsl(263 85% 58%)",
+    desc: "Ice bath, sauna & stretch zone",
+  },
+];
+
+// Map category to accent colour for admin-added items
+const CAT_COLORS: Record<string, string> = {
+  Classes: "hsl(20 100% 50%)",
+  Facilities: "hsl(217 91% 53%)",
+  Members: "hsl(142 72% 37%)",
+  Events: "hsl(38 92% 44%)",
+  Transformation: "hsl(263 85% 58%)",
+};
+
+const CATS = [
+  "All",
+  "Classes",
+  "Facilities",
+  "Members",
+  "Events",
+  "Transformation",
 ];
 
 export function Gallery() {
   const { isMobile } = useBreakpoint();
   const [cat, setCat] = useState("All");
-  const filtered = cat === "All" ? GALLERY : GALLERY.filter((g) => g.category === cat);
+  const [adminGallery, setAdminGallery] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const galleryRef = ref(db, "admin_gallery");
+    const unsub = onValue(galleryRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.val();
+        const list = Object.entries(data).map(([id, val]: [string, any]) => ({
+          id,
+          ...val,
+          // ensure accent colour exists
+          accent: val.accent || CAT_COLORS[val.category] || "hsl(20 100% 50%)",
+        }));
+        setAdminGallery(list);
+      } else {
+        setAdminGallery([]);
+      }
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const GALLERY = adminGallery.length > 0 ? adminGallery : FALLBACK_GALLERY;
+  const filtered =
+    cat === "All" ? GALLERY : GALLERY.filter((g) => g.category === cat);
 
   return (
-    <div className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}>
-      <PageTitle sub="Life at MK2 Rivers — classes, facilities & member moments">Gallery</PageTitle>
+    <div
+      className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
+    >
+      <PageTitle sub="Life at MK Two Rivers — classes, facilities & member moments">
+        Gallery
+      </PageTitle>
 
+      {/* Admin source indicator */}
+      {!loading && adminGallery.length > 0 && (
+        <div className="mb-4 text-[11px] text-muted-foreground flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+          Live gallery from admin ({adminGallery.length} items)
+        </div>
+      )}
+
+      {/* Category filters */}
       <div className="flex gap-2 mb-6 flex-wrap">
-        {["All", "Classes", "Facilities", "Members", "Events"].map((c) => (
+        {CATS.map((c) => (
           <button
             key={c}
             onClick={() => setCat(c)}
             className={`px-4 py-1.5 border rounded-full font-body font-bold text-[11px] uppercase cursor-pointer transition-all duration-150 ${
-              c === cat ? "bg-primary text-primary-foreground border-primary" : "bg-transparent text-muted-foreground border-border hover:border-primary/40"
+              c === cat
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-transparent text-muted-foreground border-border hover:border-primary/40"
             }`}
           >
             {c}
@@ -39,30 +154,135 @@ export function Gallery() {
         ))}
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
-        {filtered.map((g, i) => (
-          <motion.div
-            key={g.id}
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: i * 0.05 }}
-            className="rounded-xl overflow-hidden border hover:border-opacity-60 transition-all duration-200 group"
-            style={{ borderColor: `${g.accent}33` }}
-          >
-            <div
-              className="h-[140px] flex items-center justify-center text-[56px] relative"
-              style={{ background: `linear-gradient(135deg, hsl(var(--background)), ${g.accent}22)` }}
+      {loading ? (
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          Loading gallery…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          No items in this category yet.
+        </div>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
+          {filtered.map((g, i) => (
+            <motion.div
+              key={g.id}
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: i * 0.05 }}
+              className="rounded-xl overflow-hidden border hover:border-opacity-60 transition-all duration-200 group"
+              style={{ borderColor: `${g.accent}33` }}
             >
-              <span className="group-hover:scale-110 transition-transform duration-300">{g.emoji}</span>
-              <Tag color={g.accent} className="absolute top-2.5 right-2.5">{g.category}</Tag>
-            </div>
-            <div className="p-3.5 bg-card">
-              <div className="font-display text-lg tracking-wide mb-1">{g.label}</div>
-              <div className="text-xs text-muted-foreground leading-relaxed">{g.desc}</div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
+              {/* Image or emoji */}
+              {g.imageUrl ? (
+                <div className="h-[140px] overflow-hidden">
+                  <img
+                    src={g.imageUrl}
+                    alt={g.label}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                </div>
+              ) : (
+                <div
+                  className="h-[140px] flex items-center justify-center text-[56px] relative"
+                  style={{
+                    background: `linear-gradient(135deg, hsl(var(--background)), ${g.accent}22)`,
+                  }}
+                >
+                  <span className="group-hover:scale-110 transition-transform duration-300">
+                    {g.emoji}
+                  </span>
+                  <div className="absolute top-2.5 right-2.5">
+                    <Tag color={g.accent}>{g.category}</Tag>
+                  </div>
+                </div>
+              )}
+              <div className="p-3.5 bg-card">
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="font-display text-lg tracking-wide leading-tight">
+                    {g.label}
+                  </div>
+                  {g.imageUrl && <Tag color={g.accent}>{g.category}</Tag>}
+                </div>
+                {g.desc && (
+                  <div className="text-xs text-muted-foreground leading-relaxed">
+                    {g.desc}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
+
+// import { useState } from "react";
+// import { useBreakpoint } from "@/hooks/useBreakpoint";
+// import { Tag } from "@/components/shared/Tag";
+// import { PageTitle } from "@/components/shared/PageTitle";
+// import { motion } from "framer-motion";
+
+// const GALLERY = [
+//   { id: 1, label: "HIIT Session", category: "Classes", emoji: "🔥", accent: "hsl(0 84% 51%)", desc: "Coach Sipho leading Monday HIIT — 06:00 crew never misses" },
+//   { id: 2, label: "Weight Room", category: "Facilities", emoji: "🏋️", accent: "hsl(217 91% 53%)", desc: "Fully equipped free weights & rack zone" },
+//   { id: 3, label: "Yoga Studio", category: "Facilities", emoji: "🧘", accent: "hsl(263 85% 58%)", desc: "Dedicated studio with natural light — morning flows" },
+//   { id: 4, label: "Transformation", category: "Members", emoji: "💪", accent: "hsl(142 72% 37%)", desc: "Thabo — 6 months, -14kg, +8kg muscle" },
+//   { id: 5, label: "Boxing Corner", category: "Classes", emoji: "🥊", accent: "hsl(20 100% 50%)", desc: "Coach Dlamini running evening boxing fit" },
+//   { id: 6, label: "Spin Studio", category: "Facilities", emoji: "🚴", accent: "hsl(217 91% 53%)", desc: "20-bike spin studio with immersive sound" },
+//   { id: 7, label: "Community Day", category: "Events", emoji: "🎉", accent: "hsl(142 72% 37%)", desc: "MK2 Family Day — 200+ members attended" },
+//   { id: 8, label: "CrossFit WOD", category: "Classes", emoji: "⚡", accent: "hsl(38 92% 44%)", desc: "Saturday WOD — top 3 get free month!" },
+//   { id: 9, label: "Recovery Zone", category: "Facilities", emoji: "🛁", accent: "hsl(263 85% 58%)", desc: "Ice bath, sauna & stretch zone" },
+// ];
+
+// export function Gallery() {
+//   const { isMobile } = useBreakpoint();
+//   const [cat, setCat] = useState("All");
+//   const filtered = cat === "All" ? GALLERY : GALLERY.filter((g) => g.category === cat);
+
+//   return (
+//     <div className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}>
+//       <PageTitle sub="Life at MK2 Rivers — classes, facilities & member moments">Gallery</PageTitle>
+
+//       <div className="flex gap-2 mb-6 flex-wrap">
+//         {["All", "Classes", "Facilities", "Members", "Events"].map((c) => (
+//           <button
+//             key={c}
+//             onClick={() => setCat(c)}
+//             className={`px-4 py-1.5 border rounded-full font-body font-bold text-[11px] uppercase cursor-pointer transition-all duration-150 ${
+//               c === cat ? "bg-primary text-primary-foreground border-primary" : "bg-transparent text-muted-foreground border-border hover:border-primary/40"
+//             }`}
+//           >
+//             {c}
+//           </button>
+//         ))}
+//       </div>
+
+//       <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
+//         {filtered.map((g, i) => (
+//           <motion.div
+//             key={g.id}
+//             initial={{ opacity: 0, scale: 0.96 }}
+//             animate={{ opacity: 1, scale: 1 }}
+//             transition={{ delay: i * 0.05 }}
+//             className="rounded-xl overflow-hidden border hover:border-opacity-60 transition-all duration-200 group"
+//             style={{ borderColor: `${g.accent}33` }}
+//           >
+//             <div
+//               className="h-[140px] flex items-center justify-center text-[56px] relative"
+//               style={{ background: `linear-gradient(135deg, hsl(var(--background)), ${g.accent}22)` }}
+//             >
+//               <span className="group-hover:scale-110 transition-transform duration-300">{g.emoji}</span>
+//               <Tag color={g.accent} className="absolute top-2.5 right-2.5">{g.category}</Tag>
+//             </div>
+//             <div className="p-3.5 bg-card">
+//               <div className="font-display text-lg tracking-wide mb-1">{g.label}</div>
+//               <div className="text-xs text-muted-foreground leading-relaxed">{g.desc}</div>
+//             </div>
+//           </motion.div>
+//         ))}
+//       </div>
+//     </div>
+//   );
+// }
