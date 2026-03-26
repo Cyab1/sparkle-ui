@@ -27,10 +27,13 @@ export interface MK2User {
   checkIns: any[];
   points: number;
   createdAt: number;
-  membership: "basic" | "silver" | "gold"; // MK2R: tier for soft-lock system
+  membership: "basic" | "silver" | "gold";
+  classCredits: number; // 👈 added
+  lastGoldTopUp?: string; // 👈 added (optional for existing users)
+  aiCredits: Record<string, number>;  
 }
 
-// Ensures arrays are never undefined — fixes "Cannot read filter of undefined"
+// Ensures arrays are never undefined — fixes "Cannot read filter of length"
 const normalizeUser = (data: any): MK2User => ({
   ...data,
   workouts: Array.isArray(data.workouts) ? data.workouts : [],
@@ -39,7 +42,9 @@ const normalizeUser = (data: any): MK2User => ({
   checkIns: Array.isArray(data.checkIns) ? data.checkIns : [],
   points: data.points ?? 0,
   createdAt: data.createdAt ?? Date.now(),
-  membership: data.membership ?? "basic", // MK2R: default to basic if not set
+  membership: data.membership ?? "basic", // changed to "basic"
+  classCredits: data.classCredits ?? 0, // 👈 added, default 0
+  lastGoldTopUp: data.lastGoldTopUp ?? undefined, // 👈 added
 });
 
 interface AuthContextType {

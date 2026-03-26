@@ -11,21 +11,26 @@ interface InBodyEntry {
   weight: number;
   bodyFat: number;
   muscleMass: number;
-  bmi: number;
+  fatMass: number; // ← replaced BMI
   visceralFat: number;
   totalBodyWater: number;
   notes: string;
   hasFile: boolean;
 }
 
-export function InBody() {
+interface Props {
+  setPage: (page: string) => void;
+}
+
+export function InBody({ setPage }: Props) {
   const { user, updateUser, toast } = useAuth();
   const { isMobile } = useBreakpoint();
   const fileRef = useRef<HTMLInputElement>(null);
+
   const [weight, setWeight] = useState("");
   const [bodyFat, setBodyFat] = useState("");
   const [muscleMass, setMuscleMass] = useState("");
-  const [bmi, setBmi] = useState("");
+  const [fatMass, setFatMass] = useState("");
   const [visceralFat, setVisceralFat] = useState("");
   const [totalBodyWater, setTotalBodyWater] = useState("");
   const [notes, setNotes] = useState("");
@@ -50,22 +55,21 @@ export function InBody() {
       weight: parseFloat(weight),
       bodyFat: parseFloat(bodyFat) || 0,
       muscleMass: parseFloat(muscleMass) || 0,
-      bmi: parseFloat(bmi) || 0,
+      fatMass: parseFloat(fatMass) || 0,
       visceralFat: parseFloat(visceralFat) || 0,
       totalBodyWater: parseFloat(totalBodyWater) || 0,
       notes,
       hasFile: !!fileName,
     };
-    const updated = {
+    await updateUser({
       ...user,
       inbodyHistory: [entry, ...inbodyHistory],
-    } as any;
-    await updateUser(updated);
+    } as any);
     toast("InBody results saved ✓", "success");
     setWeight("");
     setBodyFat("");
     setMuscleMass("");
-    setBmi("");
+    setFatMass("");
     setVisceralFat("");
     setTotalBodyWater("");
     setNotes("");
@@ -82,8 +86,8 @@ export function InBody() {
         `You are a professional fitness and body composition coach at MK2 Rivers Fitness. You ONLY answer questions about fitness, body composition, health, and training. Decline anything unrelated.`,
         `Analyse this InBody for ${user.name}, Goal: "${user.goal}", Level: ${user.level}:
 Weight: ${entry.weight}kg | Body Fat: ${entry.bodyFat}% | Muscle Mass: ${entry.muscleMass}kg
-BMI: ${entry.bmi} | Visceral Fat: ${entry.visceralFat} | Body Water: ${entry.totalBodyWater}L
-${prev ? `Previous: Weight ${prev.weight}kg | Fat ${prev.bodyFat}% | Muscle ${prev.muscleMass}kg` : "First assessment."}
+Fat Mass: ${entry.fatMass}kg | Visceral Fat: ${entry.visceralFat} | Body Water: ${entry.totalBodyWater}L
+${prev ? `Previous: Weight ${prev.weight}kg | Fat ${prev.bodyFat}% | Muscle ${prev.muscleMass}kg | Fat Mass ${prev.fatMass}kg` : "First assessment."}
 Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 3 training tips 5) 2 nutrition adjustments`,
         setAnalysis,
       );
@@ -108,9 +112,35 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
         InBody <span className="text-primary">Assessment</span>
       </PageTitle>
 
+      {/* ── Link to Progress Report ──────────────────────────────────────── */}
+      {inbodyHistory.length > 0 && (
+        <div
+          className="mb-5 rounded-xl px-4 py-3 flex items-center justify-between gap-3 cursor-pointer hover:opacity-90 transition-opacity"
+          style={{
+            background: "hsl(187 85% 40% / 0.1)",
+            border: "1px solid hsl(187 85% 40% / 0.3)",
+          }}
+          onClick={() => setPage("Progress")}
+        >
+          <div>
+            <p
+              className="font-bold text-sm"
+              style={{ color: "hsl(187 85% 40%)" }}
+            >
+              📈 View your Progress Report
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              See graphs of all your InBody metrics over time
+            </p>
+          </div>
+          <span className="text-xl">→</span>
+        </div>
+      )}
+
       <div
         className={`grid gap-5 ${isMobile ? "grid-cols-1" : "grid-cols-2"} mb-6`}
       >
+        {/* ── Manual entry ─────────────────────────────────────────────── */}
         <div className="mk2-card">
           <div className="font-bold text-sm mb-4">Enter Results Manually</div>
           <div className="grid grid-cols-2 gap-3 mb-3">
@@ -133,7 +163,12 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
                 set: setMuscleMass,
                 placeholder: "35.4",
               },
-              { label: "BMI", val: bmi, set: setBmi, placeholder: "24.1" },
+              {
+                label: "Fat Mass (kg)",
+                val: fatMass,
+                set: setFatMass,
+                placeholder: "14.2",
+              },
               {
                 label: "Visceral Fat",
                 val: visceralFat,
@@ -170,11 +205,19 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
-          <Btn variant="primary" onClick={saveEntry}>
-            Save Assessment
-          </Btn>
+          <div className="flex gap-2 flex-wrap">
+            <Btn variant="primary" onClick={saveEntry}>
+              Save Assessment
+            </Btn>
+            {inbodyHistory.length > 0 && (
+              <Btn variant="ghost" onClick={() => setPage("Progress")}>
+                📈 Progress Report
+              </Btn>
+            )}
+          </div>
         </div>
 
+        {/* ── File upload ───────────────────────────────────────────────── */}
         <div className="mk2-card flex flex-col">
           <div className="font-bold text-sm mb-2">Upload InBody Report</div>
           <div className="text-xs text-muted-foreground mb-4 leading-relaxed">
@@ -217,10 +260,16 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
         </div>
       </div>
 
+      {/* ── History ──────────────────────────────────────────────────────── */}
       {inbodyHistory.length > 0 && (
         <div className="mk2-card mb-5">
-          <div className="font-bold text-sm mb-4">
-            Assessment History ({inbodyHistory.length})
+          <div className="flex items-center justify-between mb-4">
+            <div className="font-bold text-sm">
+              Assessment History ({inbodyHistory.length})
+            </div>
+            <Btn variant="ghost" size="sm" onClick={() => setPage("Progress")}>
+              📈 View Graphs
+            </Btn>
           </div>
           <div className="flex flex-col gap-3">
             {inbodyHistory.map((entry, i) => (
@@ -272,14 +321,14 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
                       color: "hsl(142 72% 37%)",
                     },
                     {
-                      label: "BMI",
-                      value: entry.bmi || "—",
-                      color: "hsl(217 91% 53%)",
+                      label: "Fat Mass",
+                      value: entry.fatMass ? `${entry.fatMass}kg` : "—",
+                      color: "hsl(38 92% 44%)",
                     },
                     {
                       label: "Visceral",
                       value: entry.visceralFat || "—",
-                      color: "hsl(38 92% 44%)",
+                      color: "hsl(263 85% 58%)",
                     },
                     {
                       label: "Water",
@@ -324,6 +373,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
         </div>
       )}
 
+      {/* ── About InBody ─────────────────────────────────────────────────── */}
       <div
         className="mk2-card"
         style={{ borderTop: "2px solid hsl(187 85% 40%)" }}
@@ -364,11 +414,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
               label: "Visceral Fat Level",
               color: "hsl(38 92% 44%)",
             },
-            {
-              icon: "🦴",
-              label: "Bone Mineral Content",
-              color: "hsl(263 85% 58%)",
-            },
+            { icon: "⚖️", label: "Fat Mass (kg)", color: "hsl(38 92% 44%)" },
           ].map((item) => (
             <div
               key={item.label}
@@ -391,22 +437,18 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
             <strong className="text-foreground">
               InBody body composition analyser
             </strong>{" "}
-            — a medical-grade scanner that goes far beyond just weight. The
-            60-second scan sends a safe, low-level electrical signal through
-            your body to precisely measure muscle, fat, and water distribution
-            across each body segment.
+            — a medical-grade scanner that goes far beyond just weight.
           </p>
           <p>
             <strong className="text-foreground">How to scan:</strong> Visit
             reception at MK2R Ruimsig (29 Peter Rd, Tres Jolie AH, Roodepoort).
             The scan takes 60 seconds — stand barefoot on the platform and hold
-            the handles. Results print immediately.
+            the handles.
           </p>
           <p>
             <strong className="text-foreground">Best results tip:</strong> Scan
             first thing in the morning, before eating or training, after using
-            the bathroom. Avoid scanning after intense exercise, eating, or if
-            dehydrated — this skews the readings.
+            the bathroom.
           </p>
           <div
             className="rounded-lg px-3 py-2.5 mt-1"
@@ -419,8 +461,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
               📍 MK2R Ruimsig · 29 Peter Rd, Tres Jolie AH, Roodepoort
             </p>
             <p className="mt-1">
-              Ask a coach or front desk to assist with your scan. Upload your
-              printed results below for your AI-powered analysis.
+              Ask a coach or front desk to assist with your scan.
             </p>
           </div>
         </div>

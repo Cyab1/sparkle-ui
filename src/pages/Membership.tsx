@@ -1,354 +1,326 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
-import { logEvent } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
+import { ref, onValue } from "firebase/database";
 import { PageTitle } from "@/components/shared/PageTitle";
+import { Btn } from "@/components/shared/Btn";
 import { motion } from "framer-motion";
 
-const PLANS = [
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface Package {
+  id: string;
+  name: string;
+  description: string;
+  credits: number;
+  price: number; // ZAR
+  badge?: string;
+  active: boolean;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const TIERS = [
   {
     id: "basic",
     name: "Basic",
-    priceMonthly: 0,
-    priceAnnual: 0,
-    color: "hsl(217 91% 53%)",
-    popular: false,
-    tag: "Free forever",
+    price: "Free",
+    color: "#9ca3af",
     features: [
-      { label: "Book a class (Octiv link)", included: true },
-      { label: "News & Info", included: true },
-      { label: "Events", included: true },
-      { label: "Internal banners & ads", included: true },
-      { label: "Google Ads shown", included: true, note: "ads" },
-      { label: "Links to socials", included: true },
-      { label: "Help articles", included: true },
-      { label: "Push notifications", included: false },
-      { label: "Community chat", included: false },
-      { label: "Leaderboard", included: false },
-      { label: "Gym loyalty card", included: false },
-      { label: "Discount coupons", included: false },
-      { label: "Body Tracker", included: false },
-      { label: "Meal Plans", included: false },
+      "Dashboard & check-in",
+      "Class schedule (view only)",
+      "Gallery & news",
+      "Membership info",
     ],
+    locked: ["Leaderboard", "PR Logbook", "AI features", "InBody tracking"],
   },
   {
     id: "silver",
     name: "Silver",
-    priceMonthly: 19,
-    priceAnnual: 199,
-    color: "hsl(220 14% 70%)",
-    popular: false,
-    tag: "Save R29/yr",
+    price: "R199/mo",
+    color: "#e2e8f0",
     features: [
-      { label: "Everything in Basic", included: true },
-      { label: "No Google Ads", included: true, note: "nads" },
-      { label: "Push notifications", included: true },
-      { label: "Quick links to socials", included: true },
-      { label: "Community chat", included: true },
-      { label: "Leaderboard", included: true },
-      { label: "Gym loyalty card", included: true },
-      { label: "Discount coupons", included: true },
-      { label: "Body Tracker", included: false },
-      { label: "Meal Plans", included: false },
+      "Everything in Basic",
+      "Class booking",
+      "Leaderboard",
+      "PR Logbook",
+      "Community feed",
+      "10% class discount",
     ],
+    locked: ["AI Workout Planner", "AI Nutrition", "InBody tracking"],
   },
   {
     id: "gold",
     name: "Gold",
-    priceMonthly: 49,
-    priceAnnual: 499,
+    price: "R349/mo",
     color: "hsl(38 92% 50%)",
-    popular: true,
-    tag: "Save R89/yr",
     features: [
-      { label: "Everything in Silver", included: true },
-      { label: "Body Tracker", included: true },
-      { label: "Meal Plans", included: true },
-      { label: "AI Workout Planner", included: true },
-      { label: "InBody Analysis", included: true },
-      { label: "BMR Calculator", included: true },
-      { label: "Pop-up internal ads", included: true, note: "nads" },
+      "Everything in Silver",
+      "AI Workout Planner",
+      "AI Nutrition Coach",
+      "InBody Assessments",
+      "Progress Reports",
+      "20% class discount",
+      "10 free class credits/month",
     ],
+    locked: [],
   },
-] as const;
+];
 
-type PlanId = "basic" | "silver" | "gold";
-
-interface MembershipProps {
-  setPage?: (page: string) => void;
+function CreditBar({ credits }: { credits: number }) {
+  const max = 10;
+  const pct = Math.min(100, (credits / max) * 100);
+  return (
+    <div className="mk2-card mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <div className="font-bold text-base">Class Credits</div>
+          <div className="text-xs text-muted-foreground">
+            1 credit = 1 class booking
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="font-display text-3xl text-primary">{credits}</div>
+          <div className="text-[11px] text-muted-foreground">available</div>
+        </div>
+      </div>
+      <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+        <motion.div
+          className="h-full rounded-full bg-orange-500"
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.6, ease: "easeOut" }}
+        />
+      </div>
+      <div className="text-[10px] text-muted-foreground mt-1.5">
+        {credits === 0
+          ? "No credits — purchase a package below"
+          : `${credits} credit${credits !== 1 ? "s" : ""} remaining`}
+      </div>
+    </div>
+  );
 }
 
-export function Membership({ setPage }: MembershipProps) {
-  const { user, toast } = useAuth();
+export function Membership({ setPage }: { setPage: (p: string) => void }) {
+  const { user } = useAuth();
   const { isMobile } = useBreakpoint();
-  const [sel, setSel] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [billing, setBilling] = useState<"monthly" | "annual">("monthly");
+  const [packages, setPackages] = useState<Package[]>([]);
+  const [loadingPkgs, setLoadingPkgs] = useState(true);
+
+  useEffect(() => {
+    return onValue(ref(db, "packages"), (snap) => {
+      if (snap.exists()) {
+        const list = Object.entries(snap.val())
+          .map(([id, val]: [string, any]) => ({ id, ...val }))
+          .filter((p: any) => p.active !== false)
+          .sort((a: any, b: any) => a.price - b.price);
+        setPackages(list as Package[]);
+      } else {
+        setPackages([]);
+      }
+      setLoadingPkgs(false);
+    });
+  }, []);
 
   if (!user) return null;
 
-  const currentTier = ((user as any).membership as PlanId) ?? "basic";
+  const credits = (user as any).classCredits ?? 0;
+  const currentTier = (user as any).membership ?? "basic";
+  const tier = TIERS.find((t) => t.id === currentTier) ?? TIERS[0];
 
-  const pay = (plan: (typeof PLANS)[number]) => {
-    if (plan.id === "basic") return;
-    const amount = billing === "annual" ? plan.priceAnnual : plan.priceMonthly;
-    setLoading(true);
-    setSel(plan.id);
-    const form = document.createElement("form");
-    form.method = "POST";
-    form.action = "https://sandbox.payfast.co.za/eng/process";
-    const fields: Record<string, string> = {
-      merchant_id: "10000100",
-      merchant_key: "46f0cd694581a",
-      return_url: window.location.href,
-      cancel_url: window.location.href,
-      notify_url: "https://yourdomain.com/api/payfast-notify",
-      name_first: user.name.split(" ")[0],
-      name_last: user.name.split(" ")[1] || "",
-      email_address: user.email,
-      m_payment_id: `MK2-${user.uid.slice(-6)}-${Date.now()}`,
-      amount: amount.toFixed(2),
-      item_name: `MK2 Rivers ${plan.name} Membership (${billing})`,
-      custom_str1: user.uid,
-      custom_str2: plan.id,
-      custom_str3: billing,
-    };
-    Object.entries(fields).forEach(([k, v]) => {
-      const i = document.createElement("input");
-      i.type = "hidden";
-      i.name = k;
-      i.value = v;
-      form.appendChild(i);
-    });
-    document.body.appendChild(form);
-    logEvent("begin_checkout", {
-      plan: plan.id,
-      billing,
-      value: amount,
-      currency: "ZAR",
-    });
-    toast(
-      `Redirecting to PayFast — R${amount}/${billing === "annual" ? "yr" : "mo"}…`,
-      "info",
+  const handlePurchase = (pkg: Package) => {
+    // PayFast integration point — for now shows info
+    alert(
+      `PayFast payment coming soon!\n\nPackage: ${pkg.name}\nCredits: ${pkg.credits}\nPrice: R${pkg.price}\n\nAsk your gym admin to assign credits manually in the meantime.`,
     );
-    setTimeout(() => {
-      form.submit();
-      setLoading(false);
-    }, 1200);
   };
 
   return (
     <div
-      className={`max-w-[1060px] mx-auto ${
-        isMobile ? "px-3 py-4" : "px-6 py-10"
-      }`}
+      className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
-      <PageTitle sub="Choose your plan · Secure payment via PayFast">
-        Membership <span className="text-primary">Plans</span>
+      <PageTitle sub="Manage your membership and class credits">
+        Membership <span className="text-primary">&amp; Credits</span>
       </PageTitle>
 
-      {currentTier !== "basic" && (
-        <div
-          className="mb-6 rounded-xl px-5 py-3 flex items-center gap-3 text-sm font-bold flex-wrap"
-          style={{
-            background: "hsl(20 100% 50% / 0.08)",
-            border: "1px solid hsl(20 100% 50% / 0.2)",
-            color: "hsl(20 100% 50%)",
-          }}
-        >
-          ⚡ You're on the <span className="uppercase">{currentTier}</span> plan
-          <span className="ml-auto text-xs font-normal text-muted-foreground">
-            Upgrade anytime
-          </span>
-        </div>
-      )}
+      {/* Credit balance */}
+      <CreditBar credits={credits} />
 
-      <div className="flex justify-center mb-8">
-        <div
-          className="flex rounded-xl p-1 gap-1"
-          style={{
-            background: "hsl(var(--secondary))",
-            border: "1px solid hsl(var(--border))",
-          }}
-        >
-          {(["monthly", "annual"] as const).map((b) => (
-            <button
-              key={b}
-              onClick={() => setBilling(b)}
-              className="px-5 py-2 rounded-lg border-none cursor-pointer font-body font-bold text-[12px] uppercase tracking-wide transition-all duration-200"
-              style={{
-                background: billing === b ? "hsl(20 100% 50%)" : "transparent",
-                color: billing === b ? "#000" : "hsl(var(--muted-foreground))",
-              }}
+      {/* Current tier */}
+      <div
+        className="mk2-card mb-6 border-l-4"
+        style={{ borderLeftColor: tier.color }}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground mb-1">
+              Current Plan
+            </div>
+            <div
+              className="font-display text-2xl font-bold"
+              style={{ color: tier.color }}
             >
-              {b === "monthly" ? "Monthly" : "Annual 💰"}
-            </button>
+              {tier.name}
+            </div>
+            <div className="text-xs text-muted-foreground">{tier.price}</div>
+          </div>
+          <div
+            className="px-4 py-2 rounded-full text-[11px] font-bold"
+            style={{
+              background: `${tier.color}20`,
+              color: tier.color,
+              border: `1px solid ${tier.color}40`,
+            }}
+          >
+            Active
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {tier.features.map((f) => (
+            <div key={f} className="flex items-center gap-1.5 text-xs">
+              <span className="text-green-400">✓</span>
+              {f}
+            </div>
+          ))}
+          {tier.locked.map((f) => (
+            <div
+              key={f}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground line-through"
+            >
+              <span>✕</span>
+              {f}
+            </div>
           ))}
         </div>
       </div>
 
-      <div
-        className={`grid gap-4 mb-6 ${isMobile ? "grid-cols-1" : "grid-cols-3"}`}
-      >
-        {PLANS.map((plan, i) => {
-          const price =
-            billing === "annual" ? plan.priceAnnual : plan.priceMonthly;
-          const billingLabel = billing === "annual" ? "/yr" : "/mo";
-          const isCurrent = currentTier === plan.id;
-          const isFree = plan.id === "basic";
+      {/* Membership tiers */}
+      <div className="font-bold text-sm mb-3">Upgrade Your Plan</div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4 mb-8">
+        {TIERS.map((t, i) => {
+          const isCurrent = t.id === currentTier;
           return (
             <motion.div
-              key={plan.id}
-              initial={{ opacity: 0, y: 12 }}
+              key={t.id}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
-              className="mk2-card relative"
+              transition={{ delay: i * 0.07 }}
+              className="bg-card border rounded-xl p-5"
               style={{
-                borderTop: `3px solid ${plan.color}`,
-                outline: isCurrent ? `2px solid ${plan.color}` : "none",
+                borderColor: isCurrent ? t.color : "hsl(var(--border))",
+                borderWidth: isCurrent ? 2 : 1,
               }}
             >
-              {plan.popular && (
-                <div
-                  className="absolute -top-px right-4 text-[9px] font-bold px-2.5 py-0.5 rounded-b-md tracking-[0.08em]"
-                  style={{ background: plan.color, color: "#000" }}
-                >
-                  POPULAR
-                </div>
-              )}
-              {isCurrent && (
-                <div
-                  className="absolute -top-px left-4 text-[9px] font-bold px-2.5 py-0.5 rounded-b-md tracking-[0.08em]"
-                  style={{ background: plan.color, color: "#000" }}
-                >
-                  CURRENT
-                </div>
-              )}
               <div
-                className="font-display text-2xl mb-1"
-                style={{ color: plan.color }}
+                className="font-display text-xl mb-0.5"
+                style={{ color: t.color }}
               >
-                {plan.name}
+                {t.name}
               </div>
-              {isFree ? (
-                <div className="mb-3">
-                  <span className="font-display text-[40px] text-foreground">
-                    Free
-                  </span>
+              <div className="font-bold text-lg mb-3">{t.price}</div>
+              <div className="flex flex-col gap-1.5 mb-4">
+                {t.features.map((f) => (
+                  <div key={f} className="flex items-center gap-1.5 text-xs">
+                    <span className="text-green-400">✓</span>
+                    {f}
+                  </div>
+                ))}
+              </div>
+              {isCurrent ? (
+                <div
+                  className="text-center text-[11px] font-bold py-2 rounded-lg"
+                  style={{ background: `${t.color}20`, color: t.color }}
+                >
+                  Current Plan
                 </div>
               ) : (
-                <div className="mb-1">
-                  <span
-                    className="font-display text-[40px]"
-                    style={{ color: plan.color }}
-                  >
-                    R{price}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {billingLabel}
-                  </span>
-                </div>
-              )}
-              {!isFree && billing === "annual" && (
-                <div className="text-[11px] mb-2" style={{ color: plan.color }}>
-                  💰 {plan.tag}
-                </div>
-              )}
-              <div className="mk2-divider" />
-              {plan.features.map((f, fi) => (
-                <div
-                  key={fi}
-                  className="flex gap-2 mb-2 text-xs"
-                  style={{
-                    color: f.included
-                      ? "hsl(var(--foreground))"
-                      : "hsl(var(--muted-foreground))",
-                    opacity: f.included ? 1 : 0.5,
-                  }}
+                <Btn
+                  variant="primary"
+                  size="sm"
+                  onClick={() =>
+                    alert(
+                      "Contact your gym admin or use PayFast (coming soon) to upgrade.",
+                    )
+                  }
                 >
-                  <span
-                    style={{
-                      color: f.included ? plan.color : "hsl(var(--border))",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {f.included ? "✓" : "–"}
-                  </span>
-                  {f.label}
-                  {(f as any).note === "ads" && (
-                    <span className="ml-auto text-[9px] text-muted-foreground">
-                      ad-supported
-                    </span>
-                  )}
-                  {(f as any).note === "nads" && (
-                    <span
-                      className="ml-auto text-[9px] font-bold"
-                      style={{ color: plan.color }}
-                    >
-                      ad-free ✓
-                    </span>
-                  )}
-                </div>
-              ))}
-              <div className="mt-4">
-                {isFree ? (
-                  <div
-                    className="w-full py-2.5 rounded-lg text-center text-xs font-bold uppercase tracking-wider"
-                    style={{
-                      background: "hsl(var(--secondary))",
-                      color: "hsl(var(--muted-foreground))",
-                      border: "1px solid hsl(var(--border))",
-                    }}
-                  >
-                    {isCurrent ? "Your current plan" : "No payment needed"}
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => pay(plan)}
-                    disabled={(loading && sel === plan.id) || isCurrent}
-                    className="w-full py-2.5 rounded-lg border-none cursor-pointer font-body font-bold text-sm uppercase tracking-wide transition-all duration-200 active:scale-95"
-                    style={{
-                      background: isCurrent
-                        ? "hsl(var(--secondary))"
-                        : plan.color,
-                      color: isCurrent
-                        ? "hsl(var(--muted-foreground))"
-                        : "#000",
-                      cursor: isCurrent ? "default" : "pointer",
-                    }}
-                  >
-                    {isCurrent
-                      ? "Current plan"
-                      : loading && sel === plan.id
-                        ? "Redirecting…"
-                        : "Upgrade via PayFast"}
-                  </button>
-                )}
-              </div>
+                  Upgrade to {t.name} →
+                </Btn>
+              )}
             </motion.div>
           );
         })}
       </div>
 
-      <div
-        className="mk2-card"
-        style={{ borderColor: "hsl(142 72% 37% / 0.2)" }}
-      >
-        <div className="flex items-center gap-2.5 mb-2">
-          <span className="text-xl">🔒</span>
-          <div className="font-bold text-sm">Secured by PayFast + Firebase</div>
-        </div>
-        <div className="text-xs text-muted-foreground leading-relaxed">
-          Payments processed by{" "}
-          <strong className="text-foreground">PayFast</strong> — SA's leading
-          payment gateway. Accepts credit/debit cards, EFT, Instant EFT,
-          SnapScan & Mobicred.
-          <br />
-          Member data stored securely in{" "}
-          <strong className="text-foreground">Firebase</strong> (Google Cloud,
-          europe-west1).
-        </div>
+      {/* Class credit packages */}
+      <div className="font-bold text-sm mb-1">Class Credit Packages</div>
+      <div className="text-xs text-muted-foreground mb-4">
+        Each credit = 1 class booking. Gold members receive 10 free credits per
+        month automatically.
       </div>
+
+      {loadingPkgs ? (
+        <div className="text-sm text-muted-foreground py-6">
+          Loading packages…
+        </div>
+      ) : packages.length === 0 ? (
+        <div className="mk2-card text-center py-10 text-muted-foreground text-sm">
+          No packages available yet. Check back soon.
+        </div>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
+          {packages.map((pkg, i) => (
+            <motion.div
+              key={pkg.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.07 }}
+              className="bg-card border border-border rounded-xl p-5 flex flex-col"
+            >
+              {pkg.badge && (
+                <div className="self-start text-[10px] font-bold px-2.5 py-1 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30 mb-3">
+                  {pkg.badge}
+                </div>
+              )}
+              <div className="font-bold text-base mb-1">{pkg.name}</div>
+              <div className="text-xs text-muted-foreground mb-3">
+                {pkg.description}
+              </div>
+              <div className="flex items-end gap-2 mb-4">
+                <div className="font-display text-3xl text-primary">
+                  {pkg.credits}
+                </div>
+                <div className="text-xs text-muted-foreground mb-1">
+                  credits
+                </div>
+              </div>
+              <div className="font-bold text-lg mb-4">R{pkg.price}</div>
+              <Btn
+                variant="primary"
+                size="sm"
+                onClick={() => handlePurchase(pkg)}
+              >
+                Purchase →
+              </Btn>
+            </motion.div>
+          ))}
+        </div>
+      )}
+
+      {/* Gold auto-credit note */}
+      {currentTier === "gold" && (
+        <div className="mk2-card mt-6 border border-orange-500/30 bg-orange-500/5">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">🏆</span>
+            <div>
+              <div className="font-bold text-sm mb-1">Gold Monthly Credits</div>
+              <div className="text-xs text-muted-foreground">
+                As a Gold member, you automatically receive 10 class credits at
+                the start of each month. These reset on the 1st and do not roll
+                over.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

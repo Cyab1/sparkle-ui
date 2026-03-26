@@ -5,7 +5,7 @@ import { AuthScreen } from "@/pages/AuthScreen";
 import { Dashboard } from "@/pages/Dashboard";
 import { WorkoutPlanner } from "@/pages/WorkoutPlanner";
 import { NutritionCoach } from "@/pages/NutritionCoach";
-import { ProgressTracker } from "@/pages/ProgressTracker";
+import { ProgressReport } from "@/pages/ProgressTracker";
 import { ClassBooking } from "@/pages/ClassBooking";
 import { CheckIn } from "@/pages/CheckIn";
 import { Membership } from "@/pages/Membership";
@@ -17,22 +17,28 @@ import { Leaderboard } from "@/pages/Leaderboard";
 import { Notifications } from "@/pages/Notifications";
 import { InBody } from "@/pages/Inbody";
 import { BMR } from "@/pages/BMR";
-import { Admin } from "@/pages/Admin";
 import { PRLogbook } from "@/pages/PRLogbook";
 import { Toast } from "@/components/shared/Toast";
-import { motion } from "framer-motion";
 import { MembershipGate } from "@/components/MembershipGate";
 import { AboutUs } from "@/pages/AboutUs";
 import { Contact } from "@/pages/Contact";
 import { Terms } from "@/pages/Terms";
 import { Privacy } from "@/pages/Privacy";
 import { Advertise } from "@/pages/Advertise";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { OfflineBanner } from "@/components/shared/OfflineBanner";
+import { motion } from "framer-motion";
+
+// Admin is a NAMED export — matches "export function Admin()" in Admin.tsx
+import { Admin } from "@/pages/Admin";
 
 function AppContent() {
   const { user, booting, toastData, clearToast } = useAuth();
   const [page, setPage] = useState("Dashboard");
 
+  usePushNotifications();
+
+  // Admin panel — no login required, accessed via /#admin
   if (typeof window !== "undefined" && window.location.hash === "#admin") {
     return (
       <div className="min-h-screen bg-background text-foreground font-body">
@@ -79,9 +85,10 @@ function AppContent() {
     <>
       <OfflineBanner />
       <Layout page={page} setPage={setPage}>
-        {/* Free pages */}
+        {/* ── Free pages ──────────────────────────────────────────────────── */}
         {page === "Dashboard" && <Dashboard setPage={setPage} />}
-        {page === "Classes" && <ClassBooking />}
+        {/* {page === "Classes" && <ClassBooking />} */}
+        {page === "Classes" && <ClassBooking setPage={setPage} />}
         {page === "Checkin" && <CheckIn />}
         {page === "Gallery" && <Gallery />}
         {page === "News" && <NewsEvents />}
@@ -93,7 +100,7 @@ function AppContent() {
         {page === "Privacy" && <Privacy />}
         {page === "Advertise" && <Advertise />}
 
-        {/* Silver tier */}
+        {/* ── Silver tier ─────────────────────────────────────────────────── */}
         {page === "Notifications" && (
           <MembershipGate
             required="silver"
@@ -101,7 +108,7 @@ function AppContent() {
             icon="notifications"
             setPage={setPage}
           >
-            <Notifications />
+            <Notifications setPage={setPage} /> {/* ← added setPage */}
           </MembershipGate>
         )}
         {page === "Community" && (
@@ -134,8 +141,7 @@ function AppContent() {
             <PRLogbook />
           </MembershipGate>
         )}
-
-        {/* Gold tier */}
+        {/* ── Gold tier ───────────────────────────────────────────────────── */}
         {page === "Workout" && (
           <MembershipGate
             required="gold"
@@ -173,20 +179,24 @@ function AppContent() {
             icon="accessibility_new"
             setPage={setPage}
           >
-            <InBody />
+            <InBody setPage={setPage} />
           </MembershipGate>
         )}
         {page === "Progress" && (
           <MembershipGate
             required="gold"
-            feature="Progress Tracker"
+            feature="Progress Report"
             icon="trending_up"
             setPage={setPage}
           >
-            <ProgressTracker />
+            <ProgressReport setPage={setPage} />
           </MembershipGate>
         )}
       </Layout>
+
+      {toastData && (
+        <Toast msg={toastData.msg} type={toastData.type} onDone={clearToast} />
+      )}
     </>
   );
 }
@@ -198,103 +208,3 @@ export default function App() {
     </AuthProvider>
   );
 }
-
-// import { useState } from "react";
-// import { AuthProvider, useAuth } from "@/context/AuthContext";
-// import { Layout } from "@/components/layout/Layout";
-// import { AuthScreen } from "@/pages/AuthScreen";
-// import { Dashboard } from "@/pages/Dashboard";
-// import { WorkoutPlanner } from "@/pages/WorkoutPlanner";
-// import { NutritionCoach } from "@/pages/NutritionCoach";
-// import { ProgressTracker } from "@/pages/ProgressTracker";
-// import { ClassBooking } from "@/pages/ClassBooking";
-// import { CheckIn } from "@/pages/CheckIn";
-// import { Membership } from "@/pages/Membership";
-// import { Community } from "@/pages/Community";
-// import { Gallery } from "@/pages/Gallery";
-// import { NewsEvents } from "@/pages/NewsEvents";
-// import { Account } from "@/pages/Account";
-// import { Leaderboard } from "./pages/Leaderboard"
-// import { Notifications } from "./pages/Notifications";
-// import { InBody } from "./pages/Inbody";
-// import { Admin } from "@/pages/Admin";
-// import { Toast } from "@/components/shared/Toast";
-// import { motion } from "framer-motion";
-
-// function AppContent() {
-//   const { user, booting, toastData, clearToast } = useAuth();
-//   const [page, setPage] = useState("Dashboard");
-
-//   // Admin panel — accessible at /#admin without member login
-//   if (typeof window !== "undefined" && window.location.hash === "#admin") {
-//     return (
-//       <div className="min-h-screen bg-background text-foreground font-body">
-//         <Admin />
-//       </div>
-//     );
-//   }
-
-//   // Boot screen
-//   if (booting) {
-//     return (
-//       <div className="min-h-screen bg-background flex items-center justify-center">
-//         <motion.div
-//           initial={{ opacity: 0 }}
-//           animate={{ opacity: 1 }}
-//           className="text-center"
-//         >
-//           <div className="font-display text-[32px] text-primary tracking-[0.15em]">
-//             MK2 RIVERS
-//           </div>
-//           <div className="text-muted-foreground text-xs mt-1.5 font-body">
-//             Connecting…
-//           </div>
-//         </motion.div>
-//       </div>
-//     );
-//   }
-
-//   // Auth screen
-//   if (!user) {
-//     return (
-//       <>
-//         <AuthScreen />
-//         {toastData && (
-//           <Toast
-//             msg={toastData.msg}
-//             type={toastData.type}
-//             onDone={clearToast}
-//           />
-//         )}
-//       </>
-//     );
-//   }
-
-//   // Main app
-//   return (
-//     <Layout page={page} setPage={setPage}>
-//       {page === "Dashboard" && <Dashboard setPage={setPage} />}
-//       {page === "Workout" && <WorkoutPlanner />}
-//       {page === "Nutrition" && <NutritionCoach />}
-//       {page === "Progress" && <ProgressTracker />}
-//       {page === "Classes" && <ClassBooking />}
-//       {page === "Checkin" && <CheckIn />}
-//       {page === "Membership" && <Membership />}
-//       {page === "Community" && <Community />}
-//       {page === "Gallery" && <Gallery />}
-//       {page === "News" && <NewsEvents />}
-//       {page === "Account" && <Account />}
-//       {page === "Leaderboard" && <Leaderboard />}
-//       {page === "Notifications" && <Notifications />}
-//       {page === "InBody" && <InBody />}
-//     </Layout>
-//   );
-// }
-
-// export default function App() {
-//   return (
-//     <AuthProvider>
-//       <AppContent />
-//     </AuthProvider>
-//   );
-// }
