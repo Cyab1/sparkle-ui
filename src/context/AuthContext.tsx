@@ -28,6 +28,8 @@ export interface MK2User {
   points: number;
   createdAt: number;
   membership: "basic" | "silver" | "gold";
+  termsAcceptedAt?: number;
+  termsVersion?: string;
   classCredits: number; // 👈 added
   lastGoldTopUp?: string; // 👈 added (optional for existing users)
   aiCredits: Record<string, number>;  
