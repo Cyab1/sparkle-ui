@@ -168,25 +168,31 @@ const intColor = (i: string) =>
         ? "hsl(38 92% 44%)"
         : "hsl(142 72% 37%)";
 
-// ── TIMEZONE-SAFE helpers ─────────────────────────────────────────────────────
-function formatDateKey(date: Date): string {
+// ─── TIMEZONE-SAFE date helpers ───────────────────────────────────────────────
+// NEVER use .toISOString() — it shifts to UTC and breaks SAST dates
+export function formatDateKey(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
-function parseDateKey(key: string): Date {
+export function parseDateKey(key: string): Date {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
-function getDayName(date: Date): string {
+export function getDayName(date: Date): string {
   return DAYS[[6, 0, 1, 2, 3, 4, 5][date.getDay()]];
 }
-function safeKey(str: string): string {
+// ── THE ONE TRUE BOOKING KEY ──────────────────────────────────────────────────
+// Used in ClassBooking (user) AND Admin (cancel) — must be identical in both
+export function safeKey(str: string): string {
   return str.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
+export function buildBookingKey(className: string, dateKey: string): string {
+  return `${safeKey(className)}_${dateKey}`;
+}
 
-// ── Gold monthly credit top-up ────────────────────────────────────────────────
+// ── Gold monthly top-up ───────────────────────────────────────────────────────
 async function maybeTopUpGoldCredits(user: any, updateUser: any) {
   if (user.membership !== "gold") return;
   const now = new Date();
@@ -348,7 +354,8 @@ function MiniCalendar({
 
 // ── WOD Panel ─────────────────────────────────────────────────────────────────
 function WodPanel({ cls, color }: { cls: any; color: string }) {
-  const wod: string = (cls.wod || "").trim();
+  // FIX: treat null/undefined/whitespace-only as no WOD
+  const wod: string = String(cls.wod ?? "").trim();
   if (!wod) return null;
   const lines = wod.split("\n");
   return (
@@ -438,7 +445,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 
   if (!user) return null;
 
-  const dateKey = formatDateKey(selectedDate);
+  const dateKey = formatDateKey(selectedDate); // LOCAL timezone YYYY-MM-DD
   const dayName = getDayName(selectedDate);
   const CLASSES = adminClasses.length > 0 ? adminClasses : FALLBACK_CLASSES;
   const credits = user.classCredits ?? 0;
@@ -451,7 +458,9 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
     return true;
   });
 
-  const bKey = (cls: any) => `${safeKey(cls.name)}_${dateKey}`;
+  // THE ONE TRUE KEY — same function used everywhere
+  const bKey = (cls: any) => buildBookingKey(cls.name, dateKey);
+
   const isBooked = (cls: any): boolean =>
     !!classBookings[bKey(cls)]?.[user.uid];
   const bookedCount = (cls: any): number =>
@@ -459,7 +468,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
   const bookedList = (cls: any): any[] =>
     Object.values(classBookings[bKey(cls)] ?? {});
   const spotsLeft = (cls: any): number =>
-    Math.max(0, (cls.spots || 12) - bookedCount(cls));
+    Math.max(0, Number(cls.spots || 12) - bookedCount(cls));
 
   const bookedDates = new Set<string>(
     user.bookings.map((b: any) => b.dateKey).filter(Boolean),
@@ -513,7 +522,6 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
       bookings: newBookings,
     });
 
-    // Log credit transaction (non-critical)
     try {
       const { push: fbPush } = await import("firebase/database");
       await fbPush(ref(db, `mk2_users/${user.uid}/creditHistory`), {
@@ -533,7 +541,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
     );
   };
 
-  // ── Cancel — refunds credit ───────────────────────────────────────────────
+  // ── Cancel (user side) ────────────────────────────────────────────────────
   const cancel = async (cls: any) => {
     if (
       !confirm(
@@ -682,7 +690,8 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
             const bookers = bookedList(cls);
             const showingWho = showWhoBooked === cls.name;
             const details = Array.isArray(cls.details) ? cls.details : [];
-            const hasWod = !!cls.wod?.trim();
+            // FIX: coerce wod to string to handle null/undefined from Firebase
+            const hasWod = String(cls.wod ?? "").trim().length > 0;
             const canBook = credits > 0;
 
             return (
