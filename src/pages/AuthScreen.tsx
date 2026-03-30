@@ -60,6 +60,9 @@ export function AuthScreen({ setPage }: AuthScreenProps) {
   const [name, setName] = useState("");
   const [goal, setGoal] = useState(GOALS[0]);
   const [level, setLevel] = useState(LEVELS[1]);
+  const [gender, setGender] = useState<"male" | "female" | "prefer_not_to_say">(
+    "male",
+  );
   const [loading, setLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -462,6 +465,41 @@ export function AuthScreen({ setPage }: AuthScreenProps) {
                             </option>
                           ))}
                         </select>
+                      </div>
+                      <div className="col-span-2">
+                        <label className={lbl}>Gender</label>
+                        <div className="flex gap-2">
+                          {(
+                            [
+                              { val: "male", label: "♂ Male" },
+                              { val: "female", label: "♀ Female" },
+                              {
+                                val: "prefer_not_to_say",
+                                label: "Prefer not to say",
+                              },
+                            ] as const
+                          ).map((g) => (
+                            <button
+                              key={g.val}
+                              type="button"
+                              onClick={() => setGender(g.val)}
+                              className="flex-1 py-2 rounded-lg font-body font-bold text-[11px] border-none cursor-pointer transition-all"
+                              style={{
+                                background:
+                                  gender === g.val
+                                    ? "hsl(20 100% 50%)"
+                                    : "rgba(255,255,255,0.05)",
+                                color:
+                                  gender === g.val
+                                    ? "#000"
+                                    : "rgba(255,255,255,0.4)",
+                                border: `1px solid ${gender === g.val ? "hsl(20 100% 50%)" : "rgba(255,255,255,0.08)"}`,
+                              }}
+                            >
+                              {g.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
 

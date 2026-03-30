@@ -28,6 +28,7 @@ export interface MK2User {
   points: number;
   createdAt: number;
   membership: "basic" | "silver" | "gold";
+  gender?: "male" | "female" | "prefer_not_to_say";
   termsAcceptedAt?: number;
   termsVersion?: string;
   classCredits: number; // 👈 added
@@ -47,6 +48,7 @@ const normalizeUser = (data: any): MK2User => ({
   membership: data.membership ?? "basic", // changed to "basic"
   classCredits: data.classCredits ?? 0, // 👈 added, default 0
   lastGoldTopUp: data.lastGoldTopUp ?? undefined, // 👈 added
+  gender: data.gender ?? undefined,
 });
 
 interface AuthContextType {

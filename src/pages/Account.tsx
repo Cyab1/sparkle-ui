@@ -30,6 +30,9 @@ export function Account({ setPage }: { setPage: (p: string) => void }) {
   const [name, setName] = useState(user.name);
   const [goal, setGoal] = useState(user.goal);
   const [level, setLevel] = useState(user.level);
+  const [gender, setGender] = useState<"male" | "female" | "prefer_not_to_say">(
+    (user as any).gender ?? "prefer_not_to_say",
+  );
   const [photoUrl, setPhotoUrl] = useState((user as any).photoUrl || "");
   const [photoPreview, setPhotoPreview] = useState(
     (user as any).photoUrl || "",
@@ -86,6 +89,7 @@ export function Account({ setPage }: { setPage: (p: string) => void }) {
         name: name.trim(),
         goal,
         level,
+        gender,
         photoUrl: photoUrl.trim(),
       };
       await saveUser(user.uid, updated);
@@ -358,6 +362,38 @@ export function Account({ setPage }: { setPage: (p: string) => void }) {
                   <option key={l}>{l}</option>
                 ))}
               </select>
+            </div>
+          </div>
+          <div className="mb-4">
+            <label className={lbl}>Gender</label>
+            <div className="flex gap-2">
+              {(
+                [
+                  { val: "male", label: "♂ Male" },
+                  { val: "female", label: "♀ Female" },
+                  { val: "prefer_not_to_say", label: "Prefer not to say" },
+                ] as const
+              ).map((g) => (
+                <button
+                  key={g.val}
+                  type="button"
+                  onClick={() => setGender(g.val)}
+                  className="flex-1 py-2.5 rounded-xl font-body font-bold text-xs border-none cursor-pointer transition-all"
+                  style={{
+                    background:
+                      gender === g.val
+                        ? "hsl(20 100% 50%)"
+                        : "hsl(var(--secondary))",
+                    color:
+                      gender === g.val
+                        ? "#000"
+                        : "hsl(var(--muted-foreground))",
+                    border: `1px solid ${gender === g.val ? "hsl(20 100% 50%)" : "hsl(var(--border))"}`,
+                  }}
+                >
+                  {g.label}
+                </button>
+              ))}
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
