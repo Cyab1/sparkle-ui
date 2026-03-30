@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { useAuth } from "@/context/AuthContext";
-import { ref, push } from "firebase/database";
+import { ref, push, onValue } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { motion } from "framer-motion";
 
@@ -65,6 +65,19 @@ const AD_CATEGORIES = [
 export function Advertise() {
   const { isMobile } = useBreakpoint();
   const { user, toast } = useAuth();
+  const [activeBanner, setActiveBanner] = useState<any>(null);
+
+  useEffect(() => {
+    return onValue(ref(db, "ad_banners"), (snap) => {
+      if (!snap.exists()) return;
+      const banners = Object.values(snap.val()) as any[];
+      const now = Date.now();
+      const active = banners.find(
+        (b) => b.active && (!b.expiresAt || b.expiresAt > now),
+      );
+      setActiveBanner(active ?? null);
+    });
+  }, []);
 
   const [bizName, setBizName] = useState("");
   const [contactName, setContactName] = useState(user?.name || "");
@@ -113,6 +126,70 @@ export function Advertise() {
       <PageTitle sub="Reach 100+ active, health-conscious members in Ruimsig">
         Advertise <span className="text-primary">With Us</span>
       </PageTitle>
+
+      {/* ── Live Ad Banner ──────────────────────────────────────────────── */}
+      {activeBanner && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-5 rounded-xl overflow-hidden cursor-pointer"
+          style={{
+            border: `1px solid ${activeBanner.color ?? "hsl(20 100% 50% / 0.3)"}`,
+            background: activeBanner.bgColor ?? "hsl(20 100% 50% / 0.06)",
+          }}
+          onClick={() =>
+            activeBanner.url && window.open(activeBanner.url, "_blank")
+          }
+        >
+          {activeBanner.imageUrl ? (
+            <img
+              src={activeBanner.imageUrl}
+              alt={activeBanner.title}
+              className="w-full object-cover"
+              style={{ maxHeight: 160 }}
+            />
+          ) : (
+            <div className="px-5 py-4 flex items-center gap-4 flex-wrap">
+              {activeBanner.emoji && (
+                <span className="text-4xl">{activeBanner.emoji}</span>
+              )}
+              <div className="flex-1 min-w-0">
+                <div
+                  className="font-display text-lg tracking-wide"
+                  style={{ color: activeBanner.color ?? "hsl(20 100% 50%)" }}
+                >
+                  {activeBanner.title}
+                </div>
+                {activeBanner.subtitle && (
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {activeBanner.subtitle}
+                  </div>
+                )}
+              </div>
+              {activeBanner.cta && (
+                <span
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg shrink-0"
+                  style={{
+                    background: activeBanner.color ?? "hsl(20 100% 50%)",
+                    color: "#000",
+                  }}
+                >
+                  {activeBanner.cta} →
+                </span>
+              )}
+            </div>
+          )}
+          <div
+            className="text-[9px] text-right px-3 py-1 font-bold uppercase tracking-widest"
+            style={{
+              background: "hsl(var(--secondary))",
+              color: "hsl(var(--muted-foreground))",
+            }}
+          >
+            Sponsored
+          </div>
+        </motion.div>
+      )}
 
       {/* Why advertise banner */}
       <div

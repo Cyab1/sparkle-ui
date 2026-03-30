@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { Btn } from "@/components/shared/Btn";
@@ -7,6 +7,8 @@ import { PageTitle } from "@/components/shared/PageTitle";
 import { motion, AnimatePresence } from "framer-motion";
 import { auth } from "@/lib/firebase";
 import { sendEmailVerification } from "firebase/auth";
+import { ref, onValue } from "firebase/database";
+import { db } from "@/lib/firebase";
 
 function MI({ icon, size = 20 }: { icon: string; size?: number }) {
   return (
@@ -66,16 +68,29 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
   const { user } = useAuth();
   const { isMobile, isTablet } = useBreakpoint();
 
-  // ── NEW: email verification banner state
   const [verifyDismissed, setVerifyDismissed] = useState(false);
   const [resendSent, setResendSent] = useState(false);
   const [resending, setResending] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Listen for news updates to compute unread count
+  useEffect(() => {
+    if (!user) return;
+    return onValue(ref(db, "admin_news"), (snap) => {
+      if (!snap.exists()) return;
+      const lastSeen = (user as any).lastSeenNewsAt ?? 0;
+      const items = Object.values(snap.val()) as any[];
+      const unread = items.filter(
+        (n) => (n.createdAt ?? Date.now()) > lastSeen,
+      ).length;
+      setUnreadCount(unread);
+    });
+  }, [user]);
 
   if (!user) return null;
 
-  // ── Check if current Firebase user has verified their email
   const firebaseUser = auth.currentUser;
-  const emailVerified = firebaseUser?.emailVerified ?? true; // default true for existing users
+  const emailVerified = firebaseUser?.emailVerified ?? true;
   const showVerifyBanner = !emailVerified && !verifyDismissed;
 
   const resendVerification = async () => {
@@ -139,7 +154,37 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
     <div
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
-      {/* ── NEW: Email verification banner */}
+      {/* ── NEW: Notification bell ─────────────────────────────────────────── */}
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={() => setPage("News")}
+          className="relative flex items-center gap-2 px-3 py-2 rounded-xl border-none cursor-pointer transition-all"
+          style={{
+            background:
+              unreadCount > 0
+                ? "hsl(20 100% 50% / 0.1)"
+                : "hsl(var(--secondary))",
+            border: `1px solid ${unreadCount > 0 ? "hsl(20 100% 50% / 0.3)" : "hsl(var(--border))"}`,
+          }}
+        >
+          <span className="relative">
+            <MI icon="notifications" size={20} />
+            {unreadCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black"
+                style={{ background: "hsl(20 100% 50%)" }}
+              >
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </span>
+          <span className="text-xs font-bold text-muted-foreground">
+            {unreadCount > 0 ? `${unreadCount} new` : "Notifications"}
+          </span>
+        </button>
+      </div>
+
+      {/* Email verification banner */}
       <AnimatePresence>
         {showVerifyBanner && (
           <motion.div
