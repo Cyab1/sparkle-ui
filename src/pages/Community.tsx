@@ -4,7 +4,7 @@ import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { logEvent, db, storage } from "@/lib/firebase";
 import { Btn } from "@/components/shared/Btn";
 import { PageTitle } from "@/components/shared/PageTitle";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { ref, push, onValue, remove, set, update } from "firebase/database";
 import {
   ref as storageRef,
@@ -13,7 +13,6 @@ import {
 } from "firebase/storage";
 import imageCompression from "browser-image-compression";
 
-// ── Chat sub-components ───────────────────────────────────────────────────────
 import ChatHeader from "@/components/ui/ChatHeader";
 import ChatInput from "@/components/ui/ChatInput";
 import RoomCard from "@/components/ui/RoomCard";
@@ -21,7 +20,6 @@ import MessageBubble from "@/components/ui/MessageBubble";
 import PollMessage from "@/components/ui/PollMessage";
 import MessageMenu from "@/components/ui/MessageMenu";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 interface Message {
   id: string;
   text: string;
@@ -41,15 +39,11 @@ interface FeedPost {
   date: string;
 }
 
-// ── Chat rooms config ─────────────────────────────────────────────────────────
 const ROOMS = [
-  { name: "💬 MK2R General", desc: "News, updates & schedules." },
+  { name: "💬 MK2R General", desc: "News, updates & schedules" },
   { name: "🏆 MK2R Competitive Group", desc: "Competition prep & strategy" },
   { name: "🔥 MK2R Hyrox", desc: "HYROX training & performance talk" },
-  {
-    name: "💼 MK2R Business Hub",
-    desc: "Business, partnerships & growth discussions",
-  },
+  { name: "💼 MK2R Business Hub", desc: "Business, partnerships & growth" },
 ];
 
 const SEED_POSTS: FeedPost[] = [
@@ -79,7 +73,6 @@ const SEED_POSTS: FeedPost[] = [
   },
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
 export function Community() {
   const { user, toast } = useAuth();
   const { isMobile } = useBreakpoint();
@@ -91,12 +84,9 @@ export function Community() {
     user.name?.split(" ")[0] || user.email?.split("@")[0] || "Member";
   const canChat = user.membership === "gold";
 
-  // ── Tab ───────────────────────────────────────────────────────────────────
   const [tab, setTab] = useState<"feed" | "chat">("feed");
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // FEED STATE
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Feed state ────────────────────────────────────────────────────────────
   const [posts, setPosts] = useState<FeedPost[]>(SEED_POSTS);
   const [feedText, setFeedText] = useState("");
 
@@ -118,9 +108,7 @@ export function Community() {
     toast("Posted! 🙌", "success");
   };
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // CHAT STATE
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── Chat state ────────────────────────────────────────────────────────────
   const [isChatMobile, setIsChatMobile] = useState(window.innerWidth < 768);
   const [messages, setMessages] = useState<Message[]>([]);
   const [polls, setPolls] = useState<any[]>([]);
@@ -129,8 +117,6 @@ export function Community() {
   const [joinedRooms, setJoinedRooms] = useState<string[]>([]);
   const [menuMsg, setMenuMsg] = useState<any | null>(null);
   const [replyTo, setReplyTo] = useState<any | null>(null);
-
-  // Poll form
   const [showPollForm, setShowPollForm] = useState(false);
   const [editingPoll, setEditingPoll] = useState<any | null>(null);
   const [pollQuestion, setPollQuestion] = useState("");
@@ -143,14 +129,12 @@ export function Community() {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const pressTimer = useRef<any>(null);
 
-  // ── Resize ────────────────────────────────────────────────────────────────
   useEffect(() => {
     const onResize = () => setIsChatMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // ── Close menu on outside click ───────────────────────────────────────────
   useEffect(() => {
     const onClick = (e: any) => {
       if (menuRef.current && !menuRef.current.contains(e.target))
@@ -160,7 +144,6 @@ export function Community() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  // ── Joined rooms ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!canChat) return;
     return onValue(ref(db, `mk2_users/${uid}/joinedRooms`), (snap) => {
@@ -168,7 +151,6 @@ export function Community() {
     });
   }, [uid, canChat]);
 
-  // ── Messages ──────────────────────────────────────────────────────────────
   useEffect(() => {
     setMessages([]);
     if (!room || !joinedRooms.includes(room)) return;
@@ -192,7 +174,6 @@ export function Community() {
     });
   }, [room, joinedRooms]);
 
-  // ── Polls ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!room || !joinedRooms.includes(room)) return;
     return onValue(ref(db, `rooms/${room}/polls`), (snap) => {
@@ -203,7 +184,6 @@ export function Community() {
     });
   }, [room, joinedRooms]);
 
-  // ── Chat actions ──────────────────────────────────────────────────────────
   const joinRoom = async () => {
     if (room) await set(ref(db, `mk2_users/${uid}/joinedRooms/${room}`), true);
   };
@@ -361,18 +341,15 @@ export function Community() {
   const isJoined = !!(room && joinedRooms.includes(room));
   let lastDateRef = { value: "" };
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // RENDER
-  // ══════════════════════════════════════════════════════════════════════════
   return (
     <div
-      className={
-        tab === "chat"
-          ? "h-screen flex flex-col overflow-hidden bg-black text-white"
-          : ""
-      }
+      className={`${tab === "chat" ? "h-screen flex flex-col overflow-hidden" : ""}`}
+      style={{
+        background: tab === "chat" ? "hsl(var(--background))" : undefined,
+        color: "hsl(var(--foreground))",
+      }}
     >
-      {/* PAGE HEADER — feed only */}
+      {/* ── Page header — feed only ─────────────────────────────────────── */}
       {tab === "feed" && (
         <div
           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pt-5" : "px-6 pt-10"}`}
@@ -383,37 +360,40 @@ export function Community() {
         </div>
       )}
 
-      {/* ── TAB SWITCHER ─────────────────────────────────────────────────── */}
+      {/* ── Tab switcher ───────────────────────────────────────────────── */}
       <div
-        className={`${tab === "chat" ? "px-4 pt-3 pb-2" : `max-w-[760px] mx-auto ${isMobile ? "px-3.5" : "px-6"}`} mb-3`}
+        className={`${
+          tab === "chat"
+            ? "px-4 pt-4 pb-2"
+            : `max-w-[760px] mx-auto ${isMobile ? "px-3.5" : "px-6"}`
+        } mb-4`}
       >
-        <div className="flex gap-2 bg-zinc-900 p-1 rounded-xl w-fit">
-          <button
-            onClick={() => setTab("feed")}
-            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              tab === "feed"
-                ? "bg-orange-500 text-black"
-                : "text-gray-400 hover:text-white"
-            }`}
-          >
-            📣 Feed
-          </button>
-          <button
-            onClick={() => {
-              if (!canChat) {
-                toast("Upgrade to Gold to unlock Chat Rooms 🔒", "error");
-                return;
-              }
-              setTab("chat");
-            }}
-            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              tab === "chat"
-                ? "bg-orange-500 text-black"
-                : "text-gray-400 hover:text-white"
-            }`}
-          >
-            💬 Chat Rooms {!canChat && "🔒"}
-          </button>
+        <div
+          className="flex gap-1.5 p-1 rounded-xl w-fit"
+          style={{ background: "hsl(var(--secondary))" }}
+        >
+          {[
+            { id: "feed", label: "📣 Feed" },
+            { id: "chat", label: `💬 Chat Rooms${!canChat ? " 🔒" : ""}` },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => {
+                if (t.id === "chat" && !canChat) {
+                  toast("Upgrade to Gold to unlock Chat Rooms 🔒", "error");
+                  return;
+                }
+                setTab(t.id as any);
+              }}
+              className="px-5 py-2 rounded-lg text-sm font-bold transition-all border-none cursor-pointer font-body"
+              style={{
+                background: tab === t.id ? "hsl(20 100% 50%)" : "transparent",
+                color: tab === t.id ? "#000" : "hsl(var(--muted-foreground))",
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -424,10 +404,20 @@ export function Community() {
         <div
           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pb-5" : "px-6 pb-10"}`}
         >
-          <div className="mk2-card mb-4">
-            <label className="mk2-label">Share with the MK2 Community</label>
+          {/* Post composer */}
+          <div className="mk2-card mb-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center font-display text-sm shrink-0 text-black"
+                style={{ background: user.color }}
+              >
+                {user.name[0]}
+              </div>
+              <div className="text-sm font-bold">{user.name}</div>
+            </div>
             <textarea
-              className="mk2-textarea mb-3"
+              className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-sm outline-none resize-none font-body focus:border-primary/40 transition-colors mb-3"
+              rows={3}
               placeholder="Share a win, ask a question, motivate someone…"
               value={feedText}
               onChange={(e) => setFeedText(e.target.value)}
@@ -437,6 +427,7 @@ export function Community() {
             </Btn>
           </div>
 
+          {/* Posts */}
           <div className="flex flex-col gap-3.5">
             {posts.map((p, i) => (
               <motion.div
@@ -446,9 +437,9 @@ export function Community() {
                 transition={{ delay: i * 0.06 }}
                 className="mk2-card"
               >
-                <div className="flex items-center gap-2.5 mb-2.5">
+                <div className="flex items-center gap-2.5 mb-3">
                   <div
-                    className="w-9 h-9 rounded-full flex items-center justify-center font-display text-[15px] text-primary-foreground shrink-0"
+                    className="w-9 h-9 rounded-full flex items-center justify-center font-display text-sm text-black shrink-0"
                     style={{ background: p.color }}
                   >
                     {p.author[0]}
@@ -460,9 +451,9 @@ export function Community() {
                     </div>
                   </div>
                 </div>
-                <div className="text-sm leading-relaxed mb-3 text-foreground/80">
+                <p className="text-sm leading-relaxed mb-3 text-foreground/80">
                   {p.text}
-                </div>
+                </p>
                 <button
                   onClick={() =>
                     setPosts(
@@ -471,7 +462,12 @@ export function Community() {
                       ),
                     )
                   }
-                  className="bg-transparent border border-border rounded-full px-3.5 py-1 text-muted-foreground text-xs cursor-pointer font-body font-semibold hover:border-primary/40 hover:text-primary transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold cursor-pointer transition-all border font-body"
+                  style={{
+                    background: "transparent",
+                    borderColor: "hsl(var(--border))",
+                    color: "hsl(var(--muted-foreground))",
+                  }}
                 >
                   ❤️ {p.likes}
                 </button>
@@ -486,26 +482,34 @@ export function Community() {
       {/* ══════════════════════════════════════════════════════════════════ */}
       {tab === "chat" && canChat && (
         <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Sidebar */}
+          {/* ── Sidebar ──────────────────────────────────────────────────── */}
           {(!isChatMobile || !room) && (
-            <div className="flex flex-col w-full md:w-[300px] border-r border-gray-800 p-4 overflow-y-auto">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center text-xl">
+            <div
+              className="flex flex-col w-full md:w-[280px] overflow-y-auto p-4"
+              style={{ borderRight: "1px solid hsl(var(--border))" }}
+            >
+              {/* Sidebar header */}
+              <div className="flex items-center gap-3 mb-5">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl text-black font-bold"
+                  style={{ background: "hsl(20 100% 50%)" }}
+                >
                   💬
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold">Chat Rooms</h2>
-                  <p className="text-xs text-gray-400">
-                    Logged in as {username}
-                  </p>
+                  <div className="font-bold text-sm">Chat Rooms</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {username}
+                  </div>
                 </div>
               </div>
 
+              {/* Joined rooms */}
               {joinedRooms.length > 0 && (
                 <>
-                  <p className="text-xs text-gray-400 mb-2 uppercase tracking-wider">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground mb-2">
                     My Rooms
-                  </p>
+                  </div>
                   {ROOMS.filter((r) => joinedRooms.includes(r.name)).map(
                     (r) => (
                       <RoomCard
@@ -516,12 +520,17 @@ export function Community() {
                       />
                     ),
                   )}
+                  <div
+                    className="my-3"
+                    style={{ height: 1, background: "hsl(var(--border))" }}
+                  />
                 </>
               )}
 
-              <p className="text-xs text-gray-400 mt-4 mb-2 uppercase tracking-wider">
+              {/* Discover rooms */}
+              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground mb-2">
                 Discover
-              </p>
+              </div>
               {ROOMS.filter((r) => !joinedRooms.includes(r.name)).map((r) => (
                 <RoomCard
                   key={r.name}
@@ -533,7 +542,7 @@ export function Community() {
             </div>
           )}
 
-          {/* Chat panel */}
+          {/* ── Chat panel ───────────────────────────────────────────────── */}
           {(!isChatMobile || room) && (
             <div className="flex-1 flex flex-col min-h-0">
               {room ? (
@@ -551,17 +560,31 @@ export function Community() {
 
                   {!isJoined ? (
                     <div className="flex flex-col items-center justify-center flex-1 gap-4">
-                      <p className="text-gray-400">Join this room to chat</p>
+                      <div className="text-4xl">💬</div>
+                      <div className="font-bold text-sm">
+                        Join this room to chat
+                      </div>
+                      <p className="text-xs text-muted-foreground text-center max-w-[240px]">
+                        Connect with other MK2R members in this room
+                      </p>
                       <button
                         onClick={joinRoom}
-                        className="bg-orange-500 px-8 py-3 rounded-xl text-black font-bold"
+                        className="px-8 py-3 rounded-xl font-bold text-sm border-none cursor-pointer"
+                        style={{
+                          background: "hsl(20 100% 50%)",
+                          color: "#000",
+                        }}
                       >
-                        Join Room
+                        Join Room →
                       </button>
                     </div>
                   ) : (
                     <>
-                      <div className="flex-1 overflow-y-auto p-4 min-h-0 bg-black">
+                      {/* Messages */}
+                      <div
+                        className="flex-1 overflow-y-auto p-4 min-h-0"
+                        style={{ background: "hsl(var(--background))" }}
+                      >
                         {[...messages, ...polls]
                           .sort((a, b) => a.createdAt - b.createdAt)
                           .map((item: any) => {
@@ -572,7 +595,12 @@ export function Community() {
                             return (
                               <div key={item.id}>
                                 {showDate && (
-                                  <div className="text-center text-xs text-gray-400 my-3">
+                                  <div
+                                    className="text-center text-[11px] font-bold my-4 uppercase tracking-widest"
+                                    style={{
+                                      color: "hsl(var(--muted-foreground))",
+                                    }}
+                                  >
                                     {date}
                                   </div>
                                 )}
@@ -614,9 +642,12 @@ export function Community() {
                   )}
                 </>
               ) : (
-                <div className="flex flex-col items-center justify-center flex-1 text-gray-500">
-                  <div className="text-5xl mb-4">💬</div>
-                  <p>Select a room to start chatting</p>
+                <div className="flex flex-col items-center justify-center flex-1 gap-3">
+                  <div className="text-5xl">💬</div>
+                  <div className="font-bold text-sm">Select a room</div>
+                  <p className="text-xs text-muted-foreground">
+                    Choose a room from the sidebar to start chatting
+                  </p>
                 </div>
               )}
             </div>
@@ -624,7 +655,34 @@ export function Community() {
         </div>
       )}
 
-      {/* Context menu */}
+      {/* ── Gold gate ──────────────────────────────────────────────────── */}
+      {tab === "chat" && !canChat && (
+        <div
+          className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pb-10" : "px-6 pb-10"}`}
+        >
+          <div
+            className="mk2-card text-center py-12"
+            style={{ borderTop: "3px solid hsl(38 92% 50%)" }}
+          >
+            <div className="text-5xl mb-4">🔒</div>
+            <div
+              className="font-display text-xl mb-2"
+              style={{ color: "hsl(38 92% 50%)" }}
+            >
+              Gold Members Only
+            </div>
+            <p className="text-sm text-muted-foreground mb-5 max-w-[300px] mx-auto leading-relaxed">
+              Chat Rooms are exclusive to Gold members. Upgrade to join the
+              conversation, share files, and connect with the MK2R community.
+            </p>
+            <Btn variant="primary" onClick={() => {}}>
+              Upgrade to Gold →
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      {/* ── Context menu ───────────────────────────────────────────────── */}
       {menuMsg && (
         <MessageMenu
           ref={menuRef}
@@ -654,66 +712,107 @@ export function Community() {
         />
       )}
 
-      {/* Poll modal */}
-      {showPollForm && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-zinc-900 p-6 rounded-2xl w-full max-w-md">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-white">
-                {editingPoll ? "Edit Poll" : "Create Poll"}
-              </h2>
-              <button
-                onClick={() => setShowPollForm(false)}
-                className="text-gray-400"
-              >
-                ✖
-              </button>
-            </div>
-
-            <input
-              value={pollQuestion}
-              onChange={(e) => setPollQuestion(e.target.value)}
-              placeholder="What do you want to ask?"
-              className="w-full mb-3 p-3 rounded-lg bg-black border border-gray-700 text-white"
-            />
-            <input
-              placeholder="Option 1, Option 2, Option 3"
-              defaultValue={pollOptions.join(", ")}
-              onChange={(e) => setPollOptions(e.target.value.split(","))}
-              className="w-full mb-3 p-3 rounded-lg bg-black border border-gray-700 text-white"
-            />
-
-            <div className="mb-4">
-              <p className="text-sm text-gray-400 mb-2">Poll duration</p>
-              <div className="flex gap-3">
-                {[
-                  { label: "hrs", value: pollHours, setter: setPollHours },
-                  { label: "min", value: pollMinutes, setter: setPollMinutes },
-                  { label: "sec", value: pollSeconds, setter: setPollSeconds },
-                ].map(({ label, value, setter }) => (
-                  <div key={label} className="flex-1 text-center">
-                    <input
-                      type="number"
-                      min={0}
-                      value={value}
-                      onChange={(e) => setter(Number(e.target.value))}
-                      className="w-full p-3 rounded-lg bg-black border border-gray-700 text-center text-white"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">{label}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <button
-              onClick={savePoll}
-              className="w-full bg-orange-500 py-3 rounded-xl text-black font-bold"
+      {/* ── Poll modal ─────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showPollForm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 flex items-center justify-center z-50 p-4"
+            style={{ background: "rgba(0,0,0,0.7)" }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              className="w-full max-w-md rounded-2xl p-6"
+              style={{
+                background: "hsl(var(--card))",
+                border: "1px solid hsl(var(--border))",
+              }}
             >
-              {editingPoll ? "Save Changes" : "Create Poll"}
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="flex justify-between items-center mb-5">
+                <div className="font-bold text-base">
+                  {editingPoll ? "Edit Poll" : "Create Poll"}
+                </div>
+                <button
+                  onClick={() => setShowPollForm(false)}
+                  className="text-muted-foreground bg-transparent border-none cursor-pointer text-lg"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="mb-3">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground block mb-1.5">
+                  Question
+                </label>
+                <input
+                  value={pollQuestion}
+                  onChange={(e) => setPollQuestion(e.target.value)}
+                  placeholder="What do you want to ask?"
+                  className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-sm outline-none font-body focus:border-primary/40"
+                />
+              </div>
+
+              <div className="mb-4">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground block mb-1.5">
+                  Options (comma separated)
+                </label>
+                <input
+                  placeholder="Option 1, Option 2, Option 3"
+                  defaultValue={pollOptions.join(", ")}
+                  onChange={(e) => setPollOptions(e.target.value.split(","))}
+                  className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-sm outline-none font-body focus:border-primary/40"
+                />
+              </div>
+
+              <div className="mb-5">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground block mb-1.5">
+                  Duration
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: "Hours", value: pollHours, setter: setPollHours },
+                    {
+                      label: "Minutes",
+                      value: pollMinutes,
+                      setter: setPollMinutes,
+                    },
+                    {
+                      label: "Seconds",
+                      value: pollSeconds,
+                      setter: setPollSeconds,
+                    },
+                  ].map(({ label, value, setter }) => (
+                    <div key={label} className="text-center">
+                      <input
+                        type="number"
+                        min={0}
+                        value={value}
+                        onChange={(e) => setter(Number(e.target.value))}
+                        className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-center text-sm outline-none font-body"
+                      />
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        {label}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={savePoll}
+                className="w-full py-3 rounded-xl font-bold text-sm border-none cursor-pointer font-body"
+                style={{ background: "hsl(20 100% 50%)", color: "#000" }}
+              >
+                {editingPoll ? "Save Changes" : "Create Poll →"}
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
