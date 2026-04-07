@@ -8,58 +8,43 @@ export default function ChatInput({
   createPoll,
   replyTo,
   setReplyTo,
-  onFileSelect
+  onFileSelect,
 }: any) {
-
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const handleFileChange = (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (onFileSelect) {
-      onFileSelect(file);
-    }
-
-    // ✅ reset input so same file can be selected again
+    if (onFileSelect) onFileSelect(file);
     e.target.value = "";
   };
 
   return (
-    <div className="p-3 border-t border-gray-800">
-
-      {/* ✅ REPLY PREVIEW */}
+    <div className="p-3 border-t border-border bg-card transition-colors duration-200">
       {replyTo && (
-        <div className="bg-zinc-800 border-l-4 border-orange-500 p-2 rounded mb-2 text-sm flex justify-between items-center">
+        <div className="border-l-4 border-primary p-2 rounded mb-2 text-sm flex justify-between items-center bg-secondary">
           <div className="overflow-hidden">
-            <p className="text-gray-400 text-xs">
+            <p className="text-xs text-muted-foreground">
               Replying to {replyTo.user}
             </p>
-            <p className="truncate text-xs">
-              {replyTo.text}
-            </p>
+            <p className="truncate text-xs text-foreground">{replyTo.text}</p>
           </div>
-
           <button
             onClick={() => setReplyTo(null)}
-            className="ml-2 text-xs"
+            className="ml-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             ✖
           </button>
         </div>
       )}
-
-      {/* INPUT ROW */}
       <div className="flex gap-2">
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-          className="flex-1 bg-zinc-900 p-2 rounded"
           placeholder="Type message..."
+          className="flex-1 p-2 rounded bg-background text-foreground placeholder:text-muted-foreground border border-border outline-none transition-colors duration-200"
         />
-
-        {/* ✅ FILE INPUT */}
         <input
           type="file"
           ref={fileRef}
@@ -67,16 +52,23 @@ export default function ChatInput({
           accept="image/*,video/*"
           onChange={handleFileChange}
         />
-
-        {/* 📎 Upload Button */}
-        <button onClick={() => fileRef.current?.click()}>
+        <button
+          onClick={() => fileRef.current?.click()}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
           📎
         </button>
-
-        <button onClick={createPoll}>📊</button>
-
-        <button onClick={sendMessage}>
-          <Send />
+        <button
+          onClick={createPoll}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          📊
+        </button>
+        <button
+          onClick={sendMessage}
+          className="text-primary hover:opacity-80 transition-opacity"
+        >
+          <Send size={20} />
         </button>
       </div>
     </div>

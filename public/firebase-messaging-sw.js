@@ -1,7 +1,3 @@
-// firebase-messaging-sw.js
-// ⚠️  This file MUST live in your /public folder (not src/)
-// It runs in the background even when the app is closed
-
 importScripts(
   "https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js",
 );

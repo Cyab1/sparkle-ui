@@ -12,6 +12,8 @@ import {
 import { saveUser } from "@/lib/firebase";
 import { GOALS, LEVELS, ACCENT_COLORS } from "@/lib/constants";
 import { motion, AnimatePresence } from "framer-motion";
+import { requestNotificationPermission } from "@/lib/firebase-messaging"; // <-- added
+import { listenForForegroundMessages } from "@/lib/firebase-messaging"; // <-- added
 import { sendPasswordResetEmail, sendEmailVerification } from "firebase/auth";
 import { ref, set } from "firebase/database"; // <-- added: database helpers
 
@@ -67,7 +69,7 @@ export function AuthScreen({ setPage }: AuthScreenProps) {
   const [resetSent, setResetSent] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  // ── NEW: Terms checkbox state
+  // ── Terms checkbox state
   const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const login = async () => {
@@ -131,12 +133,12 @@ export function AuthScreen({ setPage }: AuthScreenProps) {
         createdAt: Date.now(),
         classCredits: 0,
         aiCredits: {},
-        termsAcceptedAt: Date.now(), // records when they accepted
-        termsVersion: "March 2026", // records which version they accepted
+        termsAcceptedAt: Date.now(),
+        termsVersion: "March 2026",
       };
       await saveUser(uid, newUser);
 
-      // ── NEW: Save T&C acceptance record separately for admin audit
+      // Save T&C acceptance record separately for admin audit
       try {
         await set(ref(db, `terms_acceptance/${uid}`), {
           uid,

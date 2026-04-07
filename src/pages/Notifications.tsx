@@ -1,5 +1,4 @@
-// src/pages/Notifications.tsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { useGeolocation } from "@/hooks/useGeolocation";
@@ -7,6 +6,9 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { Btn } from "@/components/shared/Btn";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { motion } from "framer-motion";
+import { ref, set, get, remove } from "firebase/database";
+import { db } from "@/lib/firebase";
+import { getMessaging, getToken, deleteToken } from "firebase/messaging";
 
 // Helper to format timestamp
 const formatTime = (timestamp: number) => {
@@ -21,7 +23,6 @@ const formatTime = (timestamp: number) => {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 };
 
-// Map notification title/type to an icon
 const getIcon = (title: string, message: string) => {
   const lower = (title + " " + message).toLowerCase();
   if (lower.includes("class") || lower.includes("booking")) return "🏋️";
@@ -29,6 +30,13 @@ const getIcon = (title: string, message: string) => {
   if (lower.includes("workout") || lower.includes("planner")) return "⚡";
   if (lower.includes("check")) return "✅";
   if (lower.includes("news")) return "📢";
+  if (lower.includes("poll")) return "📊";
+  if (
+    lower.includes("community") ||
+    lower.includes("chat") ||
+    lower.includes("message")
+  )
+    return "💬";
   if (lower.includes("geo") || lower.includes("location")) return "📍";
   return "🔔";
 };
@@ -45,10 +53,65 @@ const getTypeColor = (title: string, message: string) => {
   if (lower.includes("geo") || lower.includes("location"))
     return "hsl(187 85% 40%)";
   if (lower.includes("news")) return "hsl(263 85% 58%)";
+  if (
+    lower.includes("community") ||
+    lower.includes("chat") ||
+    lower.includes("poll") ||
+    lower.includes("message")
+  )
+    return "hsl(20 100% 50%)";
   return "hsl(var(--muted-foreground))";
 };
 
-// ── Added `setPage` prop ──────────────────────────────────────────────────
+const PREF_KEYS = [
+  {
+    label: "Class reminders",
+    icon: "📅",
+    key: "classReminders",
+    default: true,
+  },
+  {
+    label: "Reward milestones",
+    icon: "🏆",
+    key: "rewardMilestones",
+    default: true,
+  },
+  { label: "Workout nudges", icon: "⚡", key: "workoutNudges", default: true },
+  { label: "Gym news", icon: "📢", key: "gymNews", default: false },
+  {
+    label: "Check-in streaks",
+    icon: "✅",
+    key: "checkinStreaks",
+    default: true,
+  },
+  { label: "Community", icon: "💬", key: "community", default: false },
+];
+
+const FCM_VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY as string;
+
+// ── FCM token helpers – store token at mk2_users/${uid}/fcmToken (singular) ──
+async function registerCommunityToken(uid: string) {
+  try {
+    const messaging = getMessaging();
+    const token = await getToken(messaging, { vapidKey: FCM_VAPID_KEY });
+    if (token) {
+      await set(ref(db, `mk2_users/${uid}/fcmToken`), token);
+    }
+  } catch (err) {
+    console.warn("FCM token registration failed:", err);
+  }
+}
+
+async function unregisterCommunityToken(uid: string) {
+  try {
+    const messaging = getMessaging();
+    await deleteToken(messaging);
+    await remove(ref(db, `mk2_users/${uid}/fcmToken`));
+  } catch (err) {
+    console.warn("FCM token unregistration failed:", err);
+  }
+}
+
 export function Notifications({ setPage }: { setPage: (p: string) => void }) {
   const { user } = useAuth();
   const { isMobile } = useBreakpoint();
@@ -62,7 +125,6 @@ export function Notifications({ setPage }: { setPage: (p: string) => void }) {
     lat,
   } = useGeolocation();
 
-  // Real notifications from Firebase
   const {
     notifications,
     unreadCount,
@@ -71,9 +133,39 @@ export function Notifications({ setPage }: { setPage: (p: string) => void }) {
     markAllAsRead,
   } = useNotifications(user?.uid || null);
 
-  // Push notification permission
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [geoEnabled, setGeoEnabled] = useState(false);
+
+  const [prefs, setPrefs] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(PREF_KEYS.map((p) => [p.key, p.default])),
+  );
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    get(ref(db, `mk2_users/${user.uid}/notificationPrefs`)).then((snap) => {
+      if (snap.exists()) setPrefs(snap.val());
+      setPrefsLoaded(true);
+    });
+  }, [user?.uid]);
+
+  const togglePref = async (key: string, value: boolean) => {
+    if (!user?.uid) return;
+    const updated = { ...prefs, [key]: value };
+    setPrefs(updated);
+    await set(ref(db, `mk2_users/${user.uid}/notificationPrefs`), updated);
+
+    if (key === "community") {
+      if (value) {
+        const browserPerm = await Notification.requestPermission();
+        if (browserPerm === "granted") {
+          await registerCommunityToken(user.uid);
+        }
+      } else {
+        await unregisterCommunityToken(user.uid);
+      }
+    }
+  };
 
   if (!user) return null;
 
@@ -181,7 +273,7 @@ export function Notifications({ setPage }: { setPage: (p: string) => void }) {
         </div>
       </motion.div>
 
-      {/* Notification Preferences (UI only – could be saved to user prefs later) */}
+      {/* Notification Preferences — saved to Firebase */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -189,29 +281,29 @@ export function Notifications({ setPage }: { setPage: (p: string) => void }) {
         className="mk2-card mb-5"
       >
         <div className="font-bold text-sm mb-3">Notification Preferences</div>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            ["Class reminders", "📅", true],
-            ["Reward milestones", "🏆", true],
-            ["Workout nudges", "⚡", true],
-            ["Gym news", "📢", false],
-            ["Check-in streaks", "✅", true],
-            ["Community", "💬", false],
-          ].map(([label, icon, def]: any) => (
-            <label
-              key={label}
-              className="flex items-center gap-2.5 p-2.5 bg-secondary rounded-lg cursor-pointer"
-            >
-              <span>{icon}</span>
-              <span className="flex-1 text-xs font-medium">{label}</span>
-              <input
-                type="checkbox"
-                defaultChecked={def}
-                className="accent-orange-500 w-4 h-4"
-              />
-            </label>
-          ))}
-        </div>
+        {!prefsLoaded ? (
+          <div className="text-xs text-muted-foreground">
+            Loading preferences…
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {PREF_KEYS.map(({ label, icon, key }) => (
+              <label
+                key={key}
+                className="flex items-center gap-2.5 p-2.5 bg-secondary rounded-lg cursor-pointer"
+              >
+                <span>{icon}</span>
+                <span className="flex-1 text-xs font-medium">{label}</span>
+                <input
+                  type="checkbox"
+                  checked={prefs[key] ?? false}
+                  onChange={(e) => togglePref(key, e.target.checked)}
+                  className="accent-orange-500 w-4 h-4"
+                />
+              </label>
+            ))}
+          </div>
+        )}
       </motion.div>
 
       {/* Notifications list */}
@@ -292,6 +384,7 @@ export function Notifications({ setPage }: { setPage: (p: string) => void }) {
     </div>
   );
 }
+
 
 // import { useState } from "react";
 // import { useAuth } from "@/context/AuthContext";
