@@ -355,3 +355,88 @@
 [data-theme="light"] [style*="rgba(255,255,255,0.15)"] {
   color: hsl(var(--border)) !important;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   FIXES FOR MOBILE BOTTOM NAV, COLOUR NOISE, AND TAG CONSISTENCY
+   (Appended from admin update)
+───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Bottom nav tab labels — prevent overlap on small screens ─────────────── */
+[data-tab-bar] button,
+.bottom-tab-bar button,
+nav[role="tablist"] button {
+  min-width: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-tab-bar] button span,
+[data-tab-bar] button small,
+.bottom-tab-bar button span,
+.bottom-tab-bar button small,
+nav[role="tablist"] button span,
+nav[role="tablist"] button small {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+@media (min-width: 380px) {
+  [data-tab-bar] button span,
+  [data-tab-bar] button small,
+  .bottom-tab-bar button span,
+  nav[role="tablist"] button span {
+    font-size: 10px;
+  }
+}
+
+/* ── Leaderboard tab switcher — fits on screen without overflow ───────────── */
+.leaderboard-tabs {
+  display: flex;
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  gap: 4px;
+}
+.leaderboard-tabs::-webkit-scrollbar {
+  display: none;
+}
+.leaderboard-tabs button {
+  flex: 1;
+  min-width: 90px;
+  white-space: nowrap;
+}
+
+/* ── News & Events — enforce white/orange/grey palette ───────────────────── */
+.news-card-tag {
+  background: hsl(0 0% 12%) !important;
+  color: hsl(0 0% 55%) !important;
+  border-color: hsl(0 0% 20%) !important;
+}
+.news-card-tag[data-type="Event"] {
+  background: hsl(20 100% 50% / 0.12) !important;
+  color: hsl(20 100% 50%) !important;
+  border-color: hsl(20 100% 50% / 0.25) !important;
+}
+
+/* ── Suppress multicolour top borders on news cards (use single orange) ─── */
+.news-grid .mk2-card {
+  border-top-color: hsl(20 100% 50%) !important;
+}
+
+/* ── Global: reduce tag colour variety — only orange/grey used for status ─── */
+.mk2-tag:not([data-variant="primary"]):not([data-variant="success"]):not(
+    [data-variant="warning"]
+  ) {
+  background: hsl(0 0% 10%);
+  color: hsl(0 0% 55%);
+  border: 1px solid hsl(0 0% 18%);
+}

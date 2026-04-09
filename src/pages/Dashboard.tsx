@@ -2,13 +2,11 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { Btn } from "@/components/shared/Btn";
-import { Tag } from "@/components/shared/Tag";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { motion, AnimatePresence } from "framer-motion";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { sendEmailVerification } from "firebase/auth";
 import { ref, onValue } from "firebase/database";
-import { db } from "@/lib/firebase";
 
 function MI({ icon, size = 20 }: { icon: string; size?: number }) {
   return (
@@ -27,42 +25,51 @@ const MEMBERSHIP_CONFIG = {
   gold: { label: "Gold", color: "hsl(38 92% 50%)", emoji: "🥇" },
 } as const;
 
-const getLoyaltyTier = (points: number) => {
-  if (points >= 500)
-    return {
-      label: "Gold",
-      color: "hsl(38 92% 44%)",
-      next: null,
-      nextLabel: null,
-    };
-  if (points >= 200)
-    return { label: "Silver", color: "#94a3b8", next: 500, nextLabel: "Gold" };
-  return { label: "Bronze", color: "#a16207", next: 200, nextLabel: "Silver" };
-};
-
 const NEWS_PREVIEW = [
   {
     emoji: "🏆",
     type: "Event",
     title: "30-Day Transformation Challenge",
     date: "1 Apr 2026",
-    color: "hsl(20 100% 50%)",
   },
   {
     emoji: "💪",
     type: "News",
     title: "New CrossFit Equipment Arrived",
     date: "20 Mar 2026",
-    color: "hsl(217 91% 53%)",
   },
   {
     emoji: "🏃",
     type: "Event",
     title: "Charity Fun Run — 5km & 10km",
     date: "12 Apr 2026",
-    color: "hsl(142 72% 37%)",
   },
 ];
+
+// ── Rewards helpers ───────────────────────────────────────────────────────────
+const CHECKIN_MILESTONE = 40;
+
+export function getRewardStatus(checkIns: any[], rewards: Record<string, any>) {
+  const total = checkIns.length;
+  const milestonesEarned = Math.floor(total / CHECKIN_MILESTONE);
+  const rewardsRedeemed = Object.values(rewards ?? {}).filter(
+    (r) => r.status === "redeemed",
+  ).length;
+  const rewardsPending = Object.values(rewards ?? {}).filter(
+    (r) => r.status === "pending",
+  );
+  const nextMilestoneAt = (milestonesEarned + 1) * CHECKIN_MILESTONE;
+  const progressToNext = total % CHECKIN_MILESTONE;
+  return {
+    total,
+    milestonesEarned,
+    rewardsRedeemed,
+    rewardsPending,
+    nextMilestoneAt,
+    progressToNext,
+    pct: Math.round((progressToNext / CHECKIN_MILESTONE) * 100),
+  };
+}
 
 export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
   const { user } = useAuth();
@@ -72,17 +79,19 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
   const [resendSent, setResendSent] = useState(false);
   const [resending, setResending] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [liveNews, setLiveNews] = useState<any[]>([]);
 
-  // Listen for news updates to compute unread count
   useEffect(() => {
     if (!user) return;
     return onValue(ref(db, "admin_news"), (snap) => {
       if (!snap.exists()) return;
       const lastSeen = (user as any).lastSeenNewsAt ?? 0;
       const items = Object.values(snap.val()) as any[];
-      const unread = items.filter(
-        (n) => (n.createdAt ?? Date.now()) > lastSeen,
-      ).length;
+      const sorted = items.sort(
+        (a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
+      );
+      setLiveNews(sorted.slice(0, 3));
+      const unread = items.filter((n) => (n.createdAt ?? 0) > lastSeen).length;
       setUnreadCount(unread);
     });
   }, [user]);
@@ -99,66 +108,62 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
     try {
       await sendEmailVerification(firebaseUser);
       setResendSent(true);
-    } catch {
-      // silently fail
-    }
+    } catch {}
     setResending(false);
   };
 
-  const thisWeek = user.workouts.filter(
-    (w: any) => Date.now() - w.date < 7 * 86400000,
-  ).length;
   const membership = (user as any).membership ?? "basic";
   const memberConfig =
     MEMBERSHIP_CONFIG[membership as keyof typeof MEMBERSHIP_CONFIG];
-  const loyalty = getLoyaltyTier(user.points);
-  const pct = loyalty.next
-    ? Math.min(100, (user.points / loyalty.next) * 100)
-    : 100;
   const memberRank = { basic: 0, silver: 1, gold: 2 }[membership] ?? 0;
   const isLocked = (required: "basic" | "silver" | "gold") =>
     ({ basic: 0, silver: 1, gold: 2 })[required] > memberRank;
 
+  const rewards = (user as any).rewards ?? {};
+  const rewardStatus = getRewardStatus(user.checkIns, rewards);
+  const hasPendingReward = rewardStatus.rewardsPending.length > 0;
+
   const stats = [
-    {
-      label: "Workouts",
-      sub: "via AI Planner",
-      value: user.workouts.length,
-      accent: "hsl(20 100% 50%)",
-      icon: "bolt",
-    },
-    {
-      label: "This Week",
-      sub: "workouts logged",
-      value: thisWeek,
-      accent: "hsl(217 91% 53%)",
-      icon: "calendar_today",
-    },
-    {
-      label: "Classes",
-      sub: "booked",
-      value: user.bookings.length,
-      accent: "hsl(263 85% 58%)",
-      icon: "fitness_center",
-    },
-    {
-      label: "Check-ins",
-      sub: "gym visits",
-      value: user.checkIns.length,
-      accent: "hsl(142 72% 37%)",
-      icon: "where_to_vote",
-    },
+    { label: "Workouts", value: user.workouts.length, icon: "bolt" },
+    { label: "Classes", value: user.bookings.length, icon: "fitness_center" },
+    { label: "Check-ins", value: user.checkIns.length, icon: "where_to_vote" },
+    { label: "Points", value: user.points, icon: "star" },
   ];
+
+  const newsToShow = liveNews.length > 0 ? liveNews : NEWS_PREVIEW;
 
   return (
     <div
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
-      {/* ── NEW: Notification bell ─────────────────────────────────────────── */}
-      <div className="flex justify-end mb-2">
+      {/* ── Top bar: welcome + bell ─────────────────────────────────────── */}
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+        <div>
+          <div
+            className={`font-display tracking-[0.06em] leading-none ${isMobile ? "text-[28px]" : "text-[40px]"}`}
+          >
+            Welcome,{" "}
+            <span className="text-primary">{user.name.split(" ")[0]}</span>
+          </div>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className="text-muted-foreground text-xs">
+              {user.goal} · {user.level}
+            </span>
+            <span
+              className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+              style={{
+                background: `${memberConfig.color}20`,
+                color: memberConfig.color,
+                border: `1px solid ${memberConfig.color}40`,
+              }}
+            >
+              {memberConfig.emoji} {memberConfig.label}
+            </span>
+          </div>
+        </div>
         <button
-          onClick={() => setPage("News")}
-          className="relative flex items-center gap-2 px-3 py-2 rounded-xl border-none cursor-pointer transition-all"
+          onClick={() => setPage("Notifications")}
+          className="relative flex items-center gap-1.5 px-3 py-2 rounded-xl cursor-pointer transition-all"
           style={{
             background:
               unreadCount > 0
@@ -167,72 +172,62 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
             border: `1px solid ${unreadCount > 0 ? "hsl(20 100% 50% / 0.3)" : "hsl(var(--border))"}`,
           }}
         >
-          <span className="relative">
-            <MI icon="notifications" size={20} />
-            {unreadCount > 0 && (
-              <span
-                className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black"
-                style={{ background: "hsl(20 100% 50%)" }}
-              >
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </span>
-            )}
-          </span>
-          <span className="text-xs font-bold text-muted-foreground">
-            {unreadCount > 0 ? `${unreadCount} new` : "Notifications"}
+          <MI icon="notifications" size={18} />
+          {unreadCount > 0 && (
+            <span
+              className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black"
+              style={{ background: "hsl(20 100% 50%)" }}
+            >
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
+          <span className="text-xs font-bold text-muted-foreground hidden sm:block">
+            {unreadCount > 0 ? `${unreadCount} new` : "Alerts"}
           </span>
         </button>
       </div>
 
-      {/* Email verification banner */}
+      {/* ── Email verification banner ───────────────────────────────────── */}
       <AnimatePresence>
         {showVerifyBanner && (
           <motion.div
-            initial={{ opacity: 0, y: -10, height: 0 }}
-            animate={{ opacity: 1, y: 0, height: "auto" }}
-            exit={{ opacity: 0, y: -10, height: 0 }}
-            transition={{ duration: 0.25 }}
-            className="mb-5 rounded-xl px-4 py-3.5 flex items-center gap-3 flex-wrap"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mb-4 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap"
             style={{
               background: "hsl(38 92% 44% / 0.1)",
-              border: "1px solid hsl(38 92% 44% / 0.35)",
+              border: "1px solid hsl(38 92% 44% / 0.3)",
             }}
           >
-            <span className="text-xl flex-shrink-0">📧</span>
+            <span className="text-xl">📧</span>
             <div className="flex-1 min-w-0">
               <div
-                className="font-bold text-sm"
+                className="font-bold text-xs"
                 style={{ color: "hsl(38 92% 44%)" }}
               >
-                Verify your email address
+                Verify your email
               </div>
-              <div className="text-xs text-muted-foreground mt-0.5">
-                We sent a verification link to{" "}
-                <strong className="text-foreground">{user.email}</strong>. Check
-                your inbox (and spam folder).
-              </div>
+              <div className="text-xs text-muted-foreground">{user.email}</div>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex gap-2">
               {!resendSent ? (
                 <button
                   onClick={resendVerification}
                   disabled={resending}
-                  className="text-xs font-bold border-none cursor-pointer px-3 py-1.5 rounded-lg transition-all"
+                  className="text-xs font-bold px-3 py-1 rounded-lg border-none cursor-pointer"
                   style={{ background: "hsl(38 92% 44%)", color: "#000" }}
                 >
-                  {resending ? "Sending…" : "Resend email"}
+                  {resending ? "Sending…" : "Resend"}
                 </button>
               ) : (
-                <span
-                  className="text-xs font-bold"
-                  style={{ color: "hsl(142 72% 37%)" }}
-                >
-                  ✓ Email sent!
+                <span className="text-xs font-bold text-green-500">
+                  ✓ Sent!
                 </span>
               )}
               <button
                 onClick={() => setVerifyDismissed(true)}
-                className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
+                className="text-xs text-muted-foreground bg-transparent border-none cursor-pointer"
               >
                 ✕
               </button>
@@ -241,182 +236,117 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         )}
       </AnimatePresence>
 
-      {/* Welcome */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
+      {/* ── Book a class — prominent CTA ───────────────────────────────── */}
+      <motion.button
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mb-6"
+        onClick={() => setPage("Classes")}
+        className="w-full mb-4 py-3.5 rounded-xl font-bold text-sm border-none cursor-pointer flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+        style={{ background: "hsl(20 100% 50%)", color: "#000" }}
       >
-        <div className="flex items-baseline gap-2.5 flex-wrap mb-1">
-          <div
-            className={`font-display tracking-[0.06em] leading-none ${isMobile ? "text-[32px]" : "text-[52px]"}`}
-          >
-            Welcome,
-          </div>
-          <div
-            className={`font-display tracking-[0.06em] leading-none text-primary ${isMobile ? "text-[32px]" : "text-[52px]"}`}
-          >
-            {user.name.split(" ")[0]}
-          </div>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="text-muted-foreground text-sm">
-            Goal: <strong className="text-foreground">{user.goal}</strong> ·
-            Level: <strong className="text-foreground">{user.level}</strong>
-          </div>
-          <span
-            className="text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider"
-            style={{
-              background: `${memberConfig.color}20`,
-              color: memberConfig.color,
-              border: `1px solid ${memberConfig.color}40`,
-            }}
-          >
-            {memberConfig.emoji} {memberConfig.label} Member
-          </span>
-        </div>
-      </motion.div>
+        <MI icon="fitness_center" size={18} />
+        Book a Class
+      </motion.button>
 
-      {/* Stats */}
-      <div
-        className={`grid gap-3 mb-4 ${isMobile ? "grid-cols-2" : "grid-cols-4"}`}
-      >
+      {/* ── Stats row — all 4 in one line ──────────────────────────────── */}
+      <div className="grid grid-cols-4 gap-2 mb-4">
         {stats.map((s, i) => (
           <motion.div
             key={s.label}
-            initial={{ opacity: 0, y: 12 }}
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.08 }}
-            className={`mk2-card ${isMobile ? "p-3.5" : "p-5"}`}
-            style={{ borderLeft: `3px solid ${s.accent}` }}
+            transition={{ delay: i * 0.06 }}
+            className="bg-card border border-border rounded-xl p-3 text-center"
           >
-            <span style={{ color: s.accent }} className="block mb-2">
-              <MI icon={s.icon} size={20} />
-            </span>
-            <div
-              className={`font-display leading-none mb-1 ${isMobile ? "text-4xl" : "text-[44px]"}`}
-              style={{ color: s.accent }}
-            >
+            <div className="font-display text-2xl text-primary leading-none mb-0.5">
               {s.value}
             </div>
-            <div className="text-[11px] font-bold text-foreground leading-tight">
+            <div className="text-[10px] text-muted-foreground font-medium">
               {s.label}
-            </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              {s.sub}
             </div>
           </motion.div>
         ))}
       </div>
 
-      {/* Stat explanation strip */}
+      {/* ── Rewards / Check-in progress ────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.35 }}
-        className="mb-5 px-4 py-3 rounded-xl text-[11px] text-muted-foreground flex flex-wrap gap-x-6 gap-y-1"
-        style={{
-          background: "hsl(var(--secondary))",
-          border: "1px solid hsl(var(--border))",
-        }}
+        transition={{ delay: 0.3 }}
+        className="mk2-card mb-4"
+        style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
       >
-        <span>
-          ⚡ <strong className="text-foreground">Workouts</strong> = sessions
-          logged via AI Planner
-        </span>
-        <span>
-          💪 <strong className="text-foreground">Classes</strong> = gym classes
-          booked & attended
-        </span>
-        <span>
-          ✅ <strong className="text-foreground">Check-ins</strong> = daily gym
-          visits (+10 pts each)
-        </span>
-      </motion.div>
-
-      {/* Rewards */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.4 }}
-        className="mk2-card mb-5"
-        style={{ borderLeft: `3px solid ${loyalty.color}` }}
-      >
-        <div className="flex justify-between items-center flex-wrap gap-2.5 mb-2.5">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
           <div>
-            <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <span className="font-display text-[22px]">REWARDS</span>
-              <Tag color={loyalty.color}>{loyalty.label} Loyalty</Tag>
-              <Tag color={memberConfig.color}>{memberConfig.label} Plan</Tag>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              <strong style={{ color: loyalty.color }}>
-                {user.points} pts
-              </strong>
-              {loyalty.next
-                ? ` · ${loyalty.next - user.points} pts to ${loyalty.nextLabel} loyalty`
-                : " · Max loyalty tier 🏆"}
+            <div className="font-bold text-sm">Rewards Progress</div>
+            <div className="text-xs text-muted-foreground mt-0.5">
+              {rewardStatus.progressToNext} / {CHECKIN_MILESTONE} check-ins to
+              next reward
             </div>
           </div>
-          <Btn variant="ghost" size="sm" onClick={() => setPage("Checkin")}>
-            ✅ Check In +10pts
-          </Btn>
-        </div>
-        <div className="h-1.5 bg-secondary rounded overflow-hidden">
-          <div
-            className="h-full rounded transition-all duration-700"
-            style={{ width: `${pct}%`, background: loyalty.color }}
-          />
-        </div>
-        <div className="mt-2 text-[11px] text-muted-foreground">
-          Silver loyalty (200pts) = 10% off · Gold loyalty (500pts) = 20% off
-          classes
-        </div>
-        {membership === "basic" && (
-          <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
-            <span className="text-[11px] text-muted-foreground">
-              Unlock more features with Silver or Gold
-            </span>
+          <div className="flex gap-2">
+            {hasPendingReward && (
+              <button
+                onClick={() => setPage("Checkin")}
+                className="text-xs font-bold px-3 py-1.5 rounded-lg border-none cursor-pointer animate-pulse"
+                style={{ background: "hsl(20 100% 50%)", color: "#000" }}
+              >
+                🎁 Claim Reward!
+              </button>
+            )}
             <button
-              onClick={() => setPage("Membership")}
-              className="text-[11px] font-bold border-none bg-transparent cursor-pointer"
-              style={{ color: "hsl(20 100% 50%)" }}
+              onClick={() => setPage("Checkin")}
+              className="text-xs font-bold px-3 py-1.5 rounded-lg border-none cursor-pointer"
+              style={{
+                background: "hsl(var(--secondary))",
+                color: "hsl(var(--foreground))",
+                border: "1px solid hsl(var(--border))",
+              }}
             >
-              View plans →
+              ✅ Check In
             </button>
           </div>
-        )}
+        </div>
+        <div className="h-2 bg-secondary rounded-full overflow-hidden">
+          <motion.div
+            className="h-full rounded-full"
+            initial={{ width: 0 }}
+            animate={{ width: `${rewardStatus.pct}%` }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
+            style={{ background: "hsl(20 100% 50%)" }}
+          />
+        </div>
+        <div className="flex justify-between mt-1.5 text-[10px] text-muted-foreground">
+          <span>{rewardStatus.total} total check-ins</span>
+          <span>
+            {rewardStatus.milestonesEarned} reward
+            {rewardStatus.milestonesEarned !== 1 ? "s" : ""} earned
+          </span>
+        </div>
       </motion.div>
 
-      {/* Activity + News grid */}
-      <div className={`grid gap-4 ${isTablet ? "grid-cols-1" : "grid-cols-3"}`}>
+      {/* ── Activity + News grid ────────────────────────────────────────── */}
+      <div
+        className={`grid gap-4 ${isTablet || isMobile ? "grid-cols-1" : "grid-cols-3"}`}
+      >
         {/* Training Log */}
-        <div
-          className="mk2-card"
-          style={{ borderTop: "2px solid hsl(20 100% 50%)" }}
-        >
+        <div className="mk2-card">
           <div className="flex items-center justify-between mb-3">
-            <div>
-              <div className="font-bold text-sm flex items-center gap-1.5">
-                <MI icon="bolt" size={16} /> Training Log
-              </div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">
-                Your AI Planner sessions
-              </div>
+            <div className="font-bold text-sm flex items-center gap-1.5">
+              <MI icon="bolt" size={16} /> Training Log
             </div>
             <Btn variant="ghost" size="sm" onClick={() => setPage("Workout")}>
               + Log
             </Btn>
           </div>
           {user.workouts.length === 0 ? (
-            <div className="text-muted-foreground text-xs leading-relaxed py-3 text-center">
-              No sessions yet.
-              <br />
+            <div className="text-muted-foreground text-xs py-3 text-center">
+              No sessions yet.{" "}
               <span
                 className="text-primary cursor-pointer font-bold"
                 onClick={() => setPage("Workout")}
               >
-                Try the AI Planner →
+                Try AI Planner →
               </span>
             </div>
           ) : (
@@ -427,12 +357,13 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
                 .map((w: any, i: number) => (
                   <div
                     key={i}
-                    className="flex justify-between items-center py-2 border-b border-border text-xs"
+                    className="flex justify-between items-center py-1.5 border-b border-border text-xs"
                   >
-                    <Tag color="hsl(20 100% 50%)">{w.type}</Tag>
-                    <span className="text-muted-foreground">
-                      {w.duration}min ·{" "}
-                      {new Date(w.date).toLocaleDateString("en-ZA")}
+                    <span className="font-medium text-foreground truncate max-w-[120px]">
+                      {w.type}
+                    </span>
+                    <span className="text-muted-foreground shrink-0">
+                      {w.duration}min
                     </span>
                   </div>
                 ))}
@@ -441,32 +372,23 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         </div>
 
         {/* Booked Classes */}
-        <div
-          className="mk2-card"
-          style={{ borderTop: "2px solid hsl(263 85% 58%)" }}
-        >
+        <div className="mk2-card">
           <div className="flex items-center justify-between mb-3">
-            <div>
-              <div className="font-bold text-sm flex items-center gap-1.5">
-                <MI icon="fitness_center" size={16} /> Booked Classes
-              </div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">
-                Your upcoming gym classes
-              </div>
+            <div className="font-bold text-sm flex items-center gap-1.5">
+              <MI icon="fitness_center" size={16} /> Classes
             </div>
             <Btn variant="ghost" size="sm" onClick={() => setPage("Classes")}>
               Book
             </Btn>
           </div>
           {user.bookings.length === 0 ? (
-            <div className="text-muted-foreground text-xs leading-relaxed py-3 text-center">
-              No classes booked yet.
-              <br />
+            <div className="text-muted-foreground text-xs py-3 text-center">
+              No classes booked.{" "}
               <span
                 className="text-primary cursor-pointer font-bold"
                 onClick={() => setPage("Classes")}
               >
-                Browse classes →
+                Browse →
               </span>
             </div>
           ) : (
@@ -477,11 +399,13 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
                 .map((b: any, i: number) => (
                   <div
                     key={i}
-                    className="flex justify-between items-center py-2 border-b border-border text-xs"
+                    className="flex justify-between items-center py-1.5 border-b border-border text-xs"
                   >
-                    <Tag color="hsl(263 85% 58%)">{b.name}</Tag>
-                    <span className="text-muted-foreground">
-                      {b.date} · {b.time}
+                    <span className="font-medium text-foreground truncate max-w-[120px]">
+                      {b.name}
+                    </span>
+                    <span className="text-muted-foreground shrink-0">
+                      {b.time}
                     </span>
                   </div>
                 ))}
@@ -489,82 +413,64 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
           )}
         </div>
 
-        {/* News & Events */}
+        {/* News */}
         <div
           className="mk2-card cursor-pointer hover:border-primary/30 transition-colors"
-          style={{ borderTop: "2px solid hsl(38 92% 44%)" }}
           onClick={() => setPage("News")}
         >
           <div className="flex items-center justify-between mb-3">
-            <div>
-              <div className="font-bold text-sm flex items-center gap-1.5">
-                <MI icon="campaign" size={16} /> News & Events
-              </div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">
-                Ruimsig MK2R updates
-              </div>
+            <div className="font-bold text-sm flex items-center gap-1.5">
+              <MI icon="campaign" size={16} /> News & Events
             </div>
             <span className="text-[10px] text-primary font-bold">
               View all →
             </span>
           </div>
           <div className="flex flex-col gap-2">
-            {NEWS_PREVIEW.map((n, i) => (
-              <motion.div
+            {newsToShow.map((n: any, i: number) => (
+              <div
                 key={i}
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.5 + i * 0.08 }}
-                className="flex items-center gap-2.5 py-2 border-b border-border"
+                className="flex items-center gap-2 py-1.5 border-b border-border"
               >
-                <span className="text-lg shrink-0">{n.emoji}</span>
+                <span className="text-base shrink-0">{n.emoji}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-xs font-bold truncate">{n.title}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-2">
-                    <Tag color={n.color}>{n.type}</Tag>
-                    <span>{n.date}</span>
+                  <div className="text-xs font-medium truncate text-foreground">
+                    {n.title}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {n.date}
                   </div>
                 </div>
-              </motion.div>
+              </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Quick actions */}
+      {/* ── Quick tools ─────────────────────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.6 }}
-        className={`grid gap-2 mt-4 ${isMobile ? "grid-cols-2" : "grid-cols-4"}`}
+        transition={{ delay: 0.5 }}
+        className={`grid gap-2 mt-4 ${isMobile ? "grid-cols-2" : "grid-cols-3"}`}
       >
         {[
           {
             label: "AI Workout",
             icon: "bolt",
             page: "Workout",
-            color: "hsl(20 100% 50%)",
             required: "gold" as const,
-          },
-          {
-            label: "Book Class",
-            icon: "fitness_center",
-            page: "Classes",
-            color: "hsl(263 85% 58%)",
-            required: "basic" as const,
           },
           {
             label: "Leaderboard",
             icon: "emoji_events",
             page: "Leaderboard",
-            color: "hsl(38 92% 44%)",
             required: "silver" as const,
           },
           {
             label: "InBody Scan",
             icon: "monitor_heart",
             page: "InBody",
-            color: "hsl(187 85% 40%)",
             required: "gold" as const,
           },
         ].map((a) => {
@@ -573,22 +479,11 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
             <button
               key={a.label}
               onClick={() => setPage(a.page)}
-              className="mk2-card relative flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all duration-150 border-none text-left w-full"
-              style={{
-                borderLeft: `3px solid ${locked ? "hsl(var(--border))" : a.color}`,
-                opacity: locked ? 0.7 : 1,
-              }}
+              className="bg-card border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
+              style={{ opacity: locked ? 0.6 : 1 }}
             >
-              <span
-                style={{
-                  color: locked ? "hsl(var(--muted-foreground))" : a.color,
-                }}
-              >
-                <MI icon={locked ? "lock" : a.icon} size={20} />
-              </span>
-              <span
-                className={`font-bold text-xs ${locked ? "text-muted-foreground" : "text-foreground"}`}
-              >
+              <MI icon={locked ? "lock" : a.icon} size={18} />
+              <span className="font-bold text-xs text-foreground">
                 {a.label}
               </span>
               {locked && (
