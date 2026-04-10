@@ -1,17 +1,20 @@
 import { useState, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
-import { askClaude } from "@/lib/claude";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { Btn } from "@/components/shared/Btn";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { motion } from "framer-motion";
+
+// ── Cloud Function ────────────────────────────────────────────────────────────
+const aiChatFn = httpsCallable(getFunctions(), "aiChat");
 
 interface InBodyEntry {
   date: number;
   weight: number;
   bodyFat: number;
   muscleMass: number;
-  fatMass: number; // ← replaced BMI
+  fatMass: number;
   visceralFat: number;
   totalBodyWater: number;
   notes: string;
@@ -38,9 +41,12 @@ export function InBody({ setPage }: Props) {
   const [analysis, setAnalysis] = useState("");
   const [analysing, setAnalysing] = useState(false);
   const [activeEntry, setActiveEntry] = useState<InBodyEntry | null>(null);
+  const [aiError, setAiError] = useState("");
 
   if (!user) return null;
 
+  const membership = (user as any).membership ?? "basic";
+  const isActiveMember = membership === "silver" || membership === "gold";
   const inbodyHistory: InBodyEntry[] = (user as any).inbodyHistory || [];
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -77,26 +83,49 @@ export function InBody({ setPage }: Props) {
   };
 
   const analyseEntry = async (entry: InBodyEntry) => {
+    // Only members can use AI analysis
+    if (!isActiveMember) {
+      toast("Upgrade your membership to unlock AI analysis.", "error");
+      return;
+    }
+
     setActiveEntry(entry);
     setAnalysing(true);
     setAnalysis("");
+    setAiError("");
+
     const prev = inbodyHistory.find((e) => e.date !== entry.date);
+
     try {
-      await askClaude(
-        `You are a professional fitness and body composition coach at MK2 Rivers Fitness. You ONLY answer questions about fitness, body composition, health, and training. Decline anything unrelated.`,
-        `Analyse this InBody for ${user.name}, Goal: "${user.goal}", Level: ${user.level}:
+      const prompt = `Analyse this InBody for ${user.name}, Goal: "${user.goal}", Level: ${user.level}:
 Weight: ${entry.weight}kg | Body Fat: ${entry.bodyFat}% | Muscle Mass: ${entry.muscleMass}kg
 Fat Mass: ${entry.fatMass}kg | Visceral Fat: ${entry.visceralFat} | Body Water: ${entry.totalBodyWater}L
 ${prev ? `Previous: Weight ${prev.weight}kg | Fat ${prev.bodyFat}% | Muscle ${prev.muscleMass}kg | Fat Mass ${prev.fatMass}kg` : "First assessment."}
-Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 3 training tips 5) 2 nutrition adjustments`,
-        setAnalysis,
-      );
-    } catch {
-      setAnalysis(
-        "AI analysis unavailable — add your API key to .env to enable this feature.",
-      );
+Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 3 training tips 5) 2 nutrition adjustments`;
+
+      const res = await aiChatFn({
+        prompt,
+        systemPrompt:
+          "You are a professional fitness and body composition coach at MK2 Rivers Fitness. You ONLY answer questions about fitness, body composition, health, and training. Decline anything unrelated.",
+        mode: "inbody",
+      });
+      const data = res.data as { response: string; quotaRemaining: number };
+      setAnalysis(data.response);
+    } catch (err: any) {
+      const msg: string = err?.message ?? "";
+      if (msg.includes("QUOTA_EXCEEDED")) {
+        setAiError(
+          "You've used all your AI calls for this month. Quota resets on the 1st.",
+        );
+        setAnalysis("");
+      } else if (msg.includes("JOIN_GYM")) {
+        setAnalysis("An active membership is required to use AI analysis.");
+      } else {
+        setAnalysis("AI analysis unavailable — please try again later.");
+      }
+    } finally {
+      setAnalysing(false);
     }
-    setAnalysing(false);
   };
 
   const inputCls =
@@ -111,6 +140,24 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
       <PageTitle sub="Enter your InBody scan results — AI analyses your body composition">
         InBody <span className="text-primary">Assessment</span>
       </PageTitle>
+
+      {/* ── AI locked notice for non-members ────────────────────────────── */}
+      {!isActiveMember && (
+        <div
+          className="mb-5 rounded-xl px-4 py-3 flex items-center gap-3 text-xs"
+          style={{
+            background: "hsl(263 85% 58% / 0.08)",
+            border: "1px solid hsl(263 85% 58% / 0.25)",
+            color: "hsl(263 85% 58%)",
+          }}
+        >
+          <span className="text-base shrink-0">🔒</span>
+          <span>
+            <strong>AI Analysis locked</strong> — Upgrade to Silver or Gold to
+            unlock AI body composition analysis.
+          </span>
+        </div>
+      )}
 
       {/* ── Link to Progress Report ──────────────────────────────────────── */}
       {inbodyHistory.length > 0 && (
@@ -260,6 +307,13 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
         </div>
       </div>
 
+      {/* ── AI error banner ───────────────────────────────────────────────── */}
+      {aiError && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+          {aiError}
+        </div>
+      )}
+
       {/* ── History ──────────────────────────────────────────────────────── */}
       {inbodyHistory.length > 0 && (
         <div className="mk2-card mb-5">
@@ -295,13 +349,20 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
                       </div>
                     )}
                   </div>
-                  <Btn
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => analyseEntry(entry)}
-                  >
-                    🤖 AI Analyse
-                  </Btn>
+                  {/* AI Analyse button — only shows for members */}
+                  {isActiveMember ? (
+                    <Btn
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => analyseEntry(entry)}
+                    >
+                      🤖 AI Analyse
+                    </Btn>
+                  ) : (
+                    <div className="text-[11px] text-muted-foreground px-2 py-1 rounded border border-border">
+                      🔒 AI — Members only
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {[

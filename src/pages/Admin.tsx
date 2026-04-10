@@ -10,7 +10,6 @@ import { ref, get, set, remove, push, onValue } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
 
-// Import the shared key builder so admin cancel matches user booking keys exactly
 import {
   buildBookingKey,
   formatDateKey,
@@ -249,7 +248,6 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-// ── Admin Calendar ────────────────────────────────────────────────────────────
 function AdminCalendar({
   selectedDate,
   onSelect,
@@ -280,7 +278,6 @@ function AdminCalendar({
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
   return (
     <div
       style={{
@@ -362,7 +359,6 @@ function AdminCalendar({
           if (!day) return <div key={i} />;
           const date = new Date(viewYear, viewMonth, day);
           date.setHours(0, 0, 0, 0);
-          // FIX: use formatDateKey (local) not toISOString (UTC)
           const key = formatDateKey(date);
           const isToday = date.getTime() === today.getTime();
           const isSel = formatDateKey(selectedDate) === key;
@@ -418,7 +414,7 @@ function AdminCalendar({
   );
 }
 
-// ── Classes Manager with ADMIN CANCEL per booking ─────────────────────────────
+// ── Classes Manager with chargeNonMembers + price ─────────────────────────────
 function ClassesManager({ toast }: any) {
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -431,7 +427,6 @@ function ClassesManager({ toast }: any) {
     return d;
   });
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
-  // Live class_bookings for admin cancel
   const [allBookings, setAllBookings] = useState<
     Record<string, Record<string, any>>
   >({});
@@ -452,6 +447,8 @@ function ClassesManager({ toast }: any) {
     details: "",
     scheduleType: "day",
     wod: "",
+    chargeNonMembers: false,
+    price: "0",
   };
   const [form, setForm] = useState(blank);
 
@@ -463,8 +460,6 @@ function ClassesManager({ toast }: any) {
   useEffect(() => {
     load();
   }, []);
-
-  // Live bookings feed for admin
   useEffect(() => {
     return onValue(ref(db, "class_bookings"), (snap) =>
       setAllBookings(snap.val() ?? {}),
@@ -474,20 +469,32 @@ function ClassesManager({ toast }: any) {
   const save = async () => {
     if (!form.name || !form.time || !form.trainer)
       return toast("Fill in Name, Time and Trainer", "error");
+
     const data = {
       ...form,
       spots: parseInt(form.spots),
       details: form.details.split("\n").filter(Boolean),
       scheduleType: scheduleMode,
-      // FIX: use formatDateKey for specificDate (local timezone)
       specificDate: scheduleMode === "date" ? formatDateKey(calDate) : "",
       day: scheduleMode === "day" ? form.day : getDayName(calDate),
+      chargeNonMembers: Boolean(form.chargeNonMembers),
+      price: form.chargeNonMembers ? parseFloat(form.price) || 0 : 0,
     };
+
     if (editing) {
-      await updateInCollection("admin_classes", editing.id, data);
+      const existingSnap = await get(
+        ref(db, `admin_classes/${editing.id}/bookedCount`),
+      );
+      const currentBookedCount = existingSnap.exists()
+        ? (existingSnap.val() as number)
+        : 0;
+      await updateInCollection("admin_classes", editing.id, {
+        ...data,
+        bookedCount: currentBookedCount,
+      });
       toast("Updated ✓", "success");
     } else {
-      await addToCollection("admin_classes", data);
+      await addToCollection("admin_classes", { ...data, bookedCount: 0 });
       toast("Class added ✓", "success");
     }
     setShowForm(false);
@@ -520,6 +527,8 @@ function ClassesManager({ toast }: any) {
       details: (c.details || []).join("\n"),
       scheduleType: c.scheduleType || "day",
       wod: c.wod || "",
+      chargeNonMembers: Boolean(c.chargeNonMembers),
+      price: String(c.price ?? 0),
     });
     if (c.specificDate) setCalDate(new Date(c.specificDate + "T00:00:00"));
     setShowForm(true);
@@ -541,7 +550,6 @@ function ClassesManager({ toast }: any) {
         d.setDate(today.getDate() + i);
         const dayName = getDayName(d);
         if (cls.day === dayName) {
-          // FIX: use formatDateKey not toISOString
           const key = formatDateKey(d);
           classDateCounts[key] = (classDateCounts[key] || 0) + 1;
         }
@@ -549,10 +557,8 @@ function ClassesManager({ toast }: any) {
     }
   });
 
-  // FIX: use formatDateKey for selected date (local timezone)
   const selectedDateKey = formatDateKey(calDate);
   const selectedDayName = getDayName(calDate);
-
   const classesOnDate = classes
     .filter((cls) =>
       cls.scheduleType === "date"
@@ -561,7 +567,6 @@ function ClassesManager({ toast }: any) {
     )
     .sort((a, b) => (a.time || "").localeCompare(b.time || ""));
 
-  // ── Admin cancel a user's booking ─────────────────────────────────────────
   const adminCancelBooking = async (
     cls: any,
     uid: string,
@@ -571,20 +576,16 @@ function ClassesManager({ toast }: any) {
     setCancelling(`${cls.name}_${uid}`);
     const bk = buildBookingKey(cls.name, selectedDateKey);
     try {
-      // Remove from class_bookings
       await set(ref(db, `class_bookings/${bk}/${uid}`), null);
-      // Refund 1 credit to the user
       const credSnap = await get(ref(db, `mk2_users/${uid}/classCredits`));
       const current = credSnap.exists() ? (credSnap.val() as number) : 0;
       await set(ref(db, `mk2_users/${uid}/classCredits`), current + 1);
-      // Log refund
       await push(ref(db, `mk2_users/${uid}/creditHistory`), {
         amount: +1,
         type: "admin_cancel",
         note: `Admin removed: ${cls.name} on ${selectedDateKey}`,
         timestamp: Date.now(),
       });
-      // Remove from user bookings array
       const userSnap = await get(ref(db, `mk2_users/${uid}/bookings`));
       if (userSnap.exists()) {
         const bookings = userSnap.val();
@@ -603,7 +604,6 @@ function ClassesManager({ toast }: any) {
     setCancelling(null);
   };
 
-  // Get bookings for a class on selected date
   const getClassBookings = (
     cls: any,
   ): Array<{ uid: string; name: string; email: string }> => {
@@ -815,6 +815,91 @@ function ClassesManager({ toast }: any) {
               ))}
             </div>
 
+            {/* Non-Member Booking Section */}
+            <div
+              style={{
+                marginBottom: 14,
+                padding: "14px 16px",
+                background: "hsl(var(--background))",
+                borderRadius: 10,
+                border: "1px solid hsl(var(--border))",
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 10 }}>
+                Non-Member Booking
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 10,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  id="chargeNonMembers"
+                  checked={Boolean(form.chargeNonMembers)}
+                  onChange={(e) =>
+                    setForm((p) => ({
+                      ...p,
+                      chargeNonMembers: e.target.checked,
+                      price: e.target.checked ? p.price : "0",
+                    }))
+                  }
+                  style={{ width: 16, height: 16, cursor: "pointer" }}
+                />
+                <label
+                  htmlFor="chargeNonMembers"
+                  style={{
+                    fontSize: 13,
+                    color: "hsl(var(--foreground))",
+                    cursor: "pointer",
+                    userSelect: "none",
+                  }}
+                >
+                  Charge non-members to book this class
+                </label>
+              </div>
+              {form.chargeNonMembers && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1, maxWidth: 200 }}>
+                    <label style={lbl}>Price (ZAR)</label>
+                    <input
+                      type="number"
+                      style={inp}
+                      placeholder="150.00"
+                      min="0"
+                      step="0.01"
+                      value={form.price}
+                      onChange={f("price")}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "hsl(var(--muted-foreground))",
+                      marginTop: 20,
+                    }}
+                  >
+                    Non-members will pay via PayFast before booking is
+                    confirmed.
+                  </div>
+                </div>
+              )}
+              {!form.chargeNonMembers && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  Non-members can book this class for free (no payment
+                  required).
+                </div>
+              )}
+            </div>
+
             <div style={{ marginBottom: 14 }}>
               <label style={lbl}>What's Included (one item per line)</label>
               <textarea
@@ -870,7 +955,7 @@ function ClassesManager({ toast }: any) {
         )}
       </AnimatePresence>
 
-      {/* ── Calendar view ── */}
+      {/* Calendar view */}
       {viewMode === "calendar" && (
         <>
           <AdminCalendar
@@ -924,7 +1009,6 @@ function ClassesManager({ toast }: any) {
                         overflow: "hidden",
                       }}
                     >
-                      {/* Class header row */}
                       <div
                         style={{
                           padding: "12px 16px",
@@ -966,6 +1050,21 @@ function ClassesManager({ toast }: any) {
                                 ? "Once-off"
                                 : "Weekly"}
                             </span>
+                            {cls.chargeNonMembers && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  padding: "2px 8px",
+                                  borderRadius: 20,
+                                  background: "hsl(38 92% 44% / 0.15)",
+                                  color: "hsl(38 92% 44%)",
+                                  fontWeight: 700,
+                                  border: "1px solid hsl(38 92% 44% / 0.3)",
+                                }}
+                              >
+                                💳 R{Number(cls.price).toFixed(0)} non-members
+                              </span>
+                            )}
                           </div>
                           <div
                             style={{
@@ -985,7 +1084,6 @@ function ClassesManager({ toast }: any) {
                             alignItems: "center",
                           }}
                         >
-                          {/* Bookings count — click to expand */}
                           <button
                             onClick={() =>
                               setExpandedBookings(isExpanded ? null : cls.id)
@@ -1027,7 +1125,6 @@ function ClassesManager({ toast }: any) {
                         </div>
                       </div>
 
-                      {/* ── Bookings panel with ADMIN CANCEL ── */}
                       <AnimatePresence>
                         {isExpanded && (
                           <motion.div
@@ -1157,7 +1254,7 @@ function ClassesManager({ toast }: any) {
         </>
       )}
 
-      {/* ── List view ── */}
+      {/* List view */}
       {viewMode === "list" &&
         (loading ? (
           <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
@@ -1213,6 +1310,21 @@ function ClassesManager({ toast }: any) {
                     >
                       {cls.scheduleType === "date" ? "Once-off" : "Weekly"}
                     </span>
+                    {cls.chargeNonMembers && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: "2px 8px",
+                          borderRadius: 20,
+                          background: "hsl(38 92% 44% / 0.15)",
+                          color: "hsl(38 92% 44%)",
+                          fontWeight: 700,
+                          border: "1px solid hsl(38 92% 44% / 0.3)",
+                        }}
+                      >
+                        💳 R{Number(cls.price).toFixed(0)}
+                      </span>
+                    )}
                   </div>
                   <div
                     style={{
@@ -1523,7 +1635,6 @@ function NewsManager({ toast }: any) {
   const save = async () => {
     if (!form.title || !form.date)
       return toast("Fill in Title and Date", "error");
-    // ── NEW: Add createdAt timestamp for unread count ─────────────────────
     await addToCollection("admin_news", { ...form, createdAt: Date.now() });
     toast("Published ✓", "success");
     setShowForm(false);
@@ -1907,7 +2018,7 @@ function MembersManager({ toast }: any) {
   );
 }
 
-// ── Packages Manager (inline — no separate file needed) ───────────────────────
+// ── Packages Manager ──────────────────────────────────────────────────────────
 function PackagesManager({ toast }: any) {
   const [packages, setPackages] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
@@ -2019,7 +2130,6 @@ function PackagesManager({ toast }: any) {
     });
     setShowForm(true);
   };
-
   const assignCreditsToUser = async () => {
     if (!assignUid) return toast("Select a member", "error");
     const amount = parseInt(assignCredits);
@@ -2050,9 +2160,7 @@ function PackagesManager({ toast }: any) {
     }
     setAssigning(false);
   };
-
   const selectedMember = members.find((m) => m.uid === assignUid);
-
   return (
     <div>
       <div
@@ -2080,7 +2188,6 @@ function PackagesManager({ toast }: any) {
           {showForm ? "✕ Cancel" : "+ New Package"}
         </Btn>
       </div>
-
       <AnimatePresence>
         {showForm && (
           <motion.div
@@ -2187,7 +2294,6 @@ function PackagesManager({ toast }: any) {
           </motion.div>
         )}
       </AnimatePresence>
-
       {loading ? (
         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
           Loading…
@@ -2299,8 +2405,6 @@ function PackagesManager({ toast }: any) {
           ))}
         </div>
       )}
-
-      {/* Manual credit assignment */}
       <div
         style={{
           borderTop: "1px solid hsl(var(--border))",
@@ -2798,6 +2902,7 @@ function FeedbackManager({ toast }: any) {
   );
 }
 
+// ── Instagram Setup ───────────────────────────────────────────────────────────
 function InstagramSetup() {
   return (
     <div>
@@ -2836,11 +2941,10 @@ function InstagramSetup() {
   );
 }
 
-// ── Terms Manager (T&C Audit Log) ─────────────────────────────────────────────
+// ── Terms Manager ─────────────────────────────────────────────────────────────
 function TermsManager({ toast }: any) {
   const [records, setRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-
   const load = async () => {
     setLoading(true);
     try {
@@ -2856,11 +2960,9 @@ function TermsManager({ toast }: any) {
     }
     setLoading(false);
   };
-
   useEffect(() => {
     load();
   }, []);
-
   return (
     <div>
       <div
@@ -2980,7 +3082,6 @@ function BannersManager({ toast }: any) {
   const [form, setForm] = useState(blank);
   const f = (k: string) => (e: any) =>
     setForm((p) => ({ ...p, [k]: e.target.value }));
-
   const load = async () => {
     setLoading(true);
     try {
@@ -2998,11 +3099,9 @@ function BannersManager({ toast }: any) {
     }
     setLoading(false);
   };
-
   useEffect(() => {
     load();
   }, []);
-
   const save = async () => {
     if (!form.title) return toast("Enter a title", "error");
     try {
@@ -3020,20 +3119,17 @@ function BannersManager({ toast }: any) {
       toast("Save failed", "error");
     }
   };
-
   const toggleActive = async (banner: any) => {
     await set(ref(db, `ad_banners/${banner.id}/active`), !banner.active);
     toast(banner.active ? "Banner hidden" : "Banner live ✓", "info");
     load();
   };
-
   const del = async (id: string) => {
     if (!confirm("Delete this banner?")) return;
     await remove(ref(db, `ad_banners/${id}`));
     toast("Deleted", "info");
     load();
   };
-
   return (
     <div>
       <div
@@ -3053,7 +3149,6 @@ function BannersManager({ toast }: any) {
           {showForm ? "✕ Cancel" : "+ New Banner"}
         </Btn>
       </div>
-
       <AnimatePresence>
         {showForm && (
           <motion.div
@@ -3130,7 +3225,6 @@ function BannersManager({ toast }: any) {
           </motion.div>
         )}
       </AnimatePresence>
-
       {loading ? (
         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
           Loading…
@@ -3237,7 +3331,6 @@ function ChallengesManager({ toast }: any) {
   const [form, setForm] = useState(blank);
   const f = (k: string) => (e: any) =>
     setForm((p) => ({ ...p, [k]: e.target.value }));
-
   const load = async () => {
     setLoading(true);
     try {
@@ -3255,11 +3348,9 @@ function ChallengesManager({ toast }: any) {
     }
     setLoading(false);
   };
-
   useEffect(() => {
     load();
   }, []);
-
   const save = async () => {
     if (!form.name || !form.startDate || !form.endDate)
       return toast("Fill in Name, Start and End Date", "error");
@@ -3277,13 +3368,11 @@ function ChallengesManager({ toast }: any) {
       toast("Save failed", "error");
     }
   };
-
   const toggleActive = async (c: any) => {
     await set(ref(db, `challenges/${c.id}/active`), !c.active);
     toast(c.active ? "Challenge hidden" : "Challenge active ✓", "info");
     load();
   };
-
   const del = async (id: string) => {
     if (!confirm("Delete this challenge and all its entries?")) return;
     await remove(ref(db, `challenges/${id}`));
@@ -3291,7 +3380,6 @@ function ChallengesManager({ toast }: any) {
     toast("Deleted", "info");
     load();
   };
-
   const COLORS = [
     "hsl(20 100% 50%)",
     "hsl(263 85% 58%)",
@@ -3300,7 +3388,6 @@ function ChallengesManager({ toast }: any) {
     "hsl(38 92% 44%)",
     "hsl(187 85% 40%)",
   ];
-
   return (
     <div>
       <div
@@ -3320,7 +3407,6 @@ function ChallengesManager({ toast }: any) {
           {showForm ? "✕ Cancel" : "+ New Challenge"}
         </Btn>
       </div>
-
       <AnimatePresence>
         {showForm && (
           <motion.div
@@ -3433,7 +3519,6 @@ function ChallengesManager({ toast }: any) {
           </motion.div>
         )}
       </AnimatePresence>
-
       {loading ? (
         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
           Loading…
@@ -3514,8 +3599,6 @@ function ChallengesManager({ toast }: any) {
           ))}
         </div>
       )}
-
-      {/* Add to Firebase rules reminder */}
       <div
         style={{
           marginTop: 20,
@@ -3538,13 +3621,11 @@ function ChallengesManager({ toast }: any) {
   );
 }
 
-// ── Rewards Manager (Check‑in Rewards) ─────────────────────────────────────────
+// ── Rewards Manager ───────────────────────────────────────────────────────────
 function RewardsManager({ toast }: any) {
   const CHECKINS_REQUIRED = 40;
   const EXPIRY_DAYS = 60;
-
   type RewardType = "inbody" | "buddy";
-
   interface MemberReward {
     uid: string;
     name: string;
@@ -3561,7 +3642,6 @@ function RewardsManager({ toast }: any) {
     };
     redemptions: RedemptionRecord[];
   }
-
   interface RedemptionRecord {
     id: string;
     type: RewardType;
@@ -3569,7 +3649,6 @@ function RewardsManager({ toast }: any) {
     redeemedBy: string;
     note: string;
   }
-
   const REWARD_LABELS: Record<RewardType, string> = {
     inbody: "Free InBody Assessment",
     buddy: "Bring-a-Buddy (Free Session)",
@@ -3578,14 +3657,12 @@ function RewardsManager({ toast }: any) {
     inbody: "📊",
     buddy: "🤝",
   };
-
   const [members, setMembers] = useState<MemberReward[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "ready" | "progress">("all");
   const [redeemTarget, setRedeemTarget] = useState<MemberReward | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
-
   const load = () => {
     setLoading(true);
     get(ref(db, "mk2_users")).then((snap) => {
@@ -3594,30 +3671,21 @@ function RewardsManager({ toast }: any) {
         setLoading(false);
         return;
       }
-
       const list: MemberReward[] = [];
-
       Object.entries(snap.val()).forEach(([uid, val]: [string, any]) => {
-        // Total check-ins
         const totalCheckIns: number = Array.isArray(val.checkIns)
           ? val.checkIns.length
           : typeof val.checkIns === "number"
             ? val.checkIns
             : 0;
-
-        // Redemption history
         const rawRedemptions: RedemptionRecord[] = val.rewardRedemptions
           ? Object.entries(val.rewardRedemptions).map(
               ([id, r]: [string, any]) => ({ id, ...r }),
             )
           : [];
         rawRedemptions.sort((a, b) => b.redeemedAt - a.redeemedAt);
-
-        // Cycle: check-ins since last redemption
         const lastRedemptionAt =
           rawRedemptions.length > 0 ? rawRedemptions[0].redeemedAt : 0;
-
-        // Count check-ins after last redemption
         let cycleCheckIns = 0;
         if (Array.isArray(val.checkIns)) {
           cycleCheckIns = val.checkIns.filter((ci: any) => {
@@ -3637,14 +3705,11 @@ function RewardsManager({ toast }: any) {
                   CHECKINS_REQUIRED
               : totalCheckIns;
         }
-
         const rewardReady = cycleCheckIns >= CHECKINS_REQUIRED;
         const progress = Math.min(
           100,
           (cycleCheckIns / CHECKINS_REQUIRED) * 100,
         );
-
-        // Pending reward (earned but not redeemed)
         const pendingRaw = val.pendingReward ?? null;
         const pendingReward = pendingRaw
           ? {
@@ -3661,7 +3726,6 @@ function RewardsManager({ toast }: any) {
                 expired: false,
               }
             : undefined;
-
         list.push({
           uid,
           name: val.name || "Unnamed",
@@ -3674,42 +3738,31 @@ function RewardsManager({ toast }: any) {
           redemptions: rawRedemptions,
         });
       });
-
       list.sort((a, b) => {
         if (a.rewardReady !== b.rewardReady) return a.rewardReady ? -1 : 1;
         return b.progress - a.progress;
       });
-
       setMembers(list);
       setLoading(false);
     });
   };
-
   useEffect(() => {
     load();
   }, []);
-
   const handleRedeem = async (type: RewardType, note: string) => {
     if (!redeemTarget) return;
     setSubmitting(true);
     const { uid, name } = redeemTarget;
     try {
       const now = Date.now();
-
-      // Write redemption record
       await push(ref(db, `mk2_users/${uid}/rewardRedemptions`), {
         type,
         redeemedAt: now,
         redeemedBy: "Admin",
         note: note || `Redeemed at reception`,
       });
-
-      // Clear pending reward
       await set(ref(db, `mk2_users/${uid}/pendingReward`), null);
-
-      // Reset cycle counter (store as a "cycle start" timestamp)
       await set(ref(db, `mk2_users/${uid}/rewardCycleStart`), now);
-
       toast(`✓ ${REWARD_LABELS[type]} redeemed for ${name}`, "success");
       setRedeemTarget(null);
       load();
@@ -3718,8 +3771,6 @@ function RewardsManager({ toast }: any) {
     }
     setSubmitting(false);
   };
-
-  // Filtering
   const filtered = members
     .filter((m) => {
       if (filter === "ready") return m.rewardReady;
@@ -3732,10 +3783,7 @@ function RewardsManager({ toast }: any) {
         m.name.toLowerCase().includes(search.toLowerCase()) ||
         m.email.toLowerCase().includes(search.toLowerCase()),
     );
-
   const readyCount = members.filter((m) => m.rewardReady).length;
-
-  // Progress bar component
   const ProgressBar = ({ pct, ready }: { pct: number; ready: boolean }) => (
     <div
       style={{
@@ -3757,8 +3805,6 @@ function RewardsManager({ toast }: any) {
       />
     </div>
   );
-
-  // Redeem modal
   const RedeemModal = ({
     member,
     onClose,
@@ -3772,7 +3818,6 @@ function RewardsManager({ toast }: any) {
   }) => {
     const [type, setType] = useState<RewardType>("inbody");
     const [note, setNote] = useState("");
-
     return (
       <div
         style={{
@@ -3820,7 +3865,6 @@ function RewardsManager({ toast }: any) {
             {member.name} has earned a reward for reaching {CHECKINS_REQUIRED}{" "}
             check-ins.
           </div>
-
           <label style={lbl}>Reward Type</label>
           <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
             {(["inbody", "buddy"] as RewardType[]).map((t) => (
@@ -3832,9 +3876,7 @@ function RewardsManager({ toast }: any) {
                   padding: "12px 10px",
                   borderRadius: 10,
                   cursor: "pointer",
-                  border: `2px solid ${
-                    type === t ? "hsl(20 100% 50%)" : "hsl(var(--border))"
-                  }`,
+                  border: `2px solid ${type === t ? "hsl(20 100% 50%)" : "hsl(var(--border))"}`,
                   background:
                     type === t ? "hsl(20 100% 50% / 0.08)" : "transparent",
                   textAlign: "center",
@@ -3859,7 +3901,6 @@ function RewardsManager({ toast }: any) {
               </button>
             ))}
           </div>
-
           <label style={lbl}>Note (optional)</label>
           <input
             style={{ ...inp, marginBottom: 20 }}
@@ -3867,7 +3908,6 @@ function RewardsManager({ toast }: any) {
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
-
           <div style={{ display: "flex", gap: 10 }}>
             <Btn
               variant="primary"
@@ -3884,7 +3924,6 @@ function RewardsManager({ toast }: any) {
       </div>
     );
   };
-
   return (
     <div>
       <div
@@ -3928,7 +3967,6 @@ function RewardsManager({ toast }: any) {
           </div>
         )}
       </div>
-
       <div
         style={{
           background: "hsl(var(--secondary))",
@@ -3959,7 +3997,6 @@ function RewardsManager({ toast }: any) {
         </strong>{" "}
         of earning. After redemption the cycle resets.
       </div>
-
       <div
         style={{
           display: "flex",
@@ -4004,7 +4041,6 @@ function RewardsManager({ toast }: any) {
           ↻ Refresh
         </Btn>
       </div>
-
       {loading ? (
         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
           Loading members…
@@ -4022,7 +4058,6 @@ function RewardsManager({ toast }: any) {
                 ? "hsl(0 84% 51%)"
                 : "hsl(142 72% 37%)"
               : "hsl(var(--border))";
-
             return (
               <div
                 key={m.uid}
@@ -4104,7 +4139,6 @@ function RewardsManager({ toast }: any) {
                     </Btn>
                   )}
                 </div>
-
                 <div style={{ marginBottom: 6 }}>
                   <div
                     style={{
@@ -4126,7 +4160,6 @@ function RewardsManager({ toast }: any) {
                   </div>
                   <ProgressBar pct={m.progress} ready={m.rewardReady} />
                 </div>
-
                 {m.rewardReady && m.pendingReward && !expired && (
                   <div
                     style={{
@@ -4142,7 +4175,6 @@ function RewardsManager({ toast }: any) {
                     )}
                   </div>
                 )}
-
                 {m.redemptions.length > 0 && (
                   <details style={{ marginTop: 10 }}>
                     <summary
@@ -4201,7 +4233,6 @@ function RewardsManager({ toast }: any) {
           })}
         </div>
       )}
-
       <AnimatePresence>
         {redeemTarget && (
           <RedeemModal
@@ -4248,9 +4279,7 @@ export function Admin() {
     sessionStorage.removeItem("mk2admin");
     setAuthed(false);
   };
-
   if (!authed) return <AdminLogin onLogin={login} />;
-
   return (
     <div
       style={{
@@ -4294,7 +4323,6 @@ export function Admin() {
           </Btn>
         </div>
       </nav>
-
       <div
         style={{
           maxWidth: 1060,
@@ -4334,7 +4362,6 @@ export function Admin() {
             </button>
           ))}
         </div>
-
         <motion.div
           key={tab}
           initial={{ opacity: 0, y: 6 }}
@@ -4361,7 +4388,6 @@ export function Admin() {
           {tab === "rewards" && <RewardsManager toast={toast} />}
         </motion.div>
       </div>
-
       {toastQ && <MToast {...toastQ} onDone={() => setToastQ(null)} />}
     </div>
   );
@@ -7907,6 +7933,684 @@ export function Admin() {
 //   );
 // }
 
+// // ── Rewards Manager (Check‑in Rewards) ─────────────────────────────────────────
+// function RewardsManager({ toast }: any) {
+//   const CHECKINS_REQUIRED = 40;
+//   const EXPIRY_DAYS = 60;
+
+//   type RewardType = "inbody" | "buddy";
+
+//   interface MemberReward {
+//     uid: string;
+//     name: string;
+//     email: string;
+//     checkIns: number;
+//     cycleCheckIns: number;
+//     progress: number;
+//     rewardReady: boolean;
+//     pendingReward?: {
+//       type: RewardType;
+//       earnedAt: number;
+//       expiresAt: number;
+//       expired: boolean;
+//     };
+//     redemptions: RedemptionRecord[];
+//   }
+
+//   interface RedemptionRecord {
+//     id: string;
+//     type: RewardType;
+//     redeemedAt: number;
+//     redeemedBy: string;
+//     note: string;
+//   }
+
+//   const REWARD_LABELS: Record<RewardType, string> = {
+//     inbody: "Free InBody Assessment",
+//     buddy: "Bring-a-Buddy (Free Session)",
+//   };
+//   const REWARD_EMOJIS: Record<RewardType, string> = {
+//     inbody: "📊",
+//     buddy: "🤝",
+//   };
+
+//   const [members, setMembers] = useState<MemberReward[]>([]);
+//   const [loading, setLoading] = useState(true);
+//   const [filter, setFilter] = useState<"all" | "ready" | "progress">("all");
+//   const [redeemTarget, setRedeemTarget] = useState<MemberReward | null>(null);
+//   const [submitting, setSubmitting] = useState(false);
+//   const [search, setSearch] = useState("");
+
+//   const load = () => {
+//     setLoading(true);
+//     get(ref(db, "mk2_users")).then((snap) => {
+//       if (!snap.exists()) {
+//         setMembers([]);
+//         setLoading(false);
+//         return;
+//       }
+
+//       const list: MemberReward[] = [];
+
+//       Object.entries(snap.val()).forEach(([uid, val]: [string, any]) => {
+//         // Total check-ins
+//         const totalCheckIns: number = Array.isArray(val.checkIns)
+//           ? val.checkIns.length
+//           : typeof val.checkIns === "number"
+//             ? val.checkIns
+//             : 0;
+
+//         // Redemption history
+//         const rawRedemptions: RedemptionRecord[] = val.rewardRedemptions
+//           ? Object.entries(val.rewardRedemptions).map(
+//               ([id, r]: [string, any]) => ({ id, ...r }),
+//             )
+//           : [];
+//         rawRedemptions.sort((a, b) => b.redeemedAt - a.redeemedAt);
+
+//         // Cycle: check-ins since last redemption
+//         const lastRedemptionAt =
+//           rawRedemptions.length > 0 ? rawRedemptions[0].redeemedAt : 0;
+
+//         // Count check-ins after last redemption
+//         let cycleCheckIns = 0;
+//         if (Array.isArray(val.checkIns)) {
+//           cycleCheckIns = val.checkIns.filter((ci: any) => {
+//             const ts =
+//               typeof ci === "number"
+//                 ? ci
+//                 : typeof ci === "string"
+//                   ? new Date(ci).getTime()
+//                   : 0;
+//             return ts > lastRedemptionAt;
+//           }).length;
+//         } else {
+//           cycleCheckIns =
+//             lastRedemptionAt > 0
+//               ? totalCheckIns -
+//                 Math.floor(totalCheckIns / CHECKINS_REQUIRED) *
+//                   CHECKINS_REQUIRED
+//               : totalCheckIns;
+//         }
+
+//         const rewardReady = cycleCheckIns >= CHECKINS_REQUIRED;
+//         const progress = Math.min(
+//           100,
+//           (cycleCheckIns / CHECKINS_REQUIRED) * 100,
+//         );
+
+//         // Pending reward (earned but not redeemed)
+//         const pendingRaw = val.pendingReward ?? null;
+//         const pendingReward = pendingRaw
+//           ? {
+//               type: pendingRaw.type as RewardType,
+//               earnedAt: pendingRaw.earnedAt,
+//               expiresAt: pendingRaw.expiresAt,
+//               expired: Date.now() > pendingRaw.expiresAt,
+//             }
+//           : rewardReady
+//             ? {
+//                 type: "inbody" as RewardType,
+//                 earnedAt: Date.now(),
+//                 expiresAt: Date.now() + EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+//                 expired: false,
+//               }
+//             : undefined;
+
+//         list.push({
+//           uid,
+//           name: val.name || "Unnamed",
+//           email: val.email || "",
+//           checkIns: totalCheckIns,
+//           cycleCheckIns,
+//           progress,
+//           rewardReady,
+//           pendingReward,
+//           redemptions: rawRedemptions,
+//         });
+//       });
+
+//       list.sort((a, b) => {
+//         if (a.rewardReady !== b.rewardReady) return a.rewardReady ? -1 : 1;
+//         return b.progress - a.progress;
+//       });
+
+//       setMembers(list);
+//       setLoading(false);
+//     });
+//   };
+
+//   useEffect(() => {
+//     load();
+//   }, []);
+
+//   const handleRedeem = async (type: RewardType, note: string) => {
+//     if (!redeemTarget) return;
+//     setSubmitting(true);
+//     const { uid, name } = redeemTarget;
+//     try {
+//       const now = Date.now();
+
+//       // Write redemption record
+//       await push(ref(db, `mk2_users/${uid}/rewardRedemptions`), {
+//         type,
+//         redeemedAt: now,
+//         redeemedBy: "Admin",
+//         note: note || `Redeemed at reception`,
+//       });
+
+//       // Clear pending reward
+//       await set(ref(db, `mk2_users/${uid}/pendingReward`), null);
+
+//       // Reset cycle counter (store as a "cycle start" timestamp)
+//       await set(ref(db, `mk2_users/${uid}/rewardCycleStart`), now);
+
+//       toast(`✓ ${REWARD_LABELS[type]} redeemed for ${name}`, "success");
+//       setRedeemTarget(null);
+//       load();
+//     } catch {
+//       toast("Redemption failed", "error");
+//     }
+//     setSubmitting(false);
+//   };
+
+//   // Filtering
+//   const filtered = members
+//     .filter((m) => {
+//       if (filter === "ready") return m.rewardReady;
+//       if (filter === "progress") return !m.rewardReady;
+//       return true;
+//     })
+//     .filter(
+//       (m) =>
+//         !search ||
+//         m.name.toLowerCase().includes(search.toLowerCase()) ||
+//         m.email.toLowerCase().includes(search.toLowerCase()),
+//     );
+
+//   const readyCount = members.filter((m) => m.rewardReady).length;
+
+//   // Progress bar component
+//   const ProgressBar = ({ pct, ready }: { pct: number; ready: boolean }) => (
+//     <div
+//       style={{
+//         width: "100%",
+//         height: 6,
+//         background: "hsl(var(--border))",
+//         borderRadius: 4,
+//         overflow: "hidden",
+//       }}
+//     >
+//       <div
+//         style={{
+//           width: `${Math.min(100, pct)}%`,
+//           height: "100%",
+//           background: ready ? "hsl(142 72% 37%)" : "hsl(20 100% 50%)",
+//           borderRadius: 4,
+//           transition: "width 0.4s ease",
+//         }}
+//       />
+//     </div>
+//   );
+
+//   // Redeem modal
+//   const RedeemModal = ({
+//     member,
+//     onClose,
+//     onConfirm,
+//     submitting,
+//   }: {
+//     member: MemberReward;
+//     onClose: () => void;
+//     onConfirm: (type: RewardType, note: string) => void;
+//     submitting: boolean;
+//   }) => {
+//     const [type, setType] = useState<RewardType>("inbody");
+//     const [note, setNote] = useState("");
+
+//     return (
+//       <div
+//         style={{
+//           position: "fixed",
+//           inset: 0,
+//           background: "rgba(0,0,0,0.7)",
+//           zIndex: 200,
+//           display: "flex",
+//           alignItems: "center",
+//           justifyContent: "center",
+//           padding: 20,
+//         }}
+//         onClick={onClose}
+//       >
+//         <motion.div
+//           initial={{ opacity: 0, scale: 0.95 }}
+//           animate={{ opacity: 1, scale: 1 }}
+//           style={{
+//             background: "hsl(var(--card))",
+//             border: "1px solid hsl(var(--border))",
+//             borderRadius: 16,
+//             padding: 28,
+//             width: "100%",
+//             maxWidth: 440,
+//           }}
+//           onClick={(e) => e.stopPropagation()}
+//         >
+//           <div
+//             style={{
+//               fontFamily: "var(--font-display)",
+//               fontSize: 22,
+//               color: "hsl(20 100% 50%)",
+//               marginBottom: 4,
+//             }}
+//           >
+//             Redeem Reward
+//           </div>
+//           <div
+//             style={{
+//               fontSize: 13,
+//               color: "hsl(var(--muted-foreground))",
+//               marginBottom: 20,
+//             }}
+//           >
+//             {member.name} has earned a reward for reaching {CHECKINS_REQUIRED}{" "}
+//             check-ins.
+//           </div>
+
+//           <label style={lbl}>Reward Type</label>
+//           <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+//             {(["inbody", "buddy"] as RewardType[]).map((t) => (
+//               <button
+//                 key={t}
+//                 onClick={() => setType(t)}
+//                 style={{
+//                   flex: 1,
+//                   padding: "12px 10px",
+//                   borderRadius: 10,
+//                   cursor: "pointer",
+//                   border: `2px solid ${
+//                     type === t ? "hsl(20 100% 50%)" : "hsl(var(--border))"
+//                   }`,
+//                   background:
+//                     type === t ? "hsl(20 100% 50% / 0.08)" : "transparent",
+//                   textAlign: "center",
+//                   fontFamily: "var(--font-body)",
+//                 }}
+//               >
+//                 <div style={{ fontSize: 24, marginBottom: 4 }}>
+//                   {REWARD_EMOJIS[t]}
+//                 </div>
+//                 <div
+//                   style={{
+//                     fontSize: 11,
+//                     fontWeight: 700,
+//                     color:
+//                       type === t
+//                         ? "hsl(20 100% 50%)"
+//                         : "hsl(var(--foreground))",
+//                   }}
+//                 >
+//                   {REWARD_LABELS[t]}
+//                 </div>
+//               </button>
+//             ))}
+//           </div>
+
+//           <label style={lbl}>Note (optional)</label>
+//           <input
+//             style={{ ...inp, marginBottom: 20 }}
+//             placeholder="e.g. Redeemed at front desk on 9 Apr"
+//             value={note}
+//             onChange={(e) => setNote(e.target.value)}
+//           />
+
+//           <div style={{ display: "flex", gap: 10 }}>
+//             <Btn
+//               variant="primary"
+//               onClick={() => onConfirm(type, note)}
+//               disabled={submitting}
+//             >
+//               {submitting ? "Redeeming…" : "✓ Confirm Redemption"}
+//             </Btn>
+//             <Btn variant="subtle" onClick={onClose}>
+//               Cancel
+//             </Btn>
+//           </div>
+//         </motion.div>
+//       </div>
+//     );
+//   };
+
+//   return (
+//     <div>
+//       <div
+//         style={{
+//           display: "flex",
+//           justifyContent: "space-between",
+//           alignItems: "flex-start",
+//           marginBottom: 20,
+//           flexWrap: "wrap",
+//           gap: 12,
+//         }}
+//       >
+//         <div>
+//           <div style={{ fontWeight: 700, fontSize: 15 }}>
+//             Rewards Management
+//           </div>
+//           <div
+//             style={{
+//               fontSize: 12,
+//               color: "hsl(var(--muted-foreground))",
+//               marginTop: 4,
+//             }}
+//           >
+//             {CHECKINS_REQUIRED} check-ins = 1 reward · Redeem within{" "}
+//             {EXPIRY_DAYS} days
+//           </div>
+//         </div>
+//         {readyCount > 0 && (
+//           <div
+//             style={{
+//               background: "hsl(142 72% 37% / 0.12)",
+//               border: "1px solid hsl(142 72% 37% / 0.3)",
+//               borderRadius: 10,
+//               padding: "8px 16px",
+//               fontSize: 13,
+//               fontWeight: 700,
+//               color: "hsl(142 72% 37%)",
+//             }}
+//           >
+//             🎁 {readyCount} member{readyCount !== 1 ? "s" : ""} ready to redeem
+//           </div>
+//         )}
+//       </div>
+
+//       <div
+//         style={{
+//           background: "hsl(var(--secondary))",
+//           border: "1px solid hsl(var(--border))",
+//           borderRadius: 10,
+//           padding: "12px 16px",
+//           marginBottom: 20,
+//           fontSize: 12,
+//           color: "hsl(var(--muted-foreground))",
+//           lineHeight: 1.7,
+//         }}
+//       >
+//         <strong style={{ color: "hsl(var(--foreground))" }}>
+//           Reward Rules:{" "}
+//         </strong>
+//         Every {CHECKINS_REQUIRED} gym check‑ins earns a member one reward —
+//         either a{" "}
+//         <strong style={{ color: "hsl(20 100% 50%)" }}>
+//           Free InBody Assessment
+//         </strong>{" "}
+//         or a{" "}
+//         <strong style={{ color: "hsl(20 100% 50%)" }}>
+//           Bring‑a‑Buddy free session
+//         </strong>
+//         . Rewards must be redeemed within{" "}
+//         <strong style={{ color: "hsl(20 100% 50%)" }}>
+//           {EXPIRY_DAYS} days
+//         </strong>{" "}
+//         of earning. After redemption the cycle resets.
+//       </div>
+
+//       <div
+//         style={{
+//           display: "flex",
+//           gap: 10,
+//           marginBottom: 16,
+//           flexWrap: "wrap",
+//           alignItems: "center",
+//         }}
+//       >
+//         {(
+//           [
+//             ["all", `All (${members.length})`],
+//             ["ready", `🎁 Ready (${readyCount})`],
+//             ["progress", `⏳ In Progress (${members.length - readyCount})`],
+//           ] as const
+//         ).map(([f, label]) => (
+//           <button
+//             key={f}
+//             onClick={() => setFilter(f)}
+//             style={{
+//               padding: "5px 14px",
+//               borderRadius: 20,
+//               fontSize: 11,
+//               fontWeight: 700,
+//               cursor: "pointer",
+//               background:
+//                 filter === f ? "hsl(20 100% 50%)" : "hsl(var(--secondary))",
+//               color: filter === f ? "#000" : "hsl(var(--foreground))",
+//               border: filter === f ? "none" : "1px solid hsl(var(--border))",
+//             }}
+//           >
+//             {label}
+//           </button>
+//         ))}
+//         <input
+//           style={{ ...inp, width: 200, marginLeft: "auto" }}
+//           placeholder="Search name or email…"
+//           value={search}
+//           onChange={(e) => setSearch(e.target.value)}
+//         />
+//         <Btn variant="subtle" size="sm" onClick={load}>
+//           ↻ Refresh
+//         </Btn>
+//       </div>
+
+//       {loading ? (
+//         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+//           Loading members…
+//         </div>
+//       ) : filtered.length === 0 ? (
+//         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+//           No members found.
+//         </div>
+//       ) : (
+//         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+//           {filtered.map((m) => {
+//             const expired = m.pendingReward?.expired;
+//             const borderColor = m.rewardReady
+//               ? expired
+//                 ? "hsl(0 84% 51%)"
+//                 : "hsl(142 72% 37%)"
+//               : "hsl(var(--border))";
+
+//             return (
+//               <div
+//                 key={m.uid}
+//                 style={{
+//                   background: "hsl(var(--secondary))",
+//                   border: "1px solid hsl(var(--border))",
+//                   borderRadius: 12,
+//                   padding: "14px 16px",
+//                   borderLeft: `3px solid ${borderColor}`,
+//                 }}
+//               >
+//                 <div
+//                   style={{
+//                     display: "flex",
+//                     justifyContent: "space-between",
+//                     alignItems: "flex-start",
+//                     flexWrap: "wrap",
+//                     gap: 10,
+//                     marginBottom: 10,
+//                   }}
+//                 >
+//                   <div>
+//                     <div
+//                       style={{
+//                         fontWeight: 700,
+//                         fontSize: 14,
+//                         display: "flex",
+//                         alignItems: "center",
+//                         gap: 8,
+//                       }}
+//                     >
+//                       {m.name}
+//                       {m.rewardReady && !expired && (
+//                         <span
+//                           style={{
+//                             fontSize: 10,
+//                             fontWeight: 700,
+//                             padding: "2px 8px",
+//                             borderRadius: 20,
+//                             background: "hsl(142 72% 37% / 0.15)",
+//                             color: "hsl(142 72% 37%)",
+//                           }}
+//                         >
+//                           🎁 Reward Ready
+//                         </span>
+//                       )}
+//                       {m.rewardReady && expired && (
+//                         <span
+//                           style={{
+//                             fontSize: 10,
+//                             fontWeight: 700,
+//                             padding: "2px 8px",
+//                             borderRadius: 20,
+//                             background: "hsl(0 84% 51% / 0.15)",
+//                             color: "hsl(0 84% 51%)",
+//                           }}
+//                         >
+//                           ⚠ Reward Expired
+//                         </span>
+//                       )}
+//                     </div>
+//                     <div
+//                       style={{
+//                         fontSize: 12,
+//                         color: "hsl(var(--muted-foreground))",
+//                         marginTop: 2,
+//                       }}
+//                     >
+//                       {m.email} · {m.checkIns} total check-ins
+//                     </div>
+//                   </div>
+//                   {m.rewardReady && !expired && (
+//                     <Btn
+//                       variant="green"
+//                       size="sm"
+//                       onClick={() => setRedeemTarget(m)}
+//                     >
+//                       ✓ Redeem Reward
+//                     </Btn>
+//                   )}
+//                 </div>
+
+//                 <div style={{ marginBottom: 6 }}>
+//                   <div
+//                     style={{
+//                       display: "flex",
+//                       justifyContent: "space-between",
+//                       fontSize: 11,
+//                       color: "hsl(var(--muted-foreground))",
+//                       marginBottom: 4,
+//                     }}
+//                   >
+//                     <span>
+//                       {m.rewardReady
+//                         ? "Current cycle complete ✓"
+//                         : `${m.cycleCheckIns} / ${CHECKINS_REQUIRED} check-ins this cycle`}
+//                     </span>
+//                     <span style={{ fontWeight: 700 }}>
+//                       {Math.round(m.progress)}%
+//                     </span>
+//                   </div>
+//                   <ProgressBar pct={m.progress} ready={m.rewardReady} />
+//                 </div>
+
+//                 {m.rewardReady && m.pendingReward && !expired && (
+//                   <div
+//                     style={{
+//                       fontSize: 11,
+//                       color: "hsl(38 92% 44%)",
+//                       marginTop: 6,
+//                     }}
+//                   >
+//                     ⏰ Reward expires{" "}
+//                     {new Date(m.pendingReward.expiresAt).toLocaleDateString(
+//                       "en-ZA",
+//                       { day: "numeric", month: "long", year: "numeric" },
+//                     )}
+//                   </div>
+//                 )}
+
+//                 {m.redemptions.length > 0 && (
+//                   <details style={{ marginTop: 10 }}>
+//                     <summary
+//                       style={{
+//                         fontSize: 11,
+//                         color: "hsl(var(--muted-foreground))",
+//                         cursor: "pointer",
+//                         userSelect: "none",
+//                       }}
+//                     >
+//                       {m.redemptions.length} previous redemption
+//                       {m.redemptions.length !== 1 ? "s" : ""}
+//                     </summary>
+//                     <div
+//                       style={{
+//                         display: "flex",
+//                         flexDirection: "column",
+//                         gap: 4,
+//                         marginTop: 8,
+//                       }}
+//                     >
+//                       {m.redemptions.slice(0, 5).map((r) => (
+//                         <div
+//                           key={r.id}
+//                           style={{
+//                             fontSize: 11,
+//                             color: "hsl(var(--muted-foreground))",
+//                             display: "flex",
+//                             gap: 8,
+//                             padding: "4px 8px",
+//                             background: "hsl(var(--background))",
+//                             borderRadius: 6,
+//                           }}
+//                         >
+//                           <span>{REWARD_EMOJIS[r.type]}</span>
+//                           <span style={{ color: "hsl(var(--foreground))" }}>
+//                             {REWARD_LABELS[r.type]}
+//                           </span>
+//                           <span style={{ marginLeft: "auto" }}>
+//                             {new Date(r.redeemedAt).toLocaleDateString(
+//                               "en-ZA",
+//                               {
+//                                 day: "numeric",
+//                                 month: "short",
+//                                 year: "numeric",
+//                               },
+//                             )}
+//                           </span>
+//                         </div>
+//                       ))}
+//                     </div>
+//                   </details>
+//                 )}
+//               </div>
+//             );
+//           })}
+//         </div>
+//       )}
+
+//       <AnimatePresence>
+//         {redeemTarget && (
+//           <RedeemModal
+//             member={redeemTarget}
+//             onClose={() => setRedeemTarget(null)}
+//             onConfirm={handleRedeem}
+//             submitting={submitting}
+//           />
+//         )}
+//       </AnimatePresence>
+//     </div>
+//   );
+// }
+
 // // ── Tabs ──────────────────────────────────────────────────────────────────────
 // const TABS = [
 //   { id: "members", label: "👥 Members", desc: "Manage user tiers" },
@@ -7917,6 +8621,7 @@ export function Admin() {
 //   { id: "ads", label: "📣 Ad Enquiries", desc: "Manage advertising" },
 //   { id: "banners", label: "🖼 Ad Banners", desc: "Live banner ads" },
 //   { id: "challenges", label: "🏁 Challenges", desc: "Create challenges" },
+//   { id: "rewards", label: "🎁 Rewards", desc: "Check‑in rewards" },
 //   { id: "feedback", label: "💬 Feedback", desc: "App feedback & ratings" },
 //   { id: "terms", label: "📋 T&C Records", desc: "Acceptance audit log" },
 //   { id: "instagram", label: "📱 Instagram", desc: "Auto-sync setup" },
@@ -8048,6 +8753,7 @@ export function Admin() {
 //           {tab === "terms" && <TermsManager toast={toast} />}
 //           {tab === "banners" && <BannersManager toast={toast} />}
 //           {tab === "challenges" && <ChallengesManager toast={toast} />}
+//           {tab === "rewards" && <RewardsManager toast={toast} />}
 //         </motion.div>
 //       </div>
 
