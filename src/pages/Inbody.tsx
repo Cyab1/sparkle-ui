@@ -12,7 +12,7 @@ const aiChatFn = httpsCallable(getFunctions(), "aiChat");
 interface InBodyEntry {
   date: number;
   weight: number;
-  bodyFat: number;
+  bodyFat: number; 
   muscleMass: number;
   fatMass: number;
   visceralFat: number;

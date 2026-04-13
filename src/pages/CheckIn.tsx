@@ -329,7 +329,7 @@ export function CheckIn() {
               className="mk2-card"
               style={{ borderTop: "3px solid hsl(20 100% 50%)" }}
             >
-              <div className="font-bold text-sm mb-1">Reward Progress</div>
+              <div className="font-bold text-sm mb-1">Loyalty Program</div>
               <div className="text-xs text-muted-foreground mb-3">
                 Every {CHECKIN_MILESTONE} check-ins earns a reward
               </div>
@@ -417,7 +417,7 @@ export function CheckIn() {
                 {
                   icon: "🏥",
                   label: "Free InBody Assessment",
-                  desc: "Full body composition scan at reception — valued at R150",
+                  desc: "Full body composition scan at reception — valued at R200",
                   milestone: "Every 40 check-ins",
                 },
                 {

@@ -82,12 +82,14 @@ function AppContent() {
     );
   }
 
-  // Show onboarding only for brand-new users (no check-ins, no bookings, no onboardingDone)
+  // Show onboarding only for brand-new users.
+  // Uses optional chaining (?.) so missing fields on fresh accounts
+  // don't throw and cause a permanent stuck state.
   const isNewUser =
     !(user as any).onboardingDone &&
-    user.checkIns.length === 0 &&
-    user.bookings.length === 0 &&
-    user.workouts.length === 0;
+    (user.checkIns?.length ?? 0) === 0 &&
+    (user.bookings?.length ?? 0) === 0 &&
+    (user.workouts?.length ?? 0) === 0;
 
   if (isNewUser) {
     return (
@@ -110,7 +112,6 @@ function AppContent() {
       <Layout page={page} setPage={setPage}>
         {/* ── Free pages ──────────────────────────────────────────────────── */}
         {page === "Dashboard" && <Dashboard setPage={setPage} />}
-        {/* {page === "Classes" && <ClassBooking />} */}
         {page === "Classes" && <ClassBooking setPage={setPage} />}
         {page === "Checkin" && <CheckIn />}
         {page === "Gallery" && <Gallery />}
@@ -131,7 +132,7 @@ function AppContent() {
             icon="notifications"
             setPage={setPage}
           >
-            <Notifications setPage={setPage} /> {/* ← added setPage */}
+            <Notifications setPage={setPage} />
           </MembershipGate>
         )}
         {page === "Community" && (
@@ -164,6 +165,7 @@ function AppContent() {
             <PRLogbook />
           </MembershipGate>
         )}
+
         {/* ── Gold tier ───────────────────────────────────────────────────── */}
         {page === "Workout" && (
           <MembershipGate

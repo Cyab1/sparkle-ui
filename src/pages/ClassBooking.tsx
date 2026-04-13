@@ -585,7 +585,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
       <PageTitle
-        sub={isMember ? "Book classes for free" : "Pay per class via PayFast"}
+        sub={isMember ? "Book classes" : "Pay per class via PayFast"}
       >
         Class <span className="text-primary">Booking</span>
       </PageTitle>
