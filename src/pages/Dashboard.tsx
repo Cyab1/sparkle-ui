@@ -78,21 +78,17 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
   const [verifyDismissed, setVerifyDismissed] = useState(false);
   const [resendSent, setResendSent] = useState(false);
   const [resending, setResending] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
   const [liveNews, setLiveNews] = useState<any[]>([]);
 
   useEffect(() => {
     if (!user) return;
     return onValue(ref(db, "admin_news"), (snap) => {
       if (!snap.exists()) return;
-      const lastSeen = (user as any).lastSeenNewsAt ?? 0;
       const items = Object.values(snap.val()) as any[];
       const sorted = items.sort(
         (a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
       );
       setLiveNews(sorted.slice(0, 3));
-      const unread = items.filter((n) => (n.createdAt ?? 0) > lastSeen).length;
-      setUnreadCount(unread);
     });
   }, [user]);
 
@@ -115,9 +111,6 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
   const membership = (user as any).membership ?? "basic";
   const memberConfig =
     MEMBERSHIP_CONFIG[membership as keyof typeof MEMBERSHIP_CONFIG];
-  const memberRank = { basic: 0, silver: 1, gold: 2 }[membership] ?? 0;
-  const isLocked = (required: "basic" | "silver" | "gold") =>
-    ({ basic: 0, silver: 1, gold: 2 })[required] > memberRank;
 
   const rewards = (user as any).rewards ?? {};
   const rewardStatus = getRewardStatus(user.checkIns, rewards);
@@ -160,6 +153,40 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
           </span>
         </div>
       </div>
+
+      {/* ── Email verify banner ─────────────────────────────────────────── */}
+      {showVerifyBanner && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 flex items-center justify-between gap-3"
+        >
+          <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
+            Please verify your email address to unlock all features.
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            {resendSent ? (
+              <span className="text-[10px] text-green-500 font-bold">
+                Sent!
+              </span>
+            ) : (
+              <button
+                onClick={resendVerification}
+                disabled={resending}
+                className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-yellow-500/40 bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 cursor-pointer"
+              >
+                {resending ? "Sending…" : "Resend"}
+              </button>
+            )}
+            <button
+              onClick={() => setVerifyDismissed(true)}
+              className="text-muted-foreground text-sm bg-transparent border-none cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Stats row ──────────────────────────────────────────────────── */}
       <div className="grid grid-cols-4 gap-2 mb-4">
@@ -212,7 +239,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         </div>
       </motion.button>
 
-      {/* ── Rewards / Check-in progress ────────────────────────────────── */}
+      {/* ── Loyalty Program / Check-in progress ────────────────────────── */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -274,7 +301,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         </div>
       </motion.div>
 
-      {/* ── News & Events — full width ──────────────────────────────────── */}
+      {/* ── News & Events ──────────────────────────────────────────────── */}
       <div
         className="mk2-card cursor-pointer hover:border-primary/30 transition-colors mb-4"
         onClick={() => setPage("News")}
@@ -286,9 +313,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
           >
             News & Events
           </span>
-          <span className="text-[10px] text-primary font-bold">
-            View all →
-          </span>
+          <span className="text-[10px] text-primary font-bold">View all →</span>
         </div>
         <div className="flex flex-col gap-2">
           {newsToShow.map((n: any, i: number) => (
@@ -310,6 +335,36 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         </div>
       </div>
 
+      {/* ── Community ──────────────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.42 }}
+        className="mk2-card cursor-pointer hover:border-primary/30 transition-colors mb-4"
+        onClick={() => setPage("Community")}
+        style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <div
+              className="font-display text-base tracking-wide"
+              style={{ color: "hsl(20 100% 50%)" }}
+            >
+              Community
+            </div>
+            <div className="text-xs text-muted-foreground mt-0.5">
+              Connect with fellow MK2R members
+            </div>
+          </div>
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+            style={{ background: "hsl(20 100% 50% / 0.15)" }}
+          >
+            <MI icon="groups" size={20} />
+          </div>
+        </div>
+      </motion.div>
+
       {/* ── My Progress — PR Logbook + Leaderboard ──────────────────────── */}
       <div
         className="font-display tracking-wide mt-4 mb-2"
@@ -321,45 +376,34 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
-        className="grid grid-cols-2 gap-2 mt-4"
+        className="grid grid-cols-2 gap-2 mt-2"
       >
         {[
           {
             label: "PR Logbook",
             icon: "emoji_events",
             page: "PRLogbook",
-            required: "silver" as const,
           },
           {
             label: "Leaderboard",
             icon: "leaderboard",
             page: "Leaderboard",
-            required: "silver" as const,
           },
-        ].map((a) => {
-          const locked = isLocked(a.required);
-          return (
-            <button
-              key={a.label}
-              onClick={() => setPage(a.page)}
-              className="bg-card border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
-              style={{ opacity: locked ? 0.6 : 1 }}
+        ].map((a) => (
+          <button
+            key={a.label}
+            onClick={() => setPage(a.page)}
+            className="bg-card border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
+          >
+            <MI icon={a.icon} size={18} />
+            <span
+              className="font-display tracking-wide text-primary"
+              style={{ fontSize: 14 }}
             >
-              <MI icon={locked ? "lock" : a.icon} size={18} />
-              <span
-                className="font-display tracking-wide text-primary"
-                style={{ fontSize: 14 }}
-              >
-                {a.label}
-              </span>
-              {locked && (
-                <span className="ml-auto text-[9px] font-bold uppercase text-muted-foreground">
-                  {a.required}+
-                </span>
-              )}
-            </button>
-          );
-        })}
+              {a.label}
+            </span>
+          </button>
+        ))}
       </motion.div>
     </div>
   );
@@ -510,12 +554,6 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //         >
 //           Welcome,{" "}
 //           <span className="text-primary">{user.name.split(" ")[0]}</span>
-//           <span
-//             className="text-muted-foreground font-body font-bold tracking-widest uppercase align-middle ml-2"
-//             style={{ fontSize: isMobile ? "11px" : "13px" }}
-//           >
-//             Gym Pro
-//           </span>
 //         </div>
 //         <div className="flex items-center gap-2 mt-1 flex-wrap">
 //           <span className="text-muted-foreground text-xs">
@@ -659,7 +697,9 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //           >
 //             News & Events
 //           </span>
-//           <span className="text-[10px] text-primary font-bold">View all →</span>
+//           <span className="text-[10px] text-primary font-bold">
+//             View all →
+//           </span>
 //         </div>
 //         <div className="flex flex-col gap-2">
 //           {newsToShow.map((n: any, i: number) => (

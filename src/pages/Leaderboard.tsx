@@ -1014,7 +1014,7 @@ export function Leaderboard() {
     <div
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
-      <PageTitle sub="Compete, earn, and rise through the ranks">
+      <PageTitle sub="A Little Healthy Competition">
         Leader<span className="text-primary">board</span>
       </PageTitle>
 

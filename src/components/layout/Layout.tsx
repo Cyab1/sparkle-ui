@@ -37,17 +37,16 @@ const NAV_GROUPS = [
       { id: "Dashboard", label: "Home" },
       { id: "Checkin", label: "Check-In" },
       { id: "Leaderboard", label: "Leaderboard" },
-      { id: "Notifications", label: "Notifications" },
+      // Notifications removed — bell icon handles this in top bar
     ],
   },
   {
     label: "Tools",
     tabs: [
-      { id: "Workout", label: "Workout" },
-      { id: "Nutrition", label: "Nutrition" },
-      { id: "InBody", label: "InBody" },
-      { id: "BMR", label: "BMR Calc" },
-      { id: "Progress", label: "Progress" },
+      { id: "BMR", label: "BMR Calculator" },
+      { id: "Nutrition", label: "AI Nutrition Coach" },
+      { id: "InBody", label: "InBody Assessments" },
+      { id: "Progress", label: "Progress Report" },
     ],
   },
   {
@@ -68,6 +67,8 @@ const NAV_GROUPS = [
   },
 ];
 
+// ── Bottom nav: Home | Gallery | Tools | Me
+// Classes & Check-In removed — they're accessible from the Dashboard
 const BOTTOM_TABS = [
   { id: "Dashboard", icon: "home", label: "Home" },
   { id: "Gallery", icon: "photo_library", label: "Gallery" },
@@ -75,11 +76,14 @@ const BOTTOM_TABS = [
   { id: "Account", icon: "account_circle", label: "Me" },
 ];
 
+// More drawer pages
 const MORE_PAGES = [
+  // Tools
   { id: "BMR", label: "BMR Calculator", group: "tools" },
   { id: "Nutrition", label: "AI Nutrition Coach", group: "tools" },
   { id: "InBody", label: "InBody Assessments", group: "tools" },
   { id: "Progress", label: "Progress Report", group: "tools" },
+  // Gym
   { id: "Classes", label: "Book a Class", group: "gym" },
   { id: "Checkin", label: "Check-In", group: "gym" },
   { id: "Leaderboard", label: "Leaderboard", group: "gym" },
@@ -87,6 +91,7 @@ const MORE_PAGES = [
   { id: "Community", label: "Community", group: "gym" },
   { id: "News", label: "News & Events", group: "gym" },
   { id: "Membership", label: "Membership", group: "gym" },
+  // Settings & Info — Notification Settings lives here now
   { id: "Notifications", label: "Notification Settings", group: "settings" },
   { id: "About", label: "About Us", group: "settings" },
   { id: "Contact", label: "Contact Us", group: "settings" },
@@ -106,6 +111,19 @@ export function Layout({ children, page, setPage }: LayoutProps) {
   const { isMobile } = useBreakpoint();
   const [showMore, setShowMore] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Track unread notification count for the bell
+  useEffect(() => {
+    if (!user) return;
+    return onValue(ref(db, "admin_news"), (snap) => {
+      if (!snap.exists()) return;
+      const lastSeen = (user as any).lastSeenNewsAt ?? 0;
+      const items = Object.values(snap.val()) as any[];
+      const unread = items.filter((n) => (n.createdAt ?? 0) > lastSeen).length;
+      setUnreadCount(unread);
+    });
+  }, [user]);
 
   if (!user) return null;
 
@@ -129,12 +147,31 @@ export function Layout({ children, page, setPage }: LayoutProps) {
       {/* ── Desktop nav */}
       {!isMobile && (
         <nav className="sticky top-0 z-[200] bg-background/95 backdrop-blur-xl border-b border-border px-5 h-[58px] flex items-center justify-between gap-4">
+          {/* Logo + wordmark */}
           <div
             onClick={() => navigate("Dashboard")}
-            className="font-display text-[22px] tracking-[0.15em] text-primary cursor-pointer shrink-0 hover:opacity-80 transition-opacity"
+            className="flex items-center gap-2.5 cursor-pointer shrink-0 hover:opacity-80 transition-opacity"
           >
-            MK2 RIVERS
+            <img
+              src="/mk2r-logo.jpg"
+              alt="MK2R Fitness"
+              style={{
+                width: 40,
+                height: 40,
+                objectFit: "contain",
+                borderRadius: 8,
+              }}
+            />
+            <div>
+              <div className="font-display text-[22px] tracking-[0.15em] text-primary leading-none">
+                MK2 RIVERS
+              </div>
+              <div className="font-display text-[9px] tracking-[0.15em] text-muted-foreground uppercase">
+                Gym Pro
+              </div>
+            </div>
           </div>
+
           <div className="flex items-center gap-1 flex-1 justify-center">
             {NAV_GROUPS.map((group) => {
               const groupActive = group.tabs.some((t) => t.id === page);
@@ -187,8 +224,26 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               );
             })}
           </div>
+
           <div className="flex items-center gap-2 shrink-0">
             <ThemeToggle />
+
+            {/* 🔔 Bell — actual notification messages */}
+            <button
+              onClick={() => navigate("Notifications")}
+              className="relative w-9 h-9 flex items-center justify-center rounded-full bg-secondary border border-border cursor-pointer hover:border-primary/40 transition-colors"
+            >
+              <MI icon="notifications" size={18} />
+              {unreadCount > 0 && (
+                <span
+                  className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center"
+                  style={{ background: "hsl(20 100% 50%)", color: "#000" }}
+                >
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+
             <div
               onClick={() => navigate("Account")}
               className="flex items-center gap-2 bg-secondary border border-border rounded-full py-1 pl-1.5 pr-3 cursor-pointer hover:border-primary/40 transition-colors"
@@ -218,19 +273,48 @@ export function Layout({ children, page, setPage }: LayoutProps) {
             paddingBottom: "12px",
           }}
         >
-          {/* Logo + Gym Pro subtitle */}
-          <div>
-            <div className="font-display text-xl tracking-[0.15em] text-primary leading-tight">
-              MK2 RIVERS
-            </div>
-            <div className="font-display text-[9px] tracking-[0.15em] text-muted-foreground uppercase">
-              Gym Pro
+          {/* Logo + wordmark */}
+          <div className="flex items-center gap-2">
+            <img
+              src="/mk2r-logo.jpg"
+              alt="MK2R Fitness"
+              style={{
+                width: 38,
+                height: 38,
+                objectFit: "contain",
+                borderRadius: 7,
+              }}
+            />
+            <div>
+              <div className="font-display text-xl tracking-[0.15em] text-primary leading-tight">
+                MK2 RIVERS
+              </div>
+              <div className="font-display text-[9px] tracking-[0.15em] text-muted-foreground uppercase">
+                Gym Pro
+              </div>
             </div>
           </div>
 
-          {/* Right side — theme toggle + avatar only (bell removed) */}
+          {/* Right side — theme toggle + bell + avatar */}
           <div className="flex items-center gap-2">
             <ThemeToggle />
+
+            {/* 🔔 Bell — actual notification messages */}
+            <button
+              onClick={() => navigate("Notifications")}
+              className="relative w-8 h-8 flex items-center justify-center rounded-full bg-secondary border border-border cursor-pointer"
+            >
+              <MI icon="notifications" size={18} />
+              {unreadCount > 0 && (
+                <span
+                  className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center"
+                  style={{ background: "hsl(20 100% 50%)", color: "#000" }}
+                >
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+
             <div
               onClick={() => navigate("Account")}
               className="w-8 h-8 rounded-full flex items-center justify-center font-display text-[15px] cursor-pointer"
@@ -252,7 +336,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
         {children}
       </motion.div>
 
-      {/* ── Mobile bottom nav */}
+      {/* ── Mobile bottom nav: Home | Gallery | Tools | Me */}
       {isMobile && (
         <nav
           className="fixed bottom-0 left-0 right-0 z-[200] bg-background/98 border-t border-border flex backdrop-blur-xl"
@@ -280,6 +364,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               </span>
             </button>
           ))}
+          {/* More / Grid button */}
           <button
             onClick={() => setShowMore(!showMore)}
             className={`flex-1 flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors ${
@@ -316,6 +401,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               }}
               onClick={(e) => e.stopPropagation()}
             >
+              {/* Tools */}
               <div className="mb-4">
                 <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-2 flex items-center gap-1.5">
                   <MI icon="bolt" size={14} /> Tools
@@ -332,6 +418,8 @@ export function Layout({ children, page, setPage }: LayoutProps) {
                   ))}
                 </div>
               </div>
+
+              {/* Gym */}
               <div className="mb-4">
                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
                   Gym
@@ -348,6 +436,8 @@ export function Layout({ children, page, setPage }: LayoutProps) {
                   ))}
                 </div>
               </div>
+
+              {/* Settings & Info — Notification Settings is here */}
               <div>
                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
                   Settings & Info
