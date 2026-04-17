@@ -113,7 +113,6 @@ export function PRLogbook() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [category, setCategory] = useState<Category | "all">("all");
-  const [myPRsOnly, setMyPRsOnly] = useState(true);
   const [saving, setSaving] = useState(false);
 
   // Form state
@@ -229,9 +228,9 @@ export function PRLogbook() {
     setLevel("RX");
   };
 
-  // Filter PRs
+  // Filter PRs – always only the current user's
   let filtered = prs.filter((p) => {
-    if (myPRsOnly && p.uid !== user?.uid) return false;
+    if (p.uid !== user?.uid) return false;
     if (category !== "all" && p.category !== category) return false;
     return true;
   });
@@ -254,7 +253,6 @@ export function PRLogbook() {
       new Date(b.date_logged).getTime() - new Date(a.date_logged).getTime(),
   );
 
-  const totalAthletes = new Set(prs.map((p) => p.uid)).size;
   const inp =
     "w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary/50 transition-colors font-body";
   const lbl =
@@ -266,7 +264,7 @@ export function PRLogbook() {
     >
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <PageTitle
-          sub={`${prs.length} PRs logged · ${totalAthletes} athlete${totalAthletes !== 1 ? "s" : ""}`}
+          sub={`${displayPRs.length} personal record${displayPRs.length !== 1 ? "s" : ""}`}
         >
           🏆 PR <span className="text-primary">Logbook</span>
         </PageTitle>
@@ -282,18 +280,9 @@ export function PRLogbook() {
         </button>
       </div>
 
-      {/* Filters */}
+      {/* Filters – no checkbox, only category pills */}
       <div className="mk2-card mb-4 flex flex-wrap gap-3 items-center">
-        <label className="flex items-center gap-2 cursor-pointer text-sm font-bold">
-          <input
-            type="checkbox"
-            checked={myPRsOnly}
-            onChange={(e) => setMyPRsOnly(e.target.checked)}
-            className="w-4 h-4 accent-primary"
-          />
-          My PRs only
-        </label>
-        <div className="flex flex-wrap gap-1.5 ml-auto">
+        <div className="flex flex-wrap gap-1.5">
           {[
             { id: "all", label: "All" },
             ...CATEGORIES.map((c) => ({ id: c, label: `${catEmoji[c]} ${c}` })),
@@ -623,7 +612,6 @@ export function PRLogbook() {
 
 // import { useState, useEffect } from "react";
 // import { ref, set, get, push } from "firebase/database";
-// import { getFunctions, httpsCallable } from "firebase/functions";
 // import { db } from "@/lib/firebase";
 // import { useAuth } from "@/context/AuthContext";
 // import { motion, AnimatePresence } from "framer-motion";
@@ -806,10 +794,6 @@ export function PRLogbook() {
 //   const pacePreview =
 //     isRun && runDist && parsedSec != null ? calcPace(parsedSec, runDist) : null;
 
-//   // Cloud Function setup
-//   const functions = getFunctions();
-//   const logPRFn = httpsCallable(functions, "logPR");
-
 //   const savePR = async () => {
 //     if (!exerciseId || !user) return;
 //     if (isTime && (parsedSec == null || parsedSec <= 0)) return;
@@ -820,27 +804,31 @@ export function PRLogbook() {
 //     const value = isTime ? parsedSec! : parseFloat(weightVal);
 //     const displayValue = isTime ? formatTime(value) : `${value}${unit}`;
 
+//     const prData = {
+//       uid: user.uid,
+//       athlete: user.name,
+//       gender: (user as any).gender === "female" ? "Female" : "Male",
+//       level,
+//       category: formCat,
+//       exercise_id: exerciseId,
+//       exercise: ex.name,
+//       value,
+//       unit: isTime ? "sec" : unit,
+//       displayValue,
+//       notes,
+//       date_logged: dateLogged,
+//       timestamp: new Date().toISOString(),
+//     };
+
 //     try {
-//       await logPRFn({
-//         exercise_id: exerciseId,
-//         exercise: ex.name,
-//         category: formCat,
-//         level: level,
-//         value: value,
-//         unit: isTime ? "sec" : unit,
-//         displayValue: displayValue,
-//         notes: notes,
-//         date_logged: dateLogged,
-//       });
+//       await push(ref(db, PR_PATH), prData);
 //       setShowModal(false);
 //       resetForm();
 //       loadPRs();
-//     } catch (err: any) {
-//       console.error(err);
-//       alert(err.message || "Failed to save PR");
-//     } finally {
-//       setSaving(false);
+//     } catch (e) {
+//       console.error(e);
 //     }
+//     setSaving(false);
 //   };
 
 //   const resetForm = () => {

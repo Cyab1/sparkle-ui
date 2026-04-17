@@ -38,7 +38,7 @@ export function NutritionCoach() {
   const [cal, setCal] = useState("2200");
   const [blood, setBlood] = useState("O+");
   const [diet, setDiet] = useState("No restrictions");
-  const [plan, setPlan] = useState("Full Day Meal Plan");
+  const [plan, setPlan] = useState("Lose Weight");
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
@@ -54,7 +54,7 @@ export function NutritionCoach() {
   const remaining =
     quotaRemaining !== null ? quotaRemaining : (aiQuota?.remaining ?? 0);
   const quotaTotal =
-    membership === "gold" ? 200 : membership === "silver" ? 50 : 0;
+    membership === "gold" ? 100 : membership === "silver" ? 20 : 0;
   const outOfCredits = remaining <= 0;
 
   // ── Non-member gate ───────────────────────────────────────────────────────
@@ -174,15 +174,7 @@ export function NutritionCoach() {
       label: "Plan Type",
       val: plan,
       set: setPlan,
-      opts: [
-        "Full Day Meal Plan",
-        "Pre-Workout Meal",
-        "Post-Workout Recovery",
-        "Meal Prep Guide",
-        "High Protein Day",
-        "Cutting Phase",
-        "Bulking Phase",
-      ],
+      opts: ["Lose Weight", "Muscle Gain"],
     },
   ];
 
@@ -368,10 +360,30 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 
 // const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
+// // ── Parse calories from pasted BMR text ──────────────────────────────────────
+// function extractCaloriesFromBMR(text: string): string | null {
+//   // Match patterns like "2,450", "2450", "TDEE: 2450", "Maintenance: 2,450 calories", etc.
+//   const patterns = [
+//     /(?:tdee|maintenance|total daily|calories?)[^\d]*(\d[\d,]+)/i,
+//     /(\d[\d,]+)\s*(?:calories?|kcal)/i,
+//     /(?:goal|target)[^\d]*(\d[\d,]+)/i,
+//     /(\d{3,4}(?:,\d{3})?)/,
+//   ];
+//   for (const pattern of patterns) {
+//     const match = text.match(pattern);
+//     if (match) {
+//       const num = parseInt(match[1].replace(/,/g, ""), 10);
+//       if (num >= 1000 && num <= 6000) return String(num);
+//     }
+//   }
+//   return null;
+// }
+
 // export function NutritionCoach() {
 //   const { user, toast } = useAuth();
 //   const { isMobile } = useBreakpoint();
 
+//   const [bmrPaste, setBmrPaste] = useState("");
 //   const [cal, setCal] = useState("2200");
 //   const [blood, setBlood] = useState("O+");
 //   const [diet, setDiet] = useState("No restrictions");
@@ -380,6 +392,7 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 //   const [loading, setLoading] = useState(false);
 //   const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
 //   const [aiError, setAiError] = useState("");
+//   const [bmrApplied, setBmrApplied] = useState(false);
 
 //   if (!user) return null;
 
@@ -417,6 +430,22 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 //     );
 //   }
 
+//   const handleBmrPaste = (text: string) => {
+//     setBmrPaste(text);
+//     setBmrApplied(false);
+//     if (text.trim()) {
+//       const extracted = extractCaloriesFromBMR(text);
+//       if (extracted) {
+//         setCal(extracted);
+//         setBmrApplied(true);
+//         toast(
+//           `✓ Calories set to ${extracted} from your BMR results`,
+//           "success",
+//         );
+//       }
+//     }
+//   };
+
 //   const generate = async () => {
 //     if (outOfCredits) {
 //       toast("Monthly AI limit reached. Resets on the 1st.", "error");
@@ -429,7 +458,11 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 //     logEvent("generate_nutrition", { calories: cal, blood, plan });
 
 //     try {
-//       const prompt = `${plan} for: Goal: ${user.goal} | Level: ${user.level} | Calories: ${cal}/day | Blood type: ${blood} | Diet: ${diet}. Include SA ingredients. Show protein/carbs/fat.`;
+//       const bmrContext = bmrPaste.trim()
+//         ? ` BMR/TDEE context from user: "${bmrPaste.trim().substring(0, 300)}".`
+//         : "";
+
+//       const prompt = `${plan} for: Goal: ${user.goal} | Level: ${user.level} | Calories: ${cal}/day | Blood type: ${blood} | Diet: ${diet}.${bmrContext} Include SA ingredients. Show protein/carbs/fat.`;
 
 //       const res = await aiChatFn({
 //         prompt,
@@ -458,13 +491,18 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 //     }
 //   };
 
+//   const calOptions = [
+//     "1400",
+//     "1600",
+//     "1800",
+//     "2000",
+//     "2200",
+//     "2500",
+//     "3000",
+//     "3500",
+//   ];
+
 //   const fields = [
-//     {
-//       label: "Calories/day",
-//       val: cal,
-//       set: setCal,
-//       opts: ["1400", "1600", "1800", "2000", "2200", "2500", "3000", "3500"],
-//     },
 //     { label: "Blood Type", val: blood, set: setBlood, opts: BLOOD_TYPES },
 //     {
 //       label: "Diet Preference",
@@ -531,8 +569,99 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 //           </div>
 //         </div>
 
+//         {/* ── BMR paste field ────────────────────────────────────────────── */}
 //         <div
-//           className={`grid gap-3 mb-4 ${isMobile ? "grid-cols-1" : "grid-cols-2"}`}
+//           className="mb-4 rounded-xl p-4"
+//           style={{
+//             background: "hsl(20 100% 50% / 0.05)",
+//             border: "1px solid hsl(20 100% 50% / 0.2)",
+//           }}
+//         >
+//           <div className="flex items-center justify-between mb-1.5">
+//             <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+//               📋 Paste BMR / TDEE Results
+//             </label>
+//             {bmrApplied && (
+//               <span
+//                 className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+//                 style={{
+//                   background: "hsl(142 72% 37% / 0.15)",
+//                   color: "hsl(142 72% 37%)",
+//                 }}
+//               >
+//                 ✓ Calories auto-filled
+//               </span>
+//             )}
+//           </div>
+//           <textarea
+//             className="w-full rounded-xl px-4 py-3 text-sm outline-none transition-colors font-body resize-none"
+//             style={{
+//               background: "hsl(var(--secondary))",
+//               border: "1px solid hsl(var(--border))",
+//               color: "hsl(var(--foreground))",
+//               minHeight: 80,
+//             }}
+//             placeholder="Paste your BMR calculator results here — your calorie target will be filled in automatically.
+
+// e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
+//             value={bmrPaste}
+//             onChange={(e) => handleBmrPaste(e.target.value)}
+//           />
+//           <p className="text-[10px] text-muted-foreground mt-1.5">
+//             Copy results from the BMR Calculator tool and paste above — your
+//             calories will be pre-filled automatically.
+//           </p>
+//         </div>
+
+//         {/* ── Calories field (standalone, prominent) ────────────────────── */}
+//         <div className="mb-4">
+//           <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1.5">
+//             Calories / day
+//             {bmrApplied && (
+//               <span
+//                 className="ml-2 normal-case tracking-normal font-normal"
+//                 style={{ color: "hsl(142 72% 37%)" }}
+//               >
+//                 (from your BMR results)
+//               </span>
+//             )}
+//           </label>
+//           <div className="flex gap-2 flex-wrap">
+//             {calOptions.map((c) => (
+//               <button
+//                 key={c}
+//                 onClick={() => {
+//                   setCal(c);
+//                   setBmrApplied(false);
+//                 }}
+//                 className="px-3 py-2 rounded-lg font-bold text-xs border-none cursor-pointer transition-all"
+//                 style={{
+//                   background:
+//                     cal === c ? "hsl(20 100% 50%)" : "hsl(var(--secondary))",
+//                   color: cal === c ? "#000" : "hsl(var(--foreground))",
+//                   border: `1px solid ${cal === c ? "hsl(20 100% 50%)" : "hsl(var(--border))"}`,
+//                 }}
+//               >
+//                 {c}
+//               </button>
+//             ))}
+//             {/* Custom value chip — shown when BMR sets a non-standard value */}
+//             {!calOptions.includes(cal) && (
+//               <button
+//                 className="px-3 py-2 rounded-lg font-bold text-xs border-none cursor-pointer"
+//                 style={{
+//                   background: "hsl(20 100% 50%)",
+//                   color: "#000",
+//                 }}
+//               >
+//                 {cal} ✓
+//               </button>
+//             )}
+//           </div>
+//         </div>
+
+//         <div
+//           className={`grid gap-3 mb-4 ${isMobile ? "grid-cols-1" : "grid-cols-3"}`}
 //         >
 //           {fields.map((f) => (
 //             <div key={f.label}>

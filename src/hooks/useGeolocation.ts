@@ -10,8 +10,8 @@ interface GeolocationState {
 
 // MK2R CHANGE #3 — Corrected GPS (29 Peter Rd, Tres Jolie AH, Roodepoort)
 // MK2R CHANGE #9 — Radius changed from 500m → exact 20m for check-in
-const GYM_LAT = -26.0728838;
-const GYM_LNG = 27.8876158;
+const GYM_LAT = -26.073057;
+const GYM_LNG = 27.888273;
 const RADIUS_METERS = 20;
 
 function getDistanceMeters(
@@ -79,9 +79,11 @@ export function useGeolocation() {
 //   supported: boolean;
 // }
 
-// const GYM_LAT = -26.0626601;
-// const GYM_LNG = 27.899925;
-// const RADIUS_METERS = 500;
+// // MK2R CHANGE #3 — Corrected GPS (29 Peter Rd, Tres Jolie AH, Roodepoort)
+// // MK2R CHANGE #9 — Radius changed from 500m → exact 20m for check-in
+// const GYM_LAT = -26.07288380;
+// const GYM_LNG = 27.8876158;
+// const RADIUS_METERS = 20;
 
 // function getDistanceMeters(
 //   lat1: number,
@@ -121,12 +123,17 @@ export function useGeolocation() {
 //         const dist = getDistanceMeters(lat, lng, GYM_LAT, GYM_LNG);
 //         setState({ lat, lng, error: null, loading: false, supported: true });
 //         setDistanceM(Math.round(dist));
+//         // MK2R CHANGE #9 — exact 20m check, no buffer
 //         setNearGym(dist <= RADIUS_METERS);
 //       },
 //       (err) => {
 //         setState((s) => ({ ...s, error: err.message, loading: false }));
 //       },
-//       { enableHighAccuracy: true, timeout: 10000 },
+//       {
+//         enableHighAccuracy: true, // required for 20m precision
+//         timeout: 10000,
+//         maximumAge: 0, // never use a cached position
+//       },
 //     );
 //   };
 

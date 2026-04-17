@@ -301,10 +301,60 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         </div>
       </motion.div>
 
+      {/* ── Not a member yet? ─────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.38 }}
+        className="mb-4 rounded-xl p-4"
+        style={{
+          background: "hsl(20 100% 50% / 0.05)",
+          border: "1px solid hsl(20 100% 50% / 0.2)",
+        }}
+      >
+        <div className="font-bold text-sm mb-1">Not a member yet?</div>
+        <div className="text-xs text-muted-foreground mb-3">
+          Come check us out — no commitment needed.
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <a
+            href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20book%20a%20trial%20at%20MK2%20Rivers"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
+            style={{
+              background: "hsl(142 72% 37%)",
+              color: "#fff",
+              minWidth: 140,
+            }}
+          >
+            🏋️ Book a Trial
+          </a>
+          <a
+            href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20do%20a%20drop-in%20session%20at%20MK2%20Rivers"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
+            style={{
+              background: "hsl(var(--secondary))",
+              color: "hsl(var(--foreground))",
+              border: "1px solid hsl(var(--border))",
+              minWidth: 140,
+            }}
+          >
+            🚶 Drop-In Session
+          </a>
+        </div>
+      </motion.div>
+
       {/* ── News & Events ──────────────────────────────────────────────── */}
-      <div
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
         className="mk2-card cursor-pointer hover:border-primary/30 transition-colors mb-4"
         onClick={() => setPage("News")}
+        style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
       >
         <div className="flex items-center justify-between mb-3">
           <span
@@ -333,7 +383,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
             </div>
           ))}
         </div>
-      </div>
+      </motion.div>
 
       {/* ── Community ──────────────────────────────────────────────────── */}
       <motion.div
@@ -489,21 +539,17 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //   const [verifyDismissed, setVerifyDismissed] = useState(false);
 //   const [resendSent, setResendSent] = useState(false);
 //   const [resending, setResending] = useState(false);
-//   const [unreadCount, setUnreadCount] = useState(0);
 //   const [liveNews, setLiveNews] = useState<any[]>([]);
 
 //   useEffect(() => {
 //     if (!user) return;
 //     return onValue(ref(db, "admin_news"), (snap) => {
 //       if (!snap.exists()) return;
-//       const lastSeen = (user as any).lastSeenNewsAt ?? 0;
 //       const items = Object.values(snap.val()) as any[];
 //       const sorted = items.sort(
 //         (a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
 //       );
 //       setLiveNews(sorted.slice(0, 3));
-//       const unread = items.filter((n) => (n.createdAt ?? 0) > lastSeen).length;
-//       setUnreadCount(unread);
 //     });
 //   }, [user]);
 
@@ -526,9 +572,6 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //   const membership = (user as any).membership ?? "basic";
 //   const memberConfig =
 //     MEMBERSHIP_CONFIG[membership as keyof typeof MEMBERSHIP_CONFIG];
-//   const memberRank = { basic: 0, silver: 1, gold: 2 }[membership] ?? 0;
-//   const isLocked = (required: "basic" | "silver" | "gold") =>
-//     ({ basic: 0, silver: 1, gold: 2 })[required] > memberRank;
 
 //   const rewards = (user as any).rewards ?? {};
 //   const rewardStatus = getRewardStatus(user.checkIns, rewards);
@@ -571,6 +614,40 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //           </span>
 //         </div>
 //       </div>
+
+//       {/* ── Email verify banner ─────────────────────────────────────────── */}
+//       {showVerifyBanner && (
+//         <motion.div
+//           initial={{ opacity: 0, y: -8 }}
+//           animate={{ opacity: 1, y: 0 }}
+//           className="mb-4 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 flex items-center justify-between gap-3"
+//         >
+//           <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
+//             Please verify your email address to unlock all features.
+//           </span>
+//           <div className="flex items-center gap-2 shrink-0">
+//             {resendSent ? (
+//               <span className="text-[10px] text-green-500 font-bold">
+//                 Sent!
+//               </span>
+//             ) : (
+//               <button
+//                 onClick={resendVerification}
+//                 disabled={resending}
+//                 className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-yellow-500/40 bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 cursor-pointer"
+//               >
+//                 {resending ? "Sending…" : "Resend"}
+//               </button>
+//             )}
+//             <button
+//               onClick={() => setVerifyDismissed(true)}
+//               className="text-muted-foreground text-sm bg-transparent border-none cursor-pointer"
+//             >
+//               ✕
+//             </button>
+//           </div>
+//         </motion.div>
+//       )}
 
 //       {/* ── Stats row ──────────────────────────────────────────────────── */}
 //       <div className="grid grid-cols-4 gap-2 mb-4">
@@ -623,7 +700,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //         </div>
 //       </motion.button>
 
-//       {/* ── Rewards / Check-in progress ────────────────────────────────── */}
+//       {/* ── Loyalty Program / Check-in progress ────────────────────────── */}
 //       <motion.div
 //         initial={{ opacity: 0 }}
 //         animate={{ opacity: 1 }}
@@ -685,10 +762,57 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //         </div>
 //       </motion.div>
 
-//       {/* ── News & Events — full width ──────────────────────────────────── */}
+//       {/* ── Not a member yet? ─────────────────────────────────────── */}
+//       <motion.div
+//         initial={{ opacity: 0, y: 8 }}
+//         animate={{ opacity: 1, y: 0 }}
+//         transition={{ delay: 0.38 }}
+//         className="mb-4 rounded-xl p-4"
+//         style={{
+//           background: "hsl(20 100% 50% / 0.05)",
+//           border: "1px solid hsl(20 100% 50% / 0.2)",
+//         }}
+//       >
+//         <div className="font-bold text-sm mb-1">Not a member yet?</div>
+//         <div className="text-xs text-muted-foreground mb-3">
+//           Come check us out — no commitment needed.
+//         </div>
+//         <div className="flex gap-2 flex-wrap">
+//           <a
+//             href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20book%20a%20trial%20at%20MK2%20Rivers"
+//             target="_blank"
+//             rel="noopener noreferrer"
+//             className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
+//             style={{
+//               background: "hsl(142 72% 37%)",
+//               color: "#fff",
+//               minWidth: 140,
+//             }}
+//           >
+//             🏋️ Book a Trial
+//           </a>
+//           <a
+//             href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20do%20a%20drop-in%20session%20at%20MK2%20Rivers"
+//             target="_blank"
+//             rel="noopener noreferrer"
+//             className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
+//             style={{
+//               background: "hsl(var(--secondary))",
+//               color: "hsl(var(--foreground))",
+//               border: "1px solid hsl(var(--border))",
+//               minWidth: 140,
+//             }}
+//           >
+//             🚶 Drop-In Session
+//           </a>
+//         </div>
+//       </motion.div>
+
+//       {/* ── News & Events ──────────────────────────────────────────────── */}
 //       <div
 //         className="mk2-card cursor-pointer hover:border-primary/30 transition-colors mb-4"
 //         onClick={() => setPage("News")}
+//         style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
 //       >
 //         <div className="flex items-center justify-between mb-3">
 //           <span
@@ -697,9 +821,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //           >
 //             News & Events
 //           </span>
-//           <span className="text-[10px] text-primary font-bold">
-//             View all →
-//           </span>
+//           <span className="text-[10px] text-primary font-bold">View all →</span>
 //         </div>
 //         <div className="flex flex-col gap-2">
 //           {newsToShow.map((n: any, i: number) => (
@@ -721,6 +843,36 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //         </div>
 //       </div>
 
+//       {/* ── Community ──────────────────────────────────────────────────── */}
+//       <motion.div
+//         initial={{ opacity: 0, y: 8 }}
+//         animate={{ opacity: 1, y: 0 }}
+//         transition={{ delay: 0.42 }}
+//         className="mk2-card cursor-pointer hover:border-primary/30 transition-colors mb-4"
+//         onClick={() => setPage("Community")}
+//         style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
+//       >
+//         <div className="flex items-center justify-between">
+//           <div>
+//             <div
+//               className="font-display text-base tracking-wide"
+//               style={{ color: "hsl(20 100% 50%)" }}
+//             >
+//               Community
+//             </div>
+//             <div className="text-xs text-muted-foreground mt-0.5">
+//               Connect with fellow MK2R members
+//             </div>
+//           </div>
+//           <div
+//             className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+//             style={{ background: "hsl(20 100% 50% / 0.15)" }}
+//           >
+//             <MI icon="groups" size={20} />
+//           </div>
+//         </div>
+//       </motion.div>
+
 //       {/* ── My Progress — PR Logbook + Leaderboard ──────────────────────── */}
 //       <div
 //         className="font-display tracking-wide mt-4 mb-2"
@@ -732,45 +884,34 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //         initial={{ opacity: 0, y: 8 }}
 //         animate={{ opacity: 1, y: 0 }}
 //         transition={{ delay: 0.5 }}
-//         className="grid grid-cols-2 gap-2 mt-4"
+//         className="grid grid-cols-2 gap-2 mt-2"
 //       >
 //         {[
 //           {
 //             label: "PR Logbook",
 //             icon: "emoji_events",
 //             page: "PRLogbook",
-//             required: "silver" as const,
 //           },
 //           {
 //             label: "Leaderboard",
 //             icon: "leaderboard",
 //             page: "Leaderboard",
-//             required: "silver" as const,
 //           },
-//         ].map((a) => {
-//           const locked = isLocked(a.required);
-//           return (
-//             <button
-//               key={a.label}
-//               onClick={() => setPage(a.page)}
-//               className="bg-card border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
-//               style={{ opacity: locked ? 0.6 : 1 }}
+//         ].map((a) => (
+//           <button
+//             key={a.label}
+//             onClick={() => setPage(a.page)}
+//             className="bg-card border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
+//           >
+//             <MI icon={a.icon} size={18} />
+//             <span
+//               className="font-display tracking-wide text-primary"
+//               style={{ fontSize: 14 }}
 //             >
-//               <MI icon={locked ? "lock" : a.icon} size={18} />
-//               <span
-//                 className="font-display tracking-wide text-primary"
-//                 style={{ fontSize: 14 }}
-//               >
-//                 {a.label}
-//               </span>
-//               {locked && (
-//                 <span className="ml-auto text-[9px] font-bold uppercase text-muted-foreground">
-//                   {a.required}+
-//                 </span>
-//               )}
-//             </button>
-//           );
-//         })}
+//               {a.label}
+//             </span>
+//           </button>
+//         ))}
 //       </motion.div>
 //     </div>
 //   );

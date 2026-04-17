@@ -14,19 +14,19 @@
     --card-foreground: 0 0% 94%;
     --popover: 0 0% 6%;
     --popover-foreground: 0 0% 94%;
-    --primary: 20 100% 50%;
+    --primary: 22 100% 51%; /* #FF5F07 */
     --primary-foreground: 0 0% 0%;
     --secondary: 0 0% 9%;
     --secondary-foreground: 0 0% 94%;
     --muted: 0 0% 9%;
     --muted-foreground: 0 0% 35%;
-    --accent: 20 100% 62%;
+    --accent: 22 100% 63%; /* lighter tint of #FF5F07 */
     --accent-foreground: 0 0% 0%;
     --destructive: 0 84% 51%;
     --destructive-foreground: 0 0% 100%;
     --border: 0 0% 11%;
     --input: 0 0% 15%;
-    --ring: 20 100% 50%;
+    --ring: 22 100% 51%; /* #FF5F07 */
     --radius: 0.75rem;
     --surface: 0 0% 6%;
     --surface-high: 0 0% 9%;
@@ -49,15 +49,15 @@
     --text-body: 16px;
     --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.4);
     --shadow-elevated: 0 32px 80px rgba(0, 0, 0, 0.7);
-    --shadow-glow: 0 0 40px hsl(20 100% 50% / 0.15);
+    --shadow-glow: 0 0 40px hsl(22 100% 51% / 0.15); /* #FF5F07 glow */
     --sidebar-background: 0 0% 4%;
     --sidebar-foreground: 0 0% 94%;
-    --sidebar-primary: 20 100% 50%;
+    --sidebar-primary: 22 100% 51%; /* #FF5F07 */
     --sidebar-primary-foreground: 0 0% 0%;
     --sidebar-accent: 0 0% 9%;
     --sidebar-accent-foreground: 0 0% 94%;
     --sidebar-border: 0 0% 11%;
-    --sidebar-ring: 20 100% 50%;
+    --sidebar-ring: 22 100% 51%; /* #FF5F07 */
   }
 
   /* ── Light mode ── */
@@ -69,19 +69,19 @@
     --card-foreground: 0 0% 8%;
     --popover: 0 0% 100%;
     --popover-foreground: 0 0% 8%;
-    --primary: 20 90% 42%;
+    --primary: 22 100% 45%; /* #FF5F07 darkened for light bg */
     --primary-foreground: 0 0% 100%;
     --secondary: 0 0% 94%;
     --secondary-foreground: 0 0% 12%;
     --muted: 0 0% 94%;
     --muted-foreground: 0 0% 40%;
-    --accent: 20 80% 48%;
+    --accent: 22 100% 50%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 72% 46%;
     --destructive-foreground: 0 0% 100%;
     --border: 0 0% 88%;
     --input: 0 0% 92%;
-    --ring: 20 90% 42%;
+    --ring: 22 100% 45%;
     --surface: 0 0% 96%;
     --surface-high: 0 0% 92%;
     --border-bright: 0 0% 80%;
@@ -93,12 +93,12 @@
     --mk2-gold: 38 85% 40%;
     --sidebar-background: 0 0% 96%;
     --sidebar-foreground: 0 0% 8%;
-    --sidebar-primary: 20 90% 42%;
+    --sidebar-primary: 22 100% 45%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 0 0% 92%;
     --sidebar-accent-foreground: 0 0% 8%;
     --sidebar-border: 0 0% 88%;
-    --sidebar-ring: 20 90% 42%;
+    --sidebar-ring: 22 100% 45%;
   }
 }
 
@@ -304,20 +304,14 @@
 @keyframes pulse-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 0 hsl(20 100% 50% / 0.4);
+    box-shadow: 0 0 0 0 hsl(22 100% 51% / 0.4); /* #FF5F07 */
   }
   50% {
-    box-shadow: 0 0 20px 4px hsl(20 100% 50% / 0.2);
+    box-shadow: 0 0 20px 4px hsl(22 100% 51% / 0.2); /* #FF5F07 */
   }
 }
 
-/* ── ADD THIS TO THE BOTTOM OF src/index.css ──────────────────────────
-   Fixes hardcoded white text showing invisible in light mode.
-   These overrides target any rgba(255,255,255,x) patterns that
-   slipped through on plan cards and feature lists.
-──────────────────────────────────────────────────────────────────────── */
-
-/* Membership plan feature text — light mode override */
+/* ── Membership plan feature text — light mode override ─────────────────── */
 .light .mk2-card,
 [data-theme="light"] .mk2-card {
   --plan-text-on: hsl(var(--foreground));
@@ -355,11 +349,6 @@
 [data-theme="light"] [style*="rgba(255,255,255,0.15)"] {
   color: hsl(var(--border)) !important;
 }
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   FIXES FOR MOBILE BOTTOM NAV, COLOUR NOISE, AND TAG CONSISTENCY
-   (Appended from admin update)
-───────────────────────────────────────────────────────────────────────────── */
 
 /* ── Bottom nav tab labels — prevent overlap on small screens ─────────────── */
 [data-tab-bar] button,
@@ -422,14 +411,14 @@ nav[role="tablist"] button small {
   border-color: hsl(0 0% 20%) !important;
 }
 .news-card-tag[data-type="Event"] {
-  background: hsl(20 100% 50% / 0.12) !important;
-  color: hsl(20 100% 50%) !important;
-  border-color: hsl(20 100% 50% / 0.25) !important;
+  background: hsl(22 100% 51% / 0.12) !important; /* #FF5F07 */
+  color: hsl(22 100% 51%) !important;
+  border-color: hsl(22 100% 51% / 0.25) !important;
 }
 
 /* ── Suppress multicolour top borders on news cards (use single orange) ─── */
 .news-grid .mk2-card {
-  border-top-color: hsl(20 100% 50%) !important;
+  border-top-color: hsl(22 100% 51%) !important; /* #FF5F07 */
 }
 
 /* ── Global: reduce tag colour variety — only orange/grey used for status ─── */

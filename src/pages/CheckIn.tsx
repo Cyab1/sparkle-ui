@@ -228,48 +228,7 @@ export function CheckIn() {
       {/* ══════════════════════════════════════════════════════════════════ */}
       {activeTab === "checkin" && (
         <>
-          {/* ── Non-member options ─────────────────────────────────────── */}
-          <div
-            className="mb-4 rounded-xl p-4"
-            style={{
-              background: "hsl(20 100% 50% / 0.05)",
-              border: "1px solid hsl(20 100% 50% / 0.2)",
-            }}
-          >
-            <div className="font-bold text-sm mb-1">Not a member yet?</div>
-            <div className="text-xs text-muted-foreground mb-3">
-              Come check us out — no commitment needed.
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              <a
-                href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20book%20a%20trial%20at%20MK2%20Rivers"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
-                style={{
-                  background: "hsl(142 72% 37%)",
-                  color: "#fff",
-                  minWidth: 140,
-                }}
-              >
-                🏋️ Book a Trial
-              </a>
-              <a
-                href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20do%20a%20drop-in%20session%20at%20MK2%20Rivers"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
-                style={{
-                  background: "hsl(var(--secondary))",
-                  color: "hsl(var(--foreground))",
-                  border: "1px solid hsl(var(--border))",
-                  minWidth: 140,
-                }}
-              >
-                🚶 Drop-In Session
-              </a>
-            </div>
-          </div>
+          
 
           {/* Location status */}
           <div
