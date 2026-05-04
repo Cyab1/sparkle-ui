@@ -705,10 +705,10 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
               : isPassed
                 ? "Class Passed"
                 : isMember
-                  ? "Book Free"
+                  ? "Book "
                   : chargeable
                     ? `Pay R${Number(cls.price).toFixed(0)} →`
-                    : "Book Free";
+                    : "Book ";
 
             const handleBook = () => {
               if (isMember || !chargeable) {
