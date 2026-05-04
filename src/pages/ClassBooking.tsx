@@ -8,15 +8,13 @@ import { Tag } from "@/components/shared/Tag";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { motion, AnimatePresence } from "framer-motion";
 
+// ── Only MK2R categories ──────────────────────────────────────────────────────
 export const CATEGORY_COLORS: Record<string, string> = {
-  CrossFit: "hsl(20 100% 50%)",
-  Cardio: "hsl(0 84% 51%)",
+  Crossfit: "hsl(20 100% 50%)",
+  Gymnastics: "hsl(263 85% 58%)",
   Strength: "hsl(38 92% 44%)",
-  Combat: "hsl(15 90% 50%)",
-  Core: "hsl(142 72% 37%)",
-  Spin: "hsl(217 91% 53%)",
-  Flexibility: "hsl(263 85% 58%)",
-  Recovery: "hsl(187 85% 40%)",
+  "Olympic Lifting": "hsl(217 91% 53%)",
+  "Saturday Smasher": "hsl(142 72% 37%)",
 };
 
 const DAYS = [
@@ -49,9 +47,9 @@ const FALLBACK_CLASSES = [
     name: "CrossFit WOD",
     time: "05:30",
     trainer: "Coach Marcus",
-    spots: 12,
+    spots: 20,
     subtitle: "Workout of the Day",
-    category: "CrossFit",
+    category: "Crossfit",
     details: [
       "Daily programmed WOD",
       "Olympic lifting + gymnastics",
@@ -59,29 +57,14 @@ const FALLBACK_CLASSES = [
     ],
     duration: "60 min",
     intensity: "Very High",
-    price: 150,
-  },
-  {
-    name: "HIIT Blast",
-    time: "06:00",
-    trainer: "Coach Sipho",
-    spots: 8,
-    subtitle: "High-intensity intervals",
-    category: "Cardio",
-    details: [
-      "10 rounds Tabata",
-      "Kettlebell swings & burpees",
-      "Burns 400–600 kcal",
-    ],
-    duration: "45 min",
-    intensity: "High",
-    price: 120,
+    price: 250,
+    chargeNonMembers: true,
   },
   {
     name: "Strength Circuit",
     time: "09:00",
     trainer: "Coach Busi",
-    spots: 6,
+    spots: 20,
     subtitle: "Full-body resistance training",
     category: "Strength",
     details: [
@@ -89,73 +72,61 @@ const FALLBACK_CLASSES = [
       "Barbell, dumbbell & bodyweight",
       "Progressive overload",
     ],
-    duration: "50 min",
+    duration: "60 min",
     intensity: "Medium–High",
-    price: 120,
+    price: 250,
+    chargeNonMembers: true,
   },
   {
-    name: "Spin Class",
-    time: "12:00",
-    trainer: "Thandeka N.",
-    spots: 15,
-    subtitle: "Indoor cycling to the beat",
-    category: "Spin",
+    name: "Gymnastics",
+    time: "10:00",
+    trainer: "Coach Nomsa",
+    spots: 20,
+    subtitle: "Movement & bodyweight skills",
+    category: "Gymnastics",
     details: [
-      "Music-driven intervals",
-      "Climbs, sprints & recoveries",
-      "Burns 500–800 kcal",
-    ],
-    duration: "45 min",
-    intensity: "High",
-    price: 120,
-  },
-  {
-    name: "Boxing Fit",
-    time: "17:00",
-    trainer: "Coach Dlamini",
-    spots: 10,
-    subtitle: "Punch, duck, sweat, repeat",
-    category: "Combat",
-    details: [
-      "Pad work & shadow boxing",
-      "Footwork & defence drills",
-      "Gloves provided",
-    ],
-    duration: "55 min",
-    intensity: "High",
-    price: 120,
-  },
-  {
-    name: "Pilates Core",
-    time: "18:30",
-    trainer: "Nomsa K.",
-    spots: 8,
-    subtitle: "Deep core & postural strength",
-    category: "Core",
-    details: [
-      "Mat & reformer principles",
-      "Injury rehab friendly",
-      "Small group max 8",
-    ],
-    duration: "50 min",
-    intensity: "Low–Medium",
-    price: 120,
-  },
-  {
-    name: "CrossFit WOD PM",
-    time: "19:00",
-    trainer: "Coach Marcus",
-    spots: 12,
-    subtitle: "Evening WOD — same intensity",
-    category: "CrossFit",
-    details: [
-      "Same WOD as morning",
-      "Scaled options available",
-      "Track personal records",
+      "Handstands & ring work",
+      "Pull-ups & muscle-ups",
+      "All skill levels welcome",
     ],
     duration: "60 min",
-    intensity: "Very High",
-    price: 150,
+    intensity: "Medium–High",
+    price: 250,
+    chargeNonMembers: true,
+  },
+  {
+    name: "Olympic Lifting",
+    time: "17:00",
+    trainer: "Coach Dlamini",
+    spots: 20,
+    subtitle: "Snatch & clean and jerk",
+    category: "Olympic Lifting",
+    details: [
+      "Technique-focused sessions",
+      "Progressive loading",
+      "Comp & scaled weights",
+    ],
+    duration: "60 min",
+    intensity: "High",
+    price: 250,
+    chargeNonMembers: true,
+  },
+  {
+    name: "Saturday Smasher",
+    time: "08:00",
+    trainer: "Coach Marcus",
+    spots: 20,
+    subtitle: "Weekend community WOD",
+    category: "Saturday Smasher",
+    details: [
+      "Partner & team workouts",
+      "Fun competitive format",
+      "All levels welcome",
+    ],
+    duration: "60 min",
+    intensity: "High",
+    price: 250,
+    chargeNonMembers: true,
   },
 ];
 
@@ -196,16 +167,12 @@ function isClassTimePassed(classTime: string, selectedDate: Date): boolean {
   today.setHours(0, 0, 0, 0);
   const selected = new Date(selectedDate);
   selected.setHours(0, 0, 0, 0);
-
-  // Only check if the selected date is today
   if (selected.getTime() !== today.getTime()) return false;
-
   const [hourStr, minuteStr] = classTime.split(":");
-  let hour = parseInt(hourStr, 10);
+  const hour = parseInt(hourStr, 10);
   const minute = parseInt(minuteStr, 10);
   const currentHour = now.getHours();
   const currentMinute = now.getMinutes();
-
   if (hour < currentHour) return true;
   if (hour === currentHour && minute < currentMinute) return true;
   return false;
@@ -310,11 +277,11 @@ function MiniCalendar({
       </div>
       <div className="flex gap-3 mt-2 text-[9px] text-muted-foreground">
         <div className="flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block" />
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block" />{" "}
           Booked
         </div>
         <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded ring-1 ring-orange-500 inline-block" />
+          <span className="w-3 h-3 rounded ring-1 ring-orange-500 inline-block" />{" "}
           Today
         </div>
       </div>
@@ -322,54 +289,96 @@ function MiniCalendar({
   );
 }
 
-// ── WOD Panel ─────────────────────────────────────────────────────────────────
+// ── WOD Panel — collapsible dropdown ─────────────────────────────────────────
 function WodPanel({ cls, color }: { cls: any; color: string }) {
+  const [open, setOpen] = useState(false);
   const wod: string = String(cls.wod ?? "").trim();
   if (!wod) return null;
   const lines = wod.split("\n");
+
   return (
-    <div className="mt-3 rounded-xl p-3 text-xs leading-relaxed border border-border bg-background">
-      <div className="mb-2 pb-2 border-b border-border">
-        <div className="font-bold text-sm">{cls.trainer}</div>
-        <div className="text-[11px]" style={{ color }}>
-          {cls.category}
-        </div>
-      </div>
-      <div>
-        {lines.map((line, i) => {
-          const t = line.trim();
-          if (!t) return <div key={i} className="h-1.5" />;
-          const isPart = /^part\s/i.test(t);
-          const isHeader =
-            !isPart &&
-            (t.endsWith(":") ||
-              (t === t.toUpperCase() && t.length < 40 && /[A-Z]/.test(t)));
-          const isWeight = /^(comp|scaled|beg|rx)\s*:/i.test(t);
-          if (isPart)
-            return (
-              <div key={i} className="font-bold mt-2" style={{ color }}>
-                {t}
+    <div className="mt-3 rounded-xl border border-border overflow-hidden">
+      {/* Toggle button */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold transition-colors hover:bg-secondary"
+        style={{
+          background: "hsl(var(--secondary))",
+          color,
+          border: "none",
+          cursor: "pointer",
+        }}
+      >
+        <span className="flex items-center gap-2">
+          <span>📋</span>
+          <span>View Today's WOD</span>
+        </span>
+        <span style={{ fontSize: 10, opacity: 0.7 }}>
+          {open ? "▲ Hide" : "▼ Show"}
+        </span>
+      </button>
+
+      {/* Collapsible content */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{ overflow: "hidden" }}
+          >
+            <div className="px-3 pb-3 pt-2 text-xs leading-relaxed bg-background">
+              <div className="mb-2 pb-2 border-b border-border">
+                <div className="font-bold text-sm">{cls.trainer}</div>
+                <div className="text-[11px]" style={{ color }}>
+                  {cls.category}
+                </div>
               </div>
-            );
-          if (isHeader)
-            return (
-              <div key={i} className="font-bold text-foreground mt-1">
-                {t}
+              <div>
+                {lines.map((line, i) => {
+                  const t = line.trim();
+                  if (!t) return <div key={i} className="h-1.5" />;
+                  const isPart = /^part\s/i.test(t);
+                  const isHeader =
+                    !isPart &&
+                    (t.endsWith(":") ||
+                      (t === t.toUpperCase() &&
+                        t.length < 40 &&
+                        /[A-Z]/.test(t)));
+                  const isWeight = /^(comp|scaled|beg|rx)\s*:/i.test(t);
+                  if (isPart)
+                    return (
+                      <div key={i} className="font-bold mt-2" style={{ color }}>
+                        {t}
+                      </div>
+                    );
+                  if (isHeader)
+                    return (
+                      <div key={i} className="font-bold text-foreground mt-1">
+                        {t}
+                      </div>
+                    );
+                  if (isWeight)
+                    return (
+                      <div
+                        key={i}
+                        className="text-[10px] text-muted-foreground italic"
+                      >
+                        {t}
+                      </div>
+                    );
+                  return (
+                    <div key={i} className="text-muted-foreground">
+                      {t}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          if (isWeight)
-            return (
-              <div key={i} className="text-[10px] text-muted-foreground italic">
-                {t}
-              </div>
-            );
-          return (
-            <div key={i} className="text-muted-foreground">
-              {t}
             </div>
-          );
-        })}
-      </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -424,7 +433,6 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
   });
 
   const bKey = (cls: any) => buildBookingKey(cls.name, dateKey);
-
   const isBooked = (cls: any): boolean =>
     !!classBookings[bKey(cls)]?.[user.uid];
   const bookedCount = (cls: any): number =>
@@ -432,13 +440,17 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
   const bookedList = (cls: any): any[] =>
     Object.values(classBookings[bKey(cls)] ?? {});
   const spotsLeft = (cls: any): number =>
-    Math.max(0, Number(cls.spots || 12) - bookedCount(cls));
+    Math.max(0, Number(cls.spots || 20) - bookedCount(cls));
 
   const bookedDates = new Set<string>(
     user.bookings.map((b: any) => b.dateKey).filter(Boolean),
   );
 
   const isMember = user.membership === "silver" || user.membership === "gold";
+
+  // ── Determine if this class is chargeable for non-members ────────────────
+  const isChargeable = (cls: any): boolean =>
+    Boolean(cls.chargeNonMembers) && Number(cls.price) > 0;
 
   // ── Member: free booking ──────────────────────────────────────────────────
   const bookFree = async (cls: any) => {
@@ -471,11 +483,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
           },
         ];
 
-    await updateUser({
-      ...user,
-      bookings: newBookings,
-    });
-
+    await updateUser({ ...user, bookings: newBookings });
     logEvent("book_class", { class_name: cls.name, date: dateKey });
     toast(`✓ ${cls.name} booked!`, "success");
   };
@@ -488,10 +496,9 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
     setProcessingPayment(true);
 
     try {
-      // Create pending booking record
       const pendingBookingRef = push(ref(db, "mk2_bookings"));
       const bookingId = pendingBookingRef.key;
-      const price = cls.price || 150; // default R150 if not set
+      const price = cls.price || 250;
 
       await set(pendingBookingRef, {
         userId: user.uid,
@@ -509,7 +516,6 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         createdAt: Date.now(),
       });
 
-      // PayFast sandbox – replace with live credentials later
       const PAYFAST_MERCHANT_ID = "10000100";
       const PAYFAST_MERCHANT_KEY = "46f0cd694581a";
       const PAYFAST_BASE = "https://sandbox.payfast.co.za/eng/process";
@@ -519,7 +525,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         merchant_key: PAYFAST_MERCHANT_KEY,
         return_url: `${window.location.origin}/booking-success?bookingId=${bookingId}`,
         cancel_url: `${window.location.origin}/booking-cancel`,
-        notify_url: `${window.location.origin}/api/payfast-webhook`, // your Cloud Function URL
+        notify_url: `${window.location.origin}/api/payfast-webhook`,
         amount: price.toFixed(2),
         item_name: `${cls.name} - ${selectedDate.toLocaleDateString("en-ZA")}`,
         custom_str1: bookingId,
@@ -528,7 +534,6 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         name_last: user.name.split(" ").slice(1).join(" ") || "-",
       };
 
-      // Submit POST form to PayFast
       const form = document.createElement("form");
       form.method = "POST";
       form.action = PAYFAST_BASE;
@@ -556,14 +561,12 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
       return;
 
     await set(ref(db, `class_bookings/${bKey(cls)}/${user.uid}`), null);
-
     await updateUser({
       ...user,
       bookings: user.bookings.filter(
         (b: any) => !(b.name === cls.name && b.dateKey === dateKey),
       ),
     });
-
     toast("Booking cancelled.", "info");
   };
 
@@ -585,11 +588,16 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
       <PageTitle
-        sub={isMember ? "Book classes" : "Pay per class via PayFast"}
+        sub={
+          isMember
+            ? "Book your classes below"
+            : "Members book free · Non-members pay per class"
+        }
       >
         Class <span className="text-primary">Booking</span>
       </PageTitle>
 
+      {/* ── Non-member banner ─────────────────────────────────────────────── */}
       {!isMember && (
         <div
           className="mb-5 rounded-xl px-4 py-3 flex items-center justify-between flex-wrap gap-3"
@@ -599,9 +607,10 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
           }}
         >
           <div>
-            <div className="font-bold text-sm">🚫 No credits needed</div>
+            <div className="font-bold text-sm">💪 Pay per class</div>
             <div className="text-xs text-muted-foreground mt-0.5">
-              Members book free. Non‑members pay per class.
+              Members book all classes free. Non-members pay per session via
+              PayFast.
             </div>
           </div>
           <button
@@ -640,6 +649,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         )}
       </div>
 
+      {/* ── Category legend ───────────────────────────────────────────────── */}
       <div className="flex gap-2 flex-wrap mb-4">
         {Object.entries(CATEGORY_COLORS).map(([cat, color]) => (
           <div
@@ -687,6 +697,26 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
             const details = Array.isArray(cls.details) ? cls.details : [];
             const hasWod = String(cls.wod ?? "").trim().length > 0;
             const isPassed = isClassTimePassed(cls.time, selectedDate);
+            const chargeable = isChargeable(cls);
+
+            // ── Button label & action logic ───────────────────────────────
+            const bookLabel = full
+              ? "Class Full"
+              : isPassed
+                ? "Class Passed"
+                : isMember
+                  ? "Book Free"
+                  : chargeable
+                    ? `Pay R${Number(cls.price).toFixed(0)} →`
+                    : "Book Free";
+
+            const handleBook = () => {
+              if (isMember || !chargeable) {
+                bookFree(cls);
+              } else {
+                initiatePayFast(cls);
+              }
+            };
 
             return (
               <motion.div
@@ -701,6 +731,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                 }}
               >
                 <div className="p-4">
+                  {/* Header row */}
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex-1 min-w-0 pr-2">
                       <div className="font-display text-[17px] tracking-wide leading-tight">
@@ -725,14 +756,19 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                           `${left}/${cls.spots} spots`
                         )}
                       </div>
-                      {!isMember && !booked && !full && !isPassed && (
-                        <div
-                          className="text-[11px] font-bold mt-1"
-                          style={{ color }}
-                        >
-                          R{cls.price || 150}
-                        </div>
-                      )}
+                      {/* Price badge for non-members only */}
+                      {!isMember &&
+                        !booked &&
+                        !full &&
+                        !isPassed &&
+                        chargeable && (
+                          <div
+                            className="text-[11px] font-bold mt-1"
+                            style={{ color }}
+                          >
+                            R{Number(cls.price).toFixed(0)}
+                          </div>
+                        )}
                       {isPassed && !booked && (
                         <div className="text-[10px] font-bold mt-1 text-red-400">
                           Class passed
@@ -741,6 +777,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                     </div>
                   </div>
 
+                  {/* Tags */}
                   <div className="flex gap-1.5 flex-wrap mb-2.5">
                     <Tag color={color}>{cls.category}</Tag>
                     {cls.intensity && (
@@ -755,8 +792,10 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                     👤 {cls.trainer}
                   </div>
 
+                  {/* WOD — collapsible dropdown, hidden by default */}
                   {hasWod && <WodPanel cls={cls} color={color} />}
 
+                  {/* Action row */}
                   <div className="flex gap-2 items-center flex-wrap mt-3">
                     {booked ? (
                       <>
@@ -782,21 +821,14 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                       <Btn
                         variant={!full && !isPassed ? "primary" : "subtle"}
                         size="sm"
-                        onClick={() =>
-                          isMember ? bookFree(cls) : initiatePayFast(cls)
-                        }
+                        onClick={handleBook}
                         disabled={full || isPassed || processingPayment}
                       >
-                        {full
-                          ? "Class Full"
-                          : isPassed
-                            ? "Class Passed"
-                            : isMember
-                              ? "Book Free"
-                              : `Pay R${cls.price || 150} →`}
+                        {bookLabel}
                       </Btn>
                     )}
 
+                    {/* Details dropdown — only when no WOD */}
                     {!hasWod && details.length > 0 && (
                       <button
                         onClick={() => setExpanded(open ? null : cls.name)}
@@ -817,6 +849,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                   </div>
                 </div>
 
+                {/* Details panel — only when no WOD */}
                 {open && !hasWod && details.length > 0 && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
@@ -840,6 +873,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                   </motion.div>
                 )}
 
+                {/* Who's booked panel */}
                 <AnimatePresence>
                   {showingWho && (
                     <motion.div
@@ -886,6 +920,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         </div>
       )}
 
+      {/* ── Upcoming bookings ─────────────────────────────────────────────── */}
       {upcomingBookings.length > 0 && (
         <div className="mk2-card mt-7">
           <div className="font-bold text-sm mb-3">

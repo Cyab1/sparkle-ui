@@ -162,7 +162,9 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
           className="mb-4 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 flex items-center justify-between gap-3"
         >
           <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-            Please verify your email address to unlock all features.
+            Please verify your email address to unlock all features. If you
+            don’t see the verification email in your inbox, please check your
+            Junk or Spam folder
           </span>
           <div className="flex items-center gap-2 shrink-0">
             {resendSent ? (
@@ -331,7 +333,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
             🏋️ Book a Trial
           </a>
           <a
-            href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20do%20a%20drop-in%20session%20at%20MK2%20Rivers"
+            href="https://app.octivfitness.com/widget/schedule?isDropIn=true&publicToken=93d2cf182bbdb6ffbc7008dc97c9de9041f72351"
             target="_blank"
             rel="noopener noreferrer"
             className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"

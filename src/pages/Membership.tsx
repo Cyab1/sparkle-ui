@@ -51,10 +51,10 @@ const TIERS = [
   {
     id: "silver",
     name: "Silver",
-    priceMonthly: 19,
-    priceAnnual: 199,
-    priceLabel: "R19/mo",
-    annualLabel: "R199/yr",
+    priceMonthly: 24,
+    priceAnnual: 288,
+    priceLabel: "R24/mo",
+    annualLabel: "R288/yr",
     color: "#cbd5e1",
     aiCredits: 20,
     features: [
@@ -84,9 +84,9 @@ const TIERS = [
     id: "gold",
     name: "Gold",
     priceMonthly: 49,
-    priceAnnual: 499,
+    priceAnnual: 488,
     priceLabel: "R49/mo",
-    annualLabel: "R499/yr",
+    annualLabel: "R488/yr",
     color: "hsl(38 92% 50%)",
     aiCredits: 100,
     features: [

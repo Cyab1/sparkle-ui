@@ -12,12 +12,13 @@ const STEPS = [
   { id: "done", title: "You're all set! 💪" },
 ];
 
+// ── Combat removed ────────────────────────────────────────────────────────────
 const QUICK_GOALS = [
   { emoji: "💪", label: "Build Muscle" },
   { emoji: "🏃", label: "Lose Weight" },
   { emoji: "❤️", label: "Improve Fitness" },
-  { emoji: "🥊", label: "Learn Combat" },
-  { emoji: "🧘", label: "Flexibility & Recovery" },
+  { emoji: "🏋️", label: "Olympic Lifting" },
+  { emoji: "🤸", label: "Gymnastics & Skills" },
   { emoji: "🏆", label: "Compete & Perform" },
 ];
 
@@ -68,15 +69,12 @@ export function Onboarding({ onDone, setPage }: OnboardingProps) {
 
   if (!user) return null;
 
-  // ── Write onboardingDone directly to Firebase as a single targeted set() ──
-  // This avoids spreading the entire user object through saveUser(), which can
-  // fail silently if any other field fails validation.
   const markOnboardingDone = async () => {
     try {
       await set(ref(db, `mk2_users/${user.uid}/onboardingDone`), true);
       setUser({ ...user, onboardingDone: true } as any);
     } catch {
-      // non-blocking — worst case they see onboarding once more on next load
+      // non-blocking
     }
   };
 
@@ -97,7 +95,6 @@ export function Onboarding({ onDone, setPage }: OnboardingProps) {
     setStep((s) => s + 1);
   };
 
-  // Skip also marks onboarding done so the user is never stuck on reload
   const skip = async () => {
     await markOnboardingDone();
     onDone();
@@ -448,6 +445,88 @@ export function Onboarding({ onDone, setPage }: OnboardingProps) {
                   Your MK Two Rivers account is ready. Start by booking a class
                   or checking in at the gym to earn your first loyalty points!
                 </p>
+
+                {/* ── Membership preview ──────────────────────────────────── */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 10,
+                    maxWidth: 340,
+                    margin: "0 auto 20px",
+                  }}
+                >
+                  {[
+                    {
+                      tier: "Silver",
+                      monthly: "R24",
+                      annual: "R288/yr",
+                      color: "hsl(var(--muted-foreground))",
+                      bg: "hsl(var(--secondary))",
+                      border: "hsl(var(--border))",
+                    },
+                    {
+                      tier: "Gold",
+                      monthly: "R49",
+                      annual: "R588/yr",
+                      color: "hsl(38 92% 44%)",
+                      bg: "hsl(38 92% 44% / 0.1)",
+                      border: "hsl(38 92% 44% / 0.4)",
+                    },
+                  ].map((plan) => (
+                    <div
+                      key={plan.tier}
+                      style={{
+                        padding: "12px 14px",
+                        borderRadius: 12,
+                        background: plan.bg,
+                        border: `1px solid ${plan.border}`,
+                        textAlign: "center",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.1em",
+                          color: plan.color,
+                          marginBottom: 4,
+                        }}
+                      >
+                        {plan.tier}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "var(--font-display)",
+                          fontSize: 22,
+                          color: plan.color,
+                          lineHeight: 1,
+                        }}
+                      >
+                        {plan.monthly}
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontFamily: "var(--font-body)",
+                          }}
+                        >
+                          /mo
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: "hsl(var(--muted-foreground))",
+                          marginTop: 2,
+                        }}
+                      >
+                        {plan.annual}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
                 <div
                   style={{
                     display: "flex",
@@ -457,7 +536,6 @@ export function Onboarding({ onDone, setPage }: OnboardingProps) {
                     margin: "0 auto 24px",
                   }}
                 >
-                  {/* These buttons also mark onboardingDone before navigating */}
                   <button
                     onClick={async () => {
                       await markOnboardingDone();
@@ -505,7 +583,7 @@ export function Onboarding({ onDone, setPage }: OnboardingProps) {
           </motion.div>
         </AnimatePresence>
 
-        {/* Next button — shown on steps 0, 1, 2 */}
+        {/* Next button — steps 0, 1, 2 */}
         {step < STEPS.length - 1 && (
           <button
             onClick={next}
@@ -534,7 +612,7 @@ export function Onboarding({ onDone, setPage }: OnboardingProps) {
           </button>
         )}
 
-        {/* Go to Dashboard button — shown on final step */}
+        {/* Go to Dashboard — final step */}
         {step === STEPS.length - 1 && (
           <button
             onClick={next}
@@ -562,6 +640,7 @@ export function Onboarding({ onDone, setPage }: OnboardingProps) {
     </div>
   );
 }
+
 
 // import { useState } from "react";
 // import { useAuth } from "@/context/AuthContext";

@@ -26,16 +26,13 @@ const DAYS = [
   "Saturday",
   "Sunday",
 ];
+// ── Only MK2R categories ──────────────────────────────────────────────────────
 const CATS = [
-  "Cardio",
+  "Crossfit",
+  "Gymnastics",
   "Strength",
-  "Flexibility",
-  "Core",
-  "Combat",
-  "CrossFit",
-  "Recovery",
-  "Spin",
-  "Yoga",
+  "Olympic Lifting",
+  "Saturday Smasher",
 ];
 const INTENSITIES = [
   "Low",
@@ -113,6 +110,7 @@ function Btn({
       border: "1px solid hsl(var(--border))",
     },
     green: { background: "hsl(142 72% 37%)", color: "#fff", border: "none" },
+    blue: { background: "hsl(217 91% 53%)", color: "#fff", border: "none" },
   }[variant];
   const pad: any = { sm: "6px 14px", md: "9px 20px", lg: "12px 28px" }[size];
   return (
@@ -416,12 +414,13 @@ function AdminCalendar({
   );
 }
 
-// ── Classes Manager with NON‑MEMBER PAYMENT + ADMIN CANCEL ───────────────────
+// ── Classes Manager ───────────────────────────────────────────────────────────
 function ClassesManager({ toast }: any) {
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any>(null);
+  const [isDuplicate, setIsDuplicate] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"day" | "date">("day");
   const [calDate, setCalDate] = useState<Date>(() => {
     const d = new Date();
@@ -435,22 +434,23 @@ function ClassesManager({ toast }: any) {
   const [expandedBookings, setExpandedBookings] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
 
+  // ── Defaults: 20 spots, 60 min, chargeNonMembers ON ──────────────────────
   const blank = {
     name: "",
     time: "",
     trainer: "",
     day: "Monday",
     specificDate: "",
-    spots: "12",
-    duration: "45 min",
+    spots: "20",
+    duration: "60 min",
     intensity: "Medium",
-    category: "Cardio",
+    category: "Crossfit",
     subtitle: "",
     details: "",
     scheduleType: "day",
     wod: "",
-    chargeNonMembers: false,
-    price: "0",
+    chargeNonMembers: true,
+    price: "250",
   };
   const [form, setForm] = useState(blank);
 
@@ -476,7 +476,10 @@ function ClassesManager({ toast }: any) {
     const data = {
       ...form,
       spots: parseInt(form.spots),
-      details: form.details.split("\n").filter(Boolean),
+      // Only save details/wod for once-off classes — weekly WODs are added per-date
+      details:
+        scheduleMode === "date" ? form.details.split("\n").filter(Boolean) : [],
+      wod: scheduleMode === "date" ? form.wod : "",
       scheduleType: scheduleMode,
       specificDate: scheduleMode === "date" ? formatDateKey(calDate) : "",
       day: scheduleMode === "day" ? form.day : getDayName(calDate),
@@ -484,7 +487,7 @@ function ClassesManager({ toast }: any) {
       price: form.chargeNonMembers ? parseFloat(form.price) || 0 : 0,
     };
 
-    if (editing) {
+    if (editing && !isDuplicate) {
       const existingSnap = await get(
         ref(db, `admin_classes/${editing.id}/bookedCount`),
       );
@@ -498,10 +501,11 @@ function ClassesManager({ toast }: any) {
       toast("Updated ✓", "success");
     } else {
       await addToCollection("admin_classes", { ...data, bookedCount: 0 });
-      toast("Class added ✓", "success");
+      toast(isDuplicate ? "Class duplicated ✓" : "Class added ✓", "success");
     }
     setShowForm(false);
     setEditing(null);
+    setIsDuplicate(false);
     setForm(blank);
     load();
   };
@@ -515,6 +519,7 @@ function ClassesManager({ toast }: any) {
 
   const startEdit = (c: any) => {
     setEditing(c);
+    setIsDuplicate(false);
     setScheduleMode(c.scheduleType || "day");
     setForm({
       name: c.name,
@@ -535,6 +540,34 @@ function ClassesManager({ toast }: any) {
     });
     if (c.specificDate) setCalDate(new Date(c.specificDate + "T00:00:00"));
     setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // ── Duplicate a class — opens form pre-filled, saves as new ──────────────
+  const duplicateClass = (c: any) => {
+    setEditing(c);
+    setIsDuplicate(true);
+    setScheduleMode(c.scheduleType || "day");
+    setForm({
+      name: c.name + " (copy)",
+      time: c.time,
+      trainer: c.trainer,
+      day: c.day,
+      specificDate: c.specificDate || "",
+      spots: String(c.spots),
+      duration: c.duration,
+      intensity: c.intensity,
+      category: c.category,
+      subtitle: c.subtitle || "",
+      details: (c.details || []).join("\n"),
+      scheduleType: c.scheduleType || "day",
+      wod: c.wod || "",
+      chargeNonMembers: Boolean(c.chargeNonMembers),
+      price: String(c.price ?? 0),
+    });
+    if (c.specificDate) setCalDate(new Date(c.specificDate + "T00:00:00"));
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const f = (k: string) => (e: any) =>
@@ -620,6 +653,54 @@ function ClassesManager({ toast }: any) {
     }));
   };
 
+  // ── Shared class card action buttons ─────────────────────────────────────
+  const ClassActions = ({ cls, bookings }: { cls: any; bookings?: any[] }) => (
+    <div
+      style={{
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        flexWrap: "wrap",
+      }}
+    >
+      {bookings !== undefined && (
+        <button
+          onClick={() =>
+            setExpandedBookings(expandedBookings === cls.id ? null : cls.id)
+          }
+          style={{
+            padding: "5px 12px",
+            borderRadius: 20,
+            fontSize: 11,
+            fontWeight: 700,
+            cursor: "pointer",
+            background:
+              bookings.length > 0
+                ? "hsl(20 100% 50% / 0.15)"
+                : "hsl(var(--secondary))",
+            color:
+              bookings.length > 0
+                ? "hsl(20 100% 50%)"
+                : "hsl(var(--muted-foreground))",
+            border: `1px solid ${bookings.length > 0 ? "hsl(20 100% 50% / 0.3)" : "hsl(var(--border))"}`,
+          }}
+        >
+          👥 {bookings.length}/{cls.spots}{" "}
+          {expandedBookings === cls.id ? "▲" : "▼"}
+        </button>
+      )}
+      <Btn variant="blue" size="sm" onClick={() => duplicateClass(cls)}>
+        ⧉ Duplicate
+      </Btn>
+      <Btn variant="subtle" size="sm" onClick={() => startEdit(cls)}>
+        Edit
+      </Btn>
+      <Btn variant="danger" size="sm" onClick={() => del(cls.id)}>
+        Delete
+      </Btn>
+    </div>
+  );
+
   return (
     <div>
       <div
@@ -673,6 +754,7 @@ function ClassesManager({ toast }: any) {
             onClick={() => {
               setShowForm(!showForm);
               setEditing(null);
+              setIsDuplicate(false);
               setForm(blank);
               setScheduleMode("day");
             }}
@@ -696,13 +778,35 @@ function ClassesManager({ toast }: any) {
               marginBottom: 20,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 14 }}>
-              {editing ? "Edit Class" : "New Class"}
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+              {isDuplicate
+                ? "Duplicate Class"
+                : editing
+                  ? "Edit Class"
+                  : "New Class"}
             </div>
+            {isDuplicate && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "hsl(217 91% 53%)",
+                  marginBottom: 14,
+                  padding: "6px 10px",
+                  background: "hsl(217 91% 53% / 0.1)",
+                  borderRadius: 6,
+                  border: "1px solid hsl(217 91% 53% / 0.3)",
+                }}
+              >
+                ⧉ Duplicating from "{editing?.name}" — adjust details and save
+                as a new class.
+              </div>
+            )}
+            {!isDuplicate && editing && <div style={{ marginBottom: 14 }} />}
+            {!isDuplicate && !editing && <div style={{ marginBottom: 14 }} />}
 
             <div style={{ marginBottom: 14 }}>
               <label style={lbl}>Schedule Type</label>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {(["day", "date"] as const).map((mode) => (
                   <button
                     key={mode}
@@ -734,6 +838,22 @@ function ClassesManager({ toast }: any) {
                   </button>
                 ))}
               </div>
+              {scheduleMode === "day" && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    fontSize: 11,
+                    color: "hsl(var(--muted-foreground))",
+                    padding: "6px 10px",
+                    background: "hsl(142 72% 37% / 0.08)",
+                    borderRadius: 6,
+                    border: "1px solid hsl(142 72% 37% / 0.2)",
+                  }}
+                >
+                  ℹ️ WOD details are added per-date on once-off classes. Weekly
+                  recurring classes share the same template.
+                </div>
+              )}
             </div>
 
             {scheduleMode === "day" ? (
@@ -784,11 +904,11 @@ function ClassesManager({ toast }: any) {
             >
               {(
                 [
-                  ["name", "Class Name", "e.g. HIIT Blast"],
+                  ["name", "Class Name", "e.g. CrossFit WOD"],
                   ["time", "Time", "06:00"],
-                  ["trainer", "Trainer", "Coach Sipho"],
-                  ["spots", "Max Spots", "12"],
-                  ["duration", "Duration", "45 min"],
+                  ["trainer", "Trainer", "Coach Marcus"],
+                  ["spots", "Max Spots", "20"],
+                  ["duration", "Duration", "60 min"],
                   ["subtitle", "Subtitle", "Short description"],
                 ] as any[]
               ).map(([k, l, p]: any) => (
@@ -872,7 +992,7 @@ function ClassesManager({ toast }: any) {
                     <input
                       type="number"
                       style={inp}
-                      placeholder="150.00"
+                      placeholder="250.00"
                       min="0"
                       step="0.01"
                       value={form.price}
@@ -904,52 +1024,60 @@ function ClassesManager({ toast }: any) {
               )}
             </div>
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={lbl}>What's Included (one item per line)</label>
-              <textarea
-                style={{ ...inp, minHeight: 80, resize: "vertical" }}
-                placeholder={
-                  "10 rounds Tabata\nKettlebell swings\nBurns 400–600 kcal"
-                }
-                value={form.details}
-                onChange={f("details")}
-              />
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <label style={lbl}>WOD / Workout Detail (optional)</label>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "hsl(var(--muted-foreground))",
-                  marginBottom: 6,
-                }}
-              >
-                Paste the full workout here — warm up, WOD parts, weights
-                (Comp/Scaled/Beg).
-              </div>
-              <textarea
-                style={{
-                  ...inp,
-                  minHeight: 160,
-                  resize: "vertical",
-                  fontFamily: "monospace",
-                  fontSize: 12,
-                }}
-                placeholder={`Warm Up:\n3 ROUNDS\n0:30 Machine\n\nPart WOD 1: BUDDY WOD\n4 ROUNDS FT (12:00 CAP)\n24/20 Cal Row\n\nComp: 80/55\nScaled: 70/45\nBeg: 40/30`}
-                value={form.wod}
-                onChange={f("wod")}
-              />
-            </div>
+            {/* ── WOD + Details: only shown for once-off / specific-date classes ── */}
+            {scheduleMode === "date" && (
+              <>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={lbl}>What's Included (one item per line)</label>
+                  <textarea
+                    style={{ ...inp, minHeight: 80, resize: "vertical" }}
+                    placeholder={"Warm-up\nMain WOD\nCool down"}
+                    value={form.details}
+                    onChange={f("details")}
+                  />
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={lbl}>WOD / Workout Detail</label>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "hsl(var(--muted-foreground))",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Paste the full workout here — warm up, WOD parts, weights
+                    (Comp/Scaled/Beg).
+                  </div>
+                  <textarea
+                    style={{
+                      ...inp,
+                      minHeight: 160,
+                      resize: "vertical",
+                      fontFamily: "monospace",
+                      fontSize: 12,
+                    }}
+                    placeholder={`Warm Up:\n3 ROUNDS\n0:30 Machine\n\nPart WOD 1: BUDDY WOD\n4 ROUNDS FT (12:00 CAP)\n24/20 Cal Row\n\nComp: 80/55\nScaled: 70/45\nBeg: 40/30`}
+                    value={form.wod}
+                    onChange={f("wod")}
+                  />
+                </div>
+              </>
+            )}
 
-            <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <Btn variant="primary" onClick={save}>
-                {editing ? "Save Changes" : "Add Class"}
+                {isDuplicate
+                  ? "Save as New Class"
+                  : editing
+                    ? "Save Changes"
+                    : "Add Class"}
               </Btn>
               <Btn
                 variant="subtle"
                 onClick={() => {
                   setShowForm(false);
                   setEditing(null);
+                  setIsDuplicate(false);
                 }}
               >
                 Cancel
@@ -959,6 +1087,7 @@ function ClassesManager({ toast }: any) {
         )}
       </AnimatePresence>
 
+      {/* ── Calendar View ─────────────────────────────────────────────────── */}
       {viewMode === "calendar" && (
         <>
           <AdminCalendar
@@ -1030,6 +1159,7 @@ function ClassesManager({ toast }: any) {
                               display: "flex",
                               alignItems: "center",
                               gap: 8,
+                              flexWrap: "wrap",
                             }}
                           >
                             {cls.name}
@@ -1080,52 +1210,7 @@ function ClassesManager({ toast }: any) {
                             {cls.category}
                           </div>
                         </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                          }}
-                        >
-                          <button
-                            onClick={() =>
-                              setExpandedBookings(isExpanded ? null : cls.id)
-                            }
-                            style={{
-                              padding: "5px 12px",
-                              borderRadius: 20,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              cursor: "pointer",
-                              background:
-                                bookings.length > 0
-                                  ? "hsl(20 100% 50% / 0.15)"
-                                  : "hsl(var(--secondary))",
-                              color:
-                                bookings.length > 0
-                                  ? "hsl(20 100% 50%)"
-                                  : "hsl(var(--muted-foreground))",
-                              border: `1px solid ${bookings.length > 0 ? "hsl(20 100% 50% / 0.3)" : "hsl(var(--border))"}`,
-                            }}
-                          >
-                            👥 {bookings.length}/{cls.spots}{" "}
-                            {isExpanded ? "▲" : "▼"}
-                          </button>
-                          <Btn
-                            variant="subtle"
-                            size="sm"
-                            onClick={() => startEdit(cls)}
-                          >
-                            Edit
-                          </Btn>
-                          <Btn
-                            variant="danger"
-                            size="sm"
-                            onClick={() => del(cls.id)}
-                          >
-                            Delete
-                          </Btn>
-                        </div>
+                        <ClassActions cls={cls} bookings={bookings} />
                       </div>
 
                       <AnimatePresence>
@@ -1257,6 +1342,7 @@ function ClassesManager({ toast }: any) {
         </>
       )}
 
+      {/* ── List View ─────────────────────────────────────────────────────── */}
       {viewMode === "list" &&
         (loading ? (
           <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
@@ -1291,6 +1377,7 @@ function ClassesManager({ toast }: any) {
                       display: "flex",
                       alignItems: "center",
                       gap: 8,
+                      flexWrap: "wrap",
                     }}
                   >
                     {cls.name}
@@ -1348,18 +1435,7 @@ function ClassesManager({ toast }: any) {
                     · {cls.time} · {cls.trainer} · {cls.spots} spots
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <Btn
-                    variant="subtle"
-                    size="sm"
-                    onClick={() => startEdit(cls)}
-                  >
-                    Edit
-                  </Btn>
-                  <Btn variant="danger" size="sm" onClick={() => del(cls.id)}>
-                    Delete
-                  </Btn>
-                </div>
+                <ClassActions cls={cls} />
               </div>
             ))}
           </div>
@@ -1367,7 +1443,6 @@ function ClassesManager({ toast }: any) {
     </div>
   );
 }
-
 // ── Gallery Manager ───────────────────────────────────────────────────────────
 function GalleryManager({ toast }: any) {
   const [items, setItems] = useState<any[]>([]);

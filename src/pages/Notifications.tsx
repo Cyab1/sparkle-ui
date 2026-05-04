@@ -133,7 +133,10 @@ export function Notifications({ setPage }: { setPage: (p: string) => void }) {
     markAllAsRead,
   } = useNotifications(user?.uid || null);
 
-  const [permissionGranted, setPermissionGranted] = useState(false);
+  // const [permissionGranted, setPermissionGranted] = useState(false);
+  const [permissionGranted, setPermissionGranted] = useState(
+    () => "Notification" in window && Notification.permission === "granted",
+  );
   const [geoEnabled, setGeoEnabled] = useState(false);
 
   const [prefs, setPrefs] = useState<Record<string, boolean>>(() =>
@@ -179,6 +182,13 @@ export function Notifications({ setPage }: { setPage: (p: string) => void }) {
 
   const requestPush = async () => {
     if (!("Notification" in window)) return;
+
+    // Already granted — just update state and register token
+    if (Notification.permission === "granted") {
+      setPermissionGranted(true);
+      return;
+    }
+
     const result = await Notification.requestPermission();
     if (result === "granted") {
       setPermissionGranted(true);
@@ -188,6 +198,18 @@ export function Notifications({ setPage }: { setPage: (p: string) => void }) {
       });
     }
   };
+
+  // const requestPush = async () => {
+  //   if (!("Notification" in window)) return;
+  //   const result = await Notification.requestPermission();
+  //   if (result === "granted") {
+  //     setPermissionGranted(true);
+  //     new Notification("MK2 Rivers Fitness 💪", {
+  //       body: "Notifications enabled!",
+  //       icon: "/favicon.ico",
+  //     });
+  //   }
+  // };
 
   return (
     <div
