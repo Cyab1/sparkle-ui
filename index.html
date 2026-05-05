@@ -13,19 +13,26 @@
     <link rel="icon" type="image/png" href="/public/mk2r-logo.jpg" />
     <link rel="apple-touch-icon" href="/public/mk2r-logo.jpg" />
 
-    <!-- University font via cdnfonts -->
+    <!-- ✅ Dynamic manifest swap: admin gets its own icon -->
+    <link id="manifest-link" rel="manifest" href="/manifest.json" />
+    <script>
+      if (window.location.hash.startsWith("#admin")) {
+        document
+          .getElementById("manifest-link")
+          .setAttribute("href", "/admin-manifest.json");
+        document.title = "MK2R Admin Portal";
+      }
+    </script>
+
+    <!-- fonts stay exactly as they are -->
     <link rel="preconnect" href="https://fonts.cdnfonts.com" />
     <link href="https://fonts.cdnfonts.com/css/university" rel="stylesheet" />
-
-    <!-- Lato body font -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap"
       rel="stylesheet"
     />
-
-    <!-- Material Symbols Rounded -->
     <link
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0"
       rel="stylesheet"

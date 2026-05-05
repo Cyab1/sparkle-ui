@@ -2072,8 +2072,8 @@ function MembersManager({ toast }: any) {
                     }}
                   >
                     <option value="basic">Basic (Free)</option>
-                    <option value="silver">Silver (R199/mo)</option>
-                    <option value="gold">Gold (R349/mo)</option>
+                    <option value="silver">Silver (R288/mo)</option>
+                    <option value="gold">Gold (R588/mo)</option>
                   </select>
                   {saving === m.uid && (
                     <span

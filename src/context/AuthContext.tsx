@@ -28,7 +28,7 @@ export interface MK2User {
   points: number;
   createdAt: number;
   membership: "basic" | "silver" | "gold";
-  gender?: "male" | "female" | "prefer_not_to_say";
+  gender?: "male" | "female";
   termsAcceptedAt?: number;
   termsVersion?: string;
   classCredits: number; // 👈 added

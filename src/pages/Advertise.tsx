@@ -42,7 +42,7 @@ const AD_PACKAGES = [
       "Everything in Growth",
       "Full-screen splash ad (once/month)",
       "Dedicated sponsor card on Community page",
-      "Exclusive deal for gym members",
+      "Exclusive deal for App members",
       "Priority placement across all sections",
       "Dedicated account manager",
     ],

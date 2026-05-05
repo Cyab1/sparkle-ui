@@ -84,9 +84,9 @@ const TIERS = [
     id: "gold",
     name: "Gold",
     priceMonthly: 49,
-    priceAnnual: 488,
+    priceAnnual: 588,
     priceLabel: "R49/mo",
-    annualLabel: "R488/yr",
+    annualLabel: "R588/yr",
     color: "hsl(38 92% 50%)",
     aiCredits: 100,
     features: [
@@ -174,7 +174,7 @@ export function Membership({ setPage }: { setPage: (p: string) => void }) {
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
       <PageTitle sub="Choose the plan that works for you">
-        Gym <span className="text-primary">Membership</span>
+        App <span className="text-primary">Subscription</span>
       </PageTitle>
 
       {/* ── AI credit balance ───────────────────────────────────────────── */}

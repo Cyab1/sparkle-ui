@@ -62,9 +62,7 @@ export function AuthScreen({ setPage }: AuthScreenProps) {
   const [name, setName] = useState("");
   const [goal, setGoal] = useState(GOALS[0]);
   const [level, setLevel] = useState(LEVELS[1]);
-  const [gender, setGender] = useState<"male" | "female" | "prefer_not_to_say">(
-    "male",
-  );
+  const [gender, setGender] = useState<"male" | "female">("male");
   const [loading, setLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -475,10 +473,6 @@ export function AuthScreen({ setPage }: AuthScreenProps) {
                             [
                               { val: "male", label: "♂ Male" },
                               { val: "female", label: "♀ Female" },
-                              {
-                                val: "prefer_not_to_say",
-                                label: "Prefer not to say",
-                              },
                             ] as const
                           ).map((g) => (
                             <button

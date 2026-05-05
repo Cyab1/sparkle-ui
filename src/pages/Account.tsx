@@ -30,8 +30,8 @@ export function Account({ setPage }: { setPage: (p: string) => void }) {
   const [name, setName] = useState(user.name);
   const [goal, setGoal] = useState(user.goal);
   const [level, setLevel] = useState(user.level);
-  const [gender, setGender] = useState<"male" | "female" | "prefer_not_to_say">(
-    (user as any).gender ?? "prefer_not_to_say",
+  const [gender, setGender] = useState<"male" | "female">(
+    (user as any).gender ?? "male",
   );
   const [photoUrl, setPhotoUrl] = useState((user as any).photoUrl || "");
   const [photoPreview, setPhotoPreview] = useState(
@@ -379,7 +379,6 @@ export function Account({ setPage }: { setPage: (p: string) => void }) {
                 [
                   { val: "male", label: "♂ Male" },
                   { val: "female", label: "♀ Female" },
-                  { val: "prefer_not_to_say", label: "Prefer not to say" },
                 ] as const
               ).map((g) => (
                 <button
@@ -460,8 +459,8 @@ export function Account({ setPage }: { setPage: (p: string) => void }) {
                 {membership === "basic"
                   ? "Free plan — upgrade to unlock more"
                   : membership === "silver"
-                    ? "R19/mo or R199/yr"
-                    : "R49/mo or R499/yr"}
+                    ? "R24/mo or R288/yr"
+                    : "R49/mo or R588/yr"}
               </div>
             </div>
           </div>

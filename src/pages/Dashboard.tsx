@@ -71,6 +71,78 @@ export function getRewardStatus(checkIns: any[], rewards: Record<string, any>) {
   };
 }
 
+// ── News Slider ───────────────────────────────────────────────────────────────
+function NewsSlider({ items }: { items: any[] }) {
+  const [current, setCurrent] = useState(0);
+
+  useEffect(() => {
+    if (items.length <= 1) return;
+    const timer = setInterval(() => {
+      setCurrent((c) => (c + 1) % items.length);
+    }, 3500);
+    return () => clearInterval(timer);
+  }, [items.length]);
+
+  if (!items.length) return null;
+
+  const n = items[current];
+
+  return (
+    <div>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={current}
+          initial={{ opacity: 0, x: 24 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -24 }}
+          transition={{ duration: 0.28 }}
+          className="flex items-center gap-3 py-1.5"
+        >
+          <span className="text-xl shrink-0">{n.emoji}</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium truncate text-foreground">
+              {n.title}
+            </div>
+            <div className="text-[10px] text-muted-foreground">{n.date}</div>
+          </div>
+          {n.type && (
+            <span
+              className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0"
+              style={{
+                background: "hsl(20 100% 50% / 0.12)",
+                color: "hsl(20 100% 45%)",
+              }}
+            >
+              {n.type}
+            </span>
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Dot indicators */}
+      {items.length > 1 && (
+        <div className="flex gap-1.5 mt-2 justify-center">
+          {items.map((_, i) => (
+            <button
+              key={i}
+              onClick={() => setCurrent(i)}
+              className="border-none cursor-pointer p-0 transition-all"
+              style={{
+                width: i === current ? 16 : 6,
+                height: 6,
+                borderRadius: 3,
+                background:
+                  i === current ? "hsl(20 100% 50%)" : "hsl(var(--border))",
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
   const { user } = useAuth();
   const { isMobile, isTablet } = useBreakpoint();
@@ -163,7 +235,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         >
           <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
             Please verify your email address to unlock all features. If you
-            don’t see the verification email in your inbox, please check your
+            don't see the verification email in your inbox, please check your
             Junk or Spam folder
           </span>
           <div className="flex items-center gap-2 shrink-0">
@@ -320,7 +392,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         </div>
         <div className="flex gap-2 flex-wrap">
           <a
-            href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20book%20a%20trial%20at%20MK2%20Rivers"
+            href="https://wa.me/27645386375?text=Hi%2C%20I%27d%20like%20to%20book%20a%20trial%20at%20MK2%20Rivers"
             target="_blank"
             rel="noopener noreferrer"
             className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
@@ -354,11 +426,13 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
-        className="mk2-card cursor-pointer hover:border-primary/30 transition-colors mb-4"
-        onClick={() => setPage("News")}
+        className="mk2-card mb-4"
         style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
       >
-        <div className="flex items-center justify-between mb-3">
+        <div
+          className="flex items-center justify-between mb-3 cursor-pointer"
+          onClick={() => setPage("News")}
+        >
           <span
             className="font-display tracking-wide text-primary"
             style={{ fontSize: 15 }}
@@ -367,24 +441,8 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
           </span>
           <span className="text-[10px] text-primary font-bold">View all →</span>
         </div>
-        <div className="flex flex-col gap-2">
-          {newsToShow.map((n: any, i: number) => (
-            <div
-              key={i}
-              className="flex items-center gap-2 py-1.5 border-b border-border"
-            >
-              <span className="text-base shrink-0">{n.emoji}</span>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium truncate text-foreground">
-                  {n.title}
-                </div>
-                <div className="text-[10px] text-muted-foreground">
-                  {n.date}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+
+        <NewsSlider items={newsToShow} />
       </motion.div>
 
       {/* ── Community ──────────────────────────────────────────────────── */}
@@ -625,7 +683,9 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //           className="mb-4 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 flex items-center justify-between gap-3"
 //         >
 //           <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-//             Please verify your email address to unlock all features.
+//             Please verify your email address to unlock all features. If you
+//             don’t see the verification email in your inbox, please check your
+//             Junk or Spam folder
 //           </span>
 //           <div className="flex items-center gap-2 shrink-0">
 //             {resendSent ? (
@@ -781,7 +841,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //         </div>
 //         <div className="flex gap-2 flex-wrap">
 //           <a
-//             href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20book%20a%20trial%20at%20MK2%20Rivers"
+//             href="https://wa.me/27645386375?text=Hi%2C%20I%27d%20like%20to%20book%20a%20trial%20at%20MK2%20Rivers"
 //             target="_blank"
 //             rel="noopener noreferrer"
 //             className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
@@ -794,7 +854,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //             🏋️ Book a Trial
 //           </a>
 //           <a
-//             href="https://wa.me/27000000000?text=Hi%2C%20I%27d%20like%20to%20do%20a%20drop-in%20session%20at%20MK2%20Rivers"
+//             href="https://app.octivfitness.com/widget/schedule?isDropIn=true&publicToken=93d2cf182bbdb6ffbc7008dc97c9de9041f72351"
 //             target="_blank"
 //             rel="noopener noreferrer"
 //             className="flex-1 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all active:scale-95 text-center no-underline flex items-center justify-center gap-2"
@@ -811,7 +871,10 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //       </motion.div>
 
 //       {/* ── News & Events ──────────────────────────────────────────────── */}
-//       <div
+//       <motion.div
+//         initial={{ opacity: 0, y: 8 }}
+//         animate={{ opacity: 1, y: 0 }}
+//         transition={{ delay: 0.4 }}
 //         className="mk2-card cursor-pointer hover:border-primary/30 transition-colors mb-4"
 //         onClick={() => setPage("News")}
 //         style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
@@ -843,7 +906,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //             </div>
 //           ))}
 //         </div>
-//       </div>
+//       </motion.div>
 
 //       {/* ── Community ──────────────────────────────────────────────────── */}
 //       <motion.div

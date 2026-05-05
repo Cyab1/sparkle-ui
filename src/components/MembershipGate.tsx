@@ -31,8 +31,8 @@ const TIER_STYLE: Record<
     bg: "rgba(203,213,225,0.1)",
     border: "rgba(203,213,225,0.3)",
     label: "Silver",
-    priceMonthly: "R19/mo",
-    priceAnnual: "R199/yr",
+    priceMonthly: "R24/mo",
+    priceAnnual: "R288/yr",
     aiCredits: 20,
   },
   gold: {
@@ -41,7 +41,7 @@ const TIER_STYLE: Record<
     border: "rgba(234,179,8,0.3)",
     label: "Gold",
     priceMonthly: "R49/mo",
-    priceAnnual: "R499/yr",
+    priceAnnual: "R488/yr",
     aiCredits: 100,
   },
 };
