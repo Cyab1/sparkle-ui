@@ -13,7 +13,6 @@ const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
 // ── Parse calories from pasted BMR text ──────────────────────────────────────
 function extractCaloriesFromBMR(text: string): string | null {
-  // Match patterns like "2,450", "2450", "TDEE: 2450", "Maintenance: 2,450 calories", etc.
   const patterns = [
     /(?:tdee|maintenance|total daily|calories?)[^\d]*(\d[\d,]+)/i,
     /(\d[\d,]+)\s*(?:calories?|kcal)/i,
@@ -51,10 +50,11 @@ export function NutritionCoach() {
   const isActiveMember = membership === "silver" || membership === "gold";
   const aiQuota = (user as any).aiQuota ?? null;
 
-  const remaining =
-    quotaRemaining !== null ? quotaRemaining : (aiQuota?.remaining ?? 0);
   const quotaTotal =
     membership === "gold" ? 100 : membership === "silver" ? 20 : 0;
+  const used = aiQuota?.used ?? 0;
+  const remaining =
+    quotaRemaining !== null ? quotaRemaining : Math.max(0, quotaTotal - used);
   const outOfCredits = remaining <= 0;
 
   // ── Non-member gate ───────────────────────────────────────────────────────
@@ -288,7 +288,6 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
                 {c}
               </button>
             ))}
-            {/* Custom value chip — shown when BMR sets a non-standard value */}
             {!calOptions.includes(cal) && (
               <button
                 className="px-3 py-2 rounded-lg font-bold text-xs border-none cursor-pointer"
@@ -387,7 +386,7 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 //   const [cal, setCal] = useState("2200");
 //   const [blood, setBlood] = useState("O+");
 //   const [diet, setDiet] = useState("No restrictions");
-//   const [plan, setPlan] = useState("Full Day Meal Plan");
+//   const [plan, setPlan] = useState("Lose Weight");
 //   const [result, setResult] = useState("");
 //   const [loading, setLoading] = useState(false);
 //   const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
@@ -400,10 +399,11 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 //   const isActiveMember = membership === "silver" || membership === "gold";
 //   const aiQuota = (user as any).aiQuota ?? null;
 
+//   const used = aiQuota?.used ?? 0;
 //   const remaining =
-//     quotaRemaining !== null ? quotaRemaining : (aiQuota?.remaining ?? 0);
+//     quotaRemaining !== null ? quotaRemaining : Math.max(0, quotaTotal - used);
 //   const quotaTotal =
-//     membership === "gold" ? 200 : membership === "silver" ? 50 : 0;
+//     membership === "gold" ? 100 : membership === "silver" ? 20 : 0;
 //   const outOfCredits = remaining <= 0;
 
 //   // ── Non-member gate ───────────────────────────────────────────────────────
@@ -523,15 +523,7 @@ e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
 //       label: "Plan Type",
 //       val: plan,
 //       set: setPlan,
-//       opts: [
-//         "Full Day Meal Plan",
-//         "Pre-Workout Meal",
-//         "Post-Workout Recovery",
-//         "Meal Prep Guide",
-//         "High Protein Day",
-//         "Cutting Phase",
-//         "Bulking Phase",
-//       ],
+//       opts: ["Lose Weight", "Muscle Gain"],
 //     },
 //   ];
 

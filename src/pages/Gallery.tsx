@@ -1,518 +1,514 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
-import { Tag } from "@/components/shared/Tag";
 import { PageTitle } from "@/components/shared/PageTitle";
-import { motion } from "framer-motion";
 import { ref, onValue } from "firebase/database";
 import { db } from "@/lib/firebase";
 
-// ── Elfsight Instagram widget ID ─────────────────────────────────────────────
+// ── Elfsight widget ID ────────────────────────────────────────────────────────
 const ELFSIGHT_APP_ID = "elfsight-app-634db65e-6224-4128-ade4-41d236a25823";
 
-// ── Instagram Feed section (Elfsight embed) ───────────────────────────────────
+// ── Social platform defaults ──────────────────────────────────────────────────
+const DEFAULT_SOCIALS = {
+  instagramHandle: "mk2riversfitness",
+  facebookUrl: "",
+  tiktokUrl: "",
+  facebookEmbedEnabled: false,
+  tiktokEmbedEnabled: false,
+};
+
+// ── Instagram Feed (Elfsight) ─────────────────────────────────────────────────
 function InstagramFeed() {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Load or re-trigger the Elfsight platform script
-    const existingScript = document.getElementById("elfsight-platform");
-    if (!existingScript) {
+    const existing = document.getElementById("elfsight-platform");
+    if (!existing) {
       const script = document.createElement("script");
       script.id = "elfsight-platform";
       script.src = "https://elfsightcdn.com/platform.js";
       script.async = true;
       document.body.appendChild(script);
     } else {
-      // Script already loaded — tell Elfsight to re-init any new widgets
       // @ts-ignore
-      if (window.eapps?.platform) {
-        // @ts-ignore
-        window.eapps.platform.reload?.();
-      }
+      window.eapps?.platform?.reload?.();
     }
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      className={ELFSIGHT_APP_ID}
-      data-elfsight-app-lazy
-      style={{ minHeight: 300 }}
-    />
+    <div ref={ref} style={{ minHeight: 300 }}>
+      <div className={ELFSIGHT_APP_ID} data-elfsight-app-lazy />
+    </div>
   );
 }
 
-// ── Fallback gallery data ─────────────────────────────────────────────────────
-const FALLBACK_GALLERY = [
-  {
-    id: "1",
-    label: "HIIT Session",
-    category: "Classes",
-    emoji: "🔥",
-    accent: "hsl(0 84% 51%)",
-    desc: "Coach Sipho leading Monday HIIT — 06:00 crew never misses",
-  },
-  {
-    id: "2",
-    label: "Weight Room",
-    category: "Facilities",
-    emoji: "🏋️",
-    accent: "hsl(217 91% 53%)",
-    desc: "Fully equipped free weights & rack zone",
-  },
-  {
-    id: "3",
-    label: "Transformation",
-    category: "Members",
-    emoji: "💪",
-    accent: "hsl(142 72% 37%)",
-    desc: "Thabo — 6 months, -14kg, +8kg muscle",
-  },
-  {
-    id: "4",
-    label: "Boxing Corner",
-    category: "Classes",
-    emoji: "🥊",
-    accent: "hsl(20 100% 50%)",
-    desc: "Coach Dlamini running evening boxing fit",
-  },
-  {
-    id: "5",
-    label: "Spin Studio",
-    category: "Facilities",
-    emoji: "🚴",
-    accent: "hsl(217 91% 53%)",
-    desc: "20-bike spin studio with immersive sound",
-  },
-  {
-    id: "6",
-    label: "Community Day",
-    category: "Events",
-    emoji: "🎉",
-    accent: "hsl(142 72% 37%)",
-    desc: "MK2 Family Day — 200+ members attended",
-  },
-  {
-    id: "7",
-    label: "CrossFit WOD",
-    category: "Classes",
-    emoji: "⚡",
-    accent: "hsl(38 92% 44%)",
-    desc: "Saturday WOD — top 3 get free month!",
-  },
-  {
-    id: "8",
-    label: "Recovery Zone",
-    category: "Facilities",
-    emoji: "🛁",
-    accent: "hsl(263 85% 58%)",
-    desc: "Ice bath, sauna & stretch zone",
-  },
-];
+// ── Facebook page embed ───────────────────────────────────────────────────────
+function FacebookFeed({ pageUrl }: { pageUrl: string }) {
+  useEffect(() => {
+    if (!document.getElementById("facebook-jssdk")) {
+      const script = document.createElement("script");
+      script.id = "facebook-jssdk";
+      script.src =
+        "https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v18.0";
+      script.async = true;
+      script.defer = true;
+      document.body.appendChild(script);
+    } else {
+      // @ts-ignore
+      window.FB?.XFBML?.parse();
+    }
+  }, [pageUrl]);
 
-const CAT_COLORS: Record<string, string> = {
-  Classes: "hsl(20 100% 50%)",
-  Facilities: "hsl(217 91% 53%)",
-  Members: "hsl(142 72% 37%)",
-  Events: "hsl(38 92% 44%)",
-  Transformation: "hsl(263 85% 58%)",
-};
+  return (
+    <div>
+      <div id="fb-root" />
+      <div
+        className="fb-page"
+        data-href={pageUrl}
+        data-tabs="timeline"
+        data-width="500"
+        data-height="600"
+        data-small-header="true"
+        data-adapt-container-width="true"
+        data-hide-cover="false"
+        data-show-facepile="true"
+      />
+    </div>
+  );
+}
 
-const CATS = [
-  "All",
-  "Classes",
-  "Facilities",
-  "Members",
-  "Events",
-  "Transformation",
-];
-
-// ── Gallery view (admin items + fallback) ─────────────────────────────────────
-type GalleryView = "instagram" | "photos";
+type PlatformTab = "instagram" | "facebook" | "tiktok";
 
 export function Gallery() {
   const { isMobile } = useBreakpoint();
-  const [view, setView] = useState<GalleryView>("instagram");
-  const [cat, setCat] = useState("All");
-  const [adminGallery, setAdminGallery] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<PlatformTab>("instagram");
+  const [socials, setSocials] = useState(DEFAULT_SOCIALS);
 
   useEffect(() => {
-    const galleryRef = ref(db, "admin_gallery");
-    const unsub = onValue(galleryRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.val();
-        const list = Object.entries(data).map(([id, val]: [string, any]) => ({
-          id,
-          ...val,
-          accent: val.accent || CAT_COLORS[val.category] || "hsl(20 100% 50%)",
-        }));
-        setAdminGallery(list);
-      } else {
-        setAdminGallery([]);
-      }
-      setLoading(false);
+    const unsub = onValue(ref(db, "admin_socials"), (snap) => {
+      if (snap.exists()) setSocials({ ...DEFAULT_SOCIALS, ...snap.val() });
     });
     return () => unsub();
   }, []);
 
-  const GALLERY = adminGallery.length > 0 ? adminGallery : FALLBACK_GALLERY;
-  const filtered =
-    cat === "All" ? GALLERY : GALLERY.filter((g) => g.category === cat);
+  const platforms = [
+    { id: "instagram" as const, label: "Instagram", icon: "📸" },
+    ...(socials.facebookUrl
+      ? [{ id: "facebook" as const, label: "Facebook", icon: "👥" }]
+      : []),
+    ...(socials.tiktokUrl
+      ? [{ id: "tiktok" as const, label: "TikTok", icon: "🎵" }]
+      : []),
+  ];
 
   return (
     <div
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
-      <PageTitle sub="Life at MK Two Rivers — follow us on Instagram">
-        Gallery
+      <PageTitle sub="Follow MK2R across our social platforms">
+        Social <span className="text-primary">Media</span>
       </PageTitle>
 
-      {/* View switcher */}
-      <div className="flex bg-secondary rounded-lg p-1 gap-1 mb-6 w-fit">
-        <button
-          onClick={() => setView("instagram")}
-          className="py-2 px-4 rounded-md border-none cursor-pointer font-body font-bold text-xs uppercase tracking-wide transition-all duration-150"
-          style={{
-            background:
-              view === "instagram" ? "hsl(20 100% 50%)" : "transparent",
-            color:
-              view === "instagram" ? "#000" : "hsl(var(--muted-foreground))",
-          }}
-        >
-          📸 Instagram
-        </button>
-        <button
-          onClick={() => setView("photos")}
-          className="py-2 px-4 rounded-md border-none cursor-pointer font-body font-bold text-xs uppercase tracking-wide transition-all duration-150"
-          style={{
-            background: view === "photos" ? "hsl(20 100% 50%)" : "transparent",
-            color: view === "photos" ? "#000" : "hsl(var(--muted-foreground))",
-          }}
-        >
-          🏋️ Highlights
-        </button>
+      {/* Platform tabs */}
+      <div
+        className="flex gap-1.5 p-1 rounded-xl w-fit mb-6"
+        style={{ background: "hsl(var(--secondary))" }}
+      >
+        {platforms.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => setTab(p.id)}
+            className="px-4 py-2 rounded-lg text-sm font-bold transition-all border-none cursor-pointer font-body"
+            style={{
+              background: tab === p.id ? "hsl(20 100% 50%)" : "transparent",
+              color: tab === p.id ? "#000" : "hsl(var(--muted-foreground))",
+            }}
+          >
+            {p.icon} {p.label}
+          </button>
+        ))}
       </div>
 
-      {/* ── Instagram Feed (Elfsight) ──────────────────────────────────── */}
-      {view === "instagram" && (
+      {/* ── Instagram ──────────────────────────────────────────────────── */}
+      {tab === "instagram" && (
         <div className="w-full">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-sm font-bold">@mk2riversfitness</span>
-            <span className="text-xs text-muted-foreground">
-              · Latest posts
-            </span>
+          <div className="flex items-center gap-3 mb-5">
+            <div>
+              <div className="font-bold text-sm">
+                @{socials.instagramHandle}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Latest posts from Instagram
+              </div>
+            </div>
+            <a
+              href={`https://instagram.com/${socials.instagramHandle}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                marginLeft: "auto",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "6px 14px",
+                borderRadius: 8,
+                background: "hsl(20 100% 50% / 0.1)",
+                color: "hsl(20 100% 50%)",
+                border: "1px solid hsl(20 100% 50% / 0.3)",
+                textDecoration: "none",
+              }}
+            >
+              Open Instagram ↗
+            </a>
           </div>
           <InstagramFeed />
         </div>
       )}
 
-      {/* ── Photo Highlights (admin + fallback grid) ───────────────────── */}
-      {view === "photos" && (
-        <>
-          {!loading && adminGallery.length > 0 && (
-            <div className="mb-4 text-[11px] text-muted-foreground flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-              Live gallery from admin ({adminGallery.length} items)
+      {/* ── Facebook ───────────────────────────────────────────────────── */}
+      {tab === "facebook" && socials.facebookUrl && (
+        <div className="w-full">
+          <div className="flex items-center gap-3 mb-5">
+            <div>
+              <div className="font-bold text-sm">MK2R on Facebook</div>
+              <div className="text-xs text-muted-foreground">
+                Latest posts and updates
+              </div>
+            </div>
+            <a
+              href={socials.facebookUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                marginLeft: "auto",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "6px 14px",
+                borderRadius: 8,
+                background: "hsl(217 91% 53% / 0.1)",
+                color: "hsl(217 91% 53%)",
+                border: "1px solid hsl(217 91% 53% / 0.3)",
+                textDecoration: "none",
+              }}
+            >
+              Open Facebook ↗
+            </a>
+          </div>
+          {socials.facebookEmbedEnabled ? (
+            <FacebookFeed pageUrl={socials.facebookUrl} />
+          ) : (
+            <div
+              className="rounded-xl p-10 text-center"
+              style={{
+                background: "hsl(217 91% 53% / 0.06)",
+                border: "1px solid hsl(217 91% 53% / 0.2)",
+              }}
+            >
+              <div className="text-4xl mb-3">👥</div>
+              <div className="font-bold text-sm mb-2">
+                Follow us on Facebook
+              </div>
+              <div className="text-xs text-muted-foreground mb-5">
+                Stay up to date with news, events and community updates.
+              </div>
+              <a
+                href={socials.facebookUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "inline-block",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  padding: "10px 20px",
+                  borderRadius: 10,
+                  background: "hsl(217 91% 53%)",
+                  color: "#fff",
+                  textDecoration: "none",
+                }}
+              >
+                Visit our Facebook Page ↗
+              </a>
             </div>
           )}
+        </div>
+      )}
 
-          <div className="flex gap-2 mb-6 flex-wrap">
-            {CATS.map((c) => (
-              <button
-                key={c}
-                onClick={() => setCat(c)}
-                className={`px-4 py-1.5 border rounded-full font-body font-bold text-[11px] uppercase cursor-pointer transition-all duration-150 ${
-                  c === cat
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-transparent text-muted-foreground border-border hover:border-primary/40"
-                }`}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-
-          {loading ? (
-            <div className="text-center py-12 text-muted-foreground text-sm">
-              Loading gallery…
+      {/* ── TikTok ─────────────────────────────────────────────────────── */}
+      {tab === "tiktok" && socials.tiktokUrl && (
+        <div className="w-full">
+          <div className="flex items-center gap-3 mb-5">
+            <div>
+              <div className="font-bold text-sm">MK2R on TikTok</div>
+              <div className="text-xs text-muted-foreground">
+                Workouts, transformations and gym life
+              </div>
             </div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground text-sm">
-              No items in this category yet.
+            <a
+              href={socials.tiktokUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                marginLeft: "auto",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "6px 14px",
+                borderRadius: 8,
+                background: "hsl(var(--secondary))",
+                color: "hsl(var(--foreground))",
+                border: "1px solid hsl(var(--border))",
+                textDecoration: "none",
+              }}
+            >
+              Open TikTok ↗
+            </a>
+          </div>
+          {socials.tiktokEmbedEnabled ? (
+            <div className="flex justify-center">
+              <blockquote
+                className="tiktok-embed"
+                cite={socials.tiktokUrl}
+                data-unique-id={
+                  socials.tiktokUrl.split("@")[1]?.split("/")[0] ?? ""
+                }
+                data-embed-type="creator"
+                style={{ maxWidth: 605, minWidth: 325 }}
+              >
+                <section />
+              </blockquote>
+              {!document.getElementById("tiktok-embed-script") &&
+                (() => {
+                  const s = document.createElement("script");
+                  s.id = "tiktok-embed-script";
+                  s.src = "https://www.tiktok.com/embed.js";
+                  s.async = true;
+                  document.body.appendChild(s);
+                  return null;
+                })()}
             </div>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
-              {filtered.map((g, i) => (
-                <motion.div
-                  key={g.id}
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="rounded-xl overflow-hidden border hover:border-opacity-60 transition-all duration-200 group"
-                  style={{ borderColor: `${g.accent}33` }}
-                >
-                  {g.imageUrl ? (
-                    <div className="h-[140px] overflow-hidden">
-                      <img
-                        src={g.imageUrl}
-                        alt={g.label}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                    </div>
-                  ) : (
-                    <div
-                      className="h-[140px] flex items-center justify-center text-[56px] relative"
-                      style={{
-                        background: `linear-gradient(135deg, hsl(var(--background)), ${g.accent}22)`,
-                      }}
-                    >
-                      <span className="group-hover:scale-110 transition-transform duration-300">
-                        {g.emoji}
-                      </span>
-                      <div className="absolute top-2.5 right-2.5">
-                        <Tag color={g.accent}>{g.category}</Tag>
-                      </div>
-                    </div>
-                  )}
-                  <div className="p-3.5 bg-card">
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <div className="font-display text-lg tracking-wide leading-tight">
-                        {g.label}
-                      </div>
-                      {g.imageUrl && <Tag color={g.accent}>{g.category}</Tag>}
-                    </div>
-                    {g.desc && (
-                      <div className="text-xs text-muted-foreground leading-relaxed">
-                        {g.desc}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
+            <div
+              className="rounded-xl p-10 text-center"
+              style={{
+                background: "hsl(var(--secondary))",
+                border: "1px solid hsl(var(--border))",
+              }}
+            >
+              <div className="text-4xl mb-3">🎵</div>
+              <div className="font-bold text-sm mb-2">Follow us on TikTok</div>
+              <div className="text-xs text-muted-foreground mb-5">
+                Watch our latest workout videos and gym highlights.
+              </div>
+              <a
+                href={socials.tiktokUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "inline-block",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  padding: "10px 20px",
+                  borderRadius: 10,
+                  background: "hsl(var(--foreground))",
+                  color: "hsl(var(--background))",
+                  textDecoration: "none",
+                }}
+              >
+                Visit our TikTok ↗
+              </a>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
 }
 
-// import { useState, useEffect } from "react";
+// import { useState, useEffect, useRef } from "react";
 // import { useBreakpoint } from "@/hooks/useBreakpoint";
-// import { Tag } from "@/components/shared/Tag";
 // import { PageTitle } from "@/components/shared/PageTitle";
 // import { motion } from "framer-motion";
-// import { ref, onValue } from "firebase/database";
-// import { db } from "@/lib/firebase";
 
-// const FALLBACK_GALLERY = [
-//   {
-//     id: "1",
-//     label: "HIIT Session",
-//     category: "Classes",
-//     emoji: "🔥",
-//     accent: "hsl(0 84% 51%)",
-//     desc: "Coach Sipho leading Monday HIIT — 06:00 crew never misses",
-//   },
-//   {
-//     id: "2",
-//     label: "Weight Room",
-//     category: "Facilities",
-//     emoji: "🏋️",
-//     accent: "hsl(217 91% 53%)",
-//     desc: "Fully equipped free weights & rack zone",
-//   },
-//   {
-//     id: "3",
-//     label: "Transformation",
-//     category: "Members",
-//     emoji: "💪",
-//     accent: "hsl(142 72% 37%)",
-//     desc: "Thabo — 6 months, -14kg, +8kg muscle",
-//   },
-//   {
-//     id: "4",
-//     label: "Boxing Corner",
-//     category: "Classes",
-//     emoji: "🥊",
-//     accent: "hsl(20 100% 50%)",
-//     desc: "Coach Dlamini running evening boxing fit",
-//   },
-//   {
-//     id: "5",
-//     label: "Spin Studio",
-//     category: "Facilities",
-//     emoji: "🚴",
-//     accent: "hsl(217 91% 53%)",
-//     desc: "20-bike spin studio with immersive sound",
-//   },
-//   {
-//     id: "6",
-//     label: "Community Day",
-//     category: "Events",
-//     emoji: "🎉",
-//     accent: "hsl(142 72% 37%)",
-//     desc: "MK2 Family Day — 200+ members attended",
-//   },
-//   {
-//     id: "7",
-//     label: "CrossFit WOD",
-//     category: "Classes",
-//     emoji: "⚡",
-//     accent: "hsl(38 92% 44%)",
-//     desc: "Saturday WOD — top 3 get free month!",
-//   },
-//   {
-//     id: "8",
-//     label: "Recovery Zone",
-//     category: "Facilities",
-//     emoji: "🛁",
-//     accent: "hsl(263 85% 58%)",
-//     desc: "Ice bath, sauna & stretch zone",
-//   },
-// ];
+// // Instagram widget ID (Elfsight)
+// const ELFSIGHT_APP_ID = "elfsight-app-634db65e-6224-4128-ade4-41d236a25823";
 
-// // Map category to accent colour for admin-added items
-// const CAT_COLORS: Record<string, string> = {
-//   Classes: "hsl(20 100% 50%)",
-//   Facilities: "hsl(217 91% 53%)",
-//   Members: "hsl(142 72% 37%)",
-//   Events: "hsl(38 92% 44%)",
-//   Transformation: "hsl(263 85% 58%)",
-// };
+// // Instagram Feed (Elfsight embed) – fixed loading & reinit
+// function InstagramFeed() {
+//   const containerRef = useRef<HTMLDivElement>(null);
 
-// const CATS = [
-//   "All",
-//   "Classes",
-//   "Facilities",
-//   "Members",
-//   "Events",
-//   "Transformation",
-// ];
+//   useEffect(() => {
+//     const loadAndReload = () => {
+//       const existingScript = document.getElementById("elfsight-platform");
+//       if (!existingScript) {
+//         const script = document.createElement("script");
+//         script.id = "elfsight-platform";
+//         script.src = "https://elfsightcdn.com/platform.js";
+//         script.async = true;
+//         document.body.appendChild(script);
+//         script.onload = () => {
+//           // @ts-ignore
+//           if (window.eapps?.platform) window.eapps.platform.reload?.();
+//         };
+//       } else {
+//         // @ts-ignore
+//         if (window.eapps?.platform) window.eapps.platform.reload?.();
+//       }
+//     };
+
+//     loadAndReload();
+//   }, []);
+
+//   return (
+//     <div
+//       ref={containerRef}
+//       className={ELFSIGHT_APP_ID}
+//       data-elfsight-app-lazy
+//       style={{ minHeight: 400 }}
+//     />
+//   );
+// }
+
+// // TikTok Embed (official profile embed)
+// function TikTokEmbed({ profile }: { profile: string }) {
+//   useEffect(() => {
+//     const script = document.createElement("script");
+//     script.src = "https://www.tiktok.com/embed.js";
+//     script.async = true;
+//     document.body.appendChild(script);
+//     return () => {
+//       if (document.body.contains(script)) document.body.removeChild(script);
+//     };
+//   }, []);
+
+//   return (
+//     <div className="flex justify-center">
+//       <blockquote
+//         className="tiktok-embed"
+//         cite={`https://www.tiktok.com/${profile}`}
+//         data-unique-id={profile.replace("@", "")}
+//         data-embed-type="profile"
+//         style={{ maxWidth: "605px", minWidth: "325px" }}
+//       >
+//         <section>
+//           <a
+//             target="_blank"
+//             rel="noopener noreferrer"
+//             href={`https://www.tiktok.com/${profile}`}
+//           >
+//             @{profile}
+//           </a>
+//         </section>
+//       </blockquote>
+//     </div>
+//   );
+// }
+
+// // Facebook Page Plugin
+// function FacebookPagePlugin({ pageUrl }: { pageUrl: string }) {
+//   useEffect(() => {
+//     if (document.getElementById("facebook-jssdk")) return;
+//     const script = document.createElement("script");
+//     script.id = "facebook-jssdk";
+//     script.src =
+//       "https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v18.0";
+//     script.async = true;
+//     document.body.appendChild(script);
+//   }, []);
+
+//   return (
+//     <div className="flex justify-center">
+//       <div
+//         className="fb-page"
+//         data-href={pageUrl}
+//         data-tabs="timeline"
+//         data-width="500"
+//         data-height="600"
+//         data-small-header="false"
+//         data-adapt-container-width="true"
+//         data-hide-cover="false"
+//         data-show-facepile="true"
+//       >
+//         <blockquote cite={pageUrl} className="fb-xfbml-parse-ignore">
+//           <a href={pageUrl}>MK Two Rivers Fitness</a>
+//         </blockquote>
+//       </div>
+//     </div>
+//   );
+// }
+
+// type SocialTab = "instagram" | "tiktok" | "facebook";
+
+// // type SocialTab = "instagram" | "tiktok" | "facebook";
 
 // export function Gallery() {
 //   const { isMobile } = useBreakpoint();
-//   const [cat, setCat] = useState("All");
-//   const [adminGallery, setAdminGallery] = useState<any[]>([]);
-//   const [loading, setLoading] = useState(true);
-
-//   useEffect(() => {
-//     const galleryRef = ref(db, "admin_gallery");
-//     const unsub = onValue(galleryRef, (snap) => {
-//       if (snap.exists()) {
-//         const data = snap.val();
-//         const list = Object.entries(data).map(([id, val]: [string, any]) => ({
-//           id,
-//           ...val,
-//           // ensure accent colour exists
-//           accent: val.accent || CAT_COLORS[val.category] || "hsl(20 100% 50%)",
-//         }));
-//         setAdminGallery(list);
-//       } else {
-//         setAdminGallery([]);
-//       }
-//       setLoading(false);
-//     });
-//     return () => unsub();
-//   }, []);
-
-//   const GALLERY = adminGallery.length > 0 ? adminGallery : FALLBACK_GALLERY;
-//   const filtered =
-//     cat === "All" ? GALLERY : GALLERY.filter((g) => g.category === cat);
+//   const [activeTab, setActiveTab] = useState<SocialTab>("instagram");
 
 //   return (
 //     <div
 //       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
 //     >
-//       <PageTitle sub="Life at MK Two Rivers — classes, facilities & member moments">
-//         Gallery
+//       <PageTitle sub="Follow us on Instagram, TikTok & Facebook">
+//         Social Media Platforms
 //       </PageTitle>
 
-//       {/* Admin source indicator */}
-//       {!loading && adminGallery.length > 0 && (
-//         <div className="mb-4 text-[11px] text-muted-foreground flex items-center gap-1.5">
-//           <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-//           Live gallery from admin ({adminGallery.length} items)
-//         </div>
-//       )}
-
-//       {/* Category filters */}
-//       <div className="flex gap-2 mb-6 flex-wrap">
-//         {CATS.map((c) => (
+//       {/* Tab Switcher */}
+//       <div className="flex bg-secondary rounded-lg p-1 gap-1 mb-8 w-fit">
+//         {(["instagram", "tiktok", "facebook"] as SocialTab[]).map((tab) => (
 //           <button
-//             key={c}
-//             onClick={() => setCat(c)}
-//             className={`px-4 py-1.5 border rounded-full font-body font-bold text-[11px] uppercase cursor-pointer transition-all duration-150 ${
-//               c === cat
-//                 ? "bg-primary text-primary-foreground border-primary"
-//                 : "bg-transparent text-muted-foreground border-border hover:border-primary/40"
+//             key={tab}
+//             onClick={() => setActiveTab(tab)}
+//             className={`py-2 px-4 rounded-md font-body font-bold text-xs uppercase tracking-wide transition-all duration-150 cursor-pointer ${
+//               activeTab === tab
+//                 ? "bg-primary text-black"
+//                 : "bg-transparent text-muted-foreground hover:text-foreground"
 //             }`}
 //           >
-//             {c}
+//             {tab === "instagram" && " Instagram"}
+//             {/* {tab === "tiktok" && " TikTok"}
+//             {tab === "facebook" && "Facebook"} */}
 //           </button>
 //         ))}
 //       </div>
 
-//       {loading ? (
-//         <div className="text-center py-12 text-muted-foreground text-sm">
-//           Loading gallery…
-//         </div>
-//       ) : filtered.length === 0 ? (
-//         <div className="text-center py-12 text-muted-foreground text-sm">
-//           No items in this category yet.
-//         </div>
-//       ) : (
-//         <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
-//           {filtered.map((g, i) => (
-//             <motion.div
-//               key={g.id}
-//               initial={{ opacity: 0, scale: 0.96 }}
-//               animate={{ opacity: 1, scale: 1 }}
-//               transition={{ delay: i * 0.05 }}
-//               className="rounded-xl overflow-hidden border hover:border-opacity-60 transition-all duration-200 group"
-//               style={{ borderColor: `${g.accent}33` }}
-//             >
-//               {/* Image or emoji */}
-//               {g.imageUrl ? (
-//                 <div className="h-[140px] overflow-hidden">
-//                   <img
-//                     src={g.imageUrl}
-//                     alt={g.label}
-//                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-//                   />
-//                 </div>
-//               ) : (
-//                 <div
-//                   className="h-[140px] flex items-center justify-center text-[56px] relative"
-//                   style={{
-//                     background: `linear-gradient(135deg, hsl(var(--background)), ${g.accent}22)`,
-//                   }}
-//                 >
-//                   <span className="group-hover:scale-110 transition-transform duration-300">
-//                     {g.emoji}
-//                   </span>
-//                   <div className="absolute top-2.5 right-2.5">
-//                     <Tag color={g.accent}>{g.category}</Tag>
-//                   </div>
-//                 </div>
-//               )}
-//               <div className="p-3.5 bg-card">
-//                 <div className="flex items-start justify-between gap-2 mb-1">
-//                   <div className="font-display text-lg tracking-wide leading-tight">
-//                     {g.label}
-//                   </div>
-//                   {g.imageUrl && <Tag color={g.accent}>{g.category}</Tag>}
-//                 </div>
-//                 {g.desc && (
-//                   <div className="text-xs text-muted-foreground leading-relaxed">
-//                     {g.desc}
-//                   </div>
-//                 )}
-//               </div>
-//             </motion.div>
-//           ))}
-//         </div>
+//       {/* Instagram Feed */}
+//       {activeTab === "instagram" && (
+//         <motion.div
+//           key="instagram"
+//           initial={{ opacity: 0, y: 10 }}
+//           animate={{ opacity: 1, y: 0 }}
+//           exit={{ opacity: 0 }}
+//           className="w-full"
+//         >
+//           <div className="flex items-center gap-2 mb-4">
+//             <span className="text-sm font-bold">@mk2riversfitness</span>
+//             <span className="text-xs text-muted-foreground">
+//               · Latest posts
+//             </span>
+//           </div>
+//           <InstagramFeed />
+//         </motion.div>
+//       )}
+
+//       {/* TikTok Feed */}
+//       {activeTab === "tiktok" && (
+//         <motion.div
+//           key="tiktok"
+//           initial={{ opacity: 0, y: 10 }}
+//           animate={{ opacity: 1, y: 0 }}
+//           exit={{ opacity: 0 }}
+//         >
+//           <TikTokEmbed profile="@mk2riversfitness" />
+//         </motion.div>
+//       )}
+
+//       {/* Facebook Feed */}
+//       {activeTab === "facebook" && (
+//         <motion.div
+//           key="facebook"
+//           initial={{ opacity: 0, y: 10 }}
+//           animate={{ opacity: 1, y: 0 }}
+//           exit={{ opacity: 0 }}
+//         >
+//           <FacebookPagePlugin pageUrl="https://www.facebook.com/mk2riversfitness" />
+//         </motion.div>
 //       )}
 //     </div>
 //   );

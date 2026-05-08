@@ -8,10 +8,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { ref, push, set, onValue } from "firebase/database";
 import { getRewardStatus } from "./Dashboard";
+import { QRScanner } from "@/components/shared/QRScanner";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const CHECKIN_MILESTONE = 40;
 const REWARD_EXPIRY_DAYS = 60;
+const GYM_CHECKIN_QR_CODE = "MK2R_CHECKIN_RUIMSIG";
 
 // ── Unique code generator ─────────────────────────────────────────────────────
 function generateCode(): string {
@@ -58,13 +60,15 @@ export function CheckIn() {
   const { user, updateUser, toast } = useAuth();
   const { isMobile } = useBreakpoint();
   const [loading, setLoading] = useState(false);
-  const [rewardChoice, setRewardChoice] = useState<"inbody" | "buddy" | null>(
-    null,
-  );
+  const [rewardChoice, setRewardChoice] = useState<
+    Record<string, "inbody" | "buddy">
+  >({});
   const [showRewardModal, setShowRewardModal] = useState(false);
   const [redeeming, setRedeeming] = useState(false);
   const [rewards, setRewards] = useState<Record<string, any>>({});
   const [activeTab, setActiveTab] = useState<"checkin" | "history">("checkin");
+  const [showQRScanner, setShowQRScanner] = useState(false);
+  const [qrError, setQrError] = useState<string | null>(null);
 
   const {
     nearGym,
@@ -96,7 +100,7 @@ export function CheckIn() {
     ([, r]) => r.status === "redeemed",
   );
 
-  // ── Check in ──────────────────────────────────────────────────────────────
+  // ── Core check-in logic (shared by button and QR) ────────────────────────
   const doCheckIn = async () => {
     if (checkedToday) return toast("Already checked in today!", "error");
     if (!nearGym)
@@ -129,7 +133,6 @@ export function CheckIn() {
     await updateUser(updated);
     logEvent("gym_checkin", { points: updated.points });
 
-    // If new milestone reached, create a reward
     if (newMilestones > oldMilestones) {
       const code = generateCode();
       const earnedAt = Date.now();
@@ -140,7 +143,7 @@ export function CheckIn() {
         expiresAt,
         redemptionCode: code,
         checkInMilestone: newMilestones * CHECKIN_MILESTONE,
-        type: null, // chosen at redemption
+        type: null,
       });
       toast(
         `🎉 ${newTotal} check-ins! You've earned a reward — choose below!`,
@@ -157,20 +160,50 @@ export function CheckIn() {
     setLoading(false);
   };
 
+  // ── QR scan handler ───────────────────────────────────────────────────────
+  const handleQRScan = async (data: string) => {
+    setShowQRScanner(false);
+    setQrError(null);
+
+    if (data !== GYM_CHECKIN_QR_CODE) {
+      setQrError(
+        "Invalid QR code — please scan the gym check-in code at reception.",
+      );
+      return;
+    }
+
+    if (checkedToday) {
+      toast("Already checked in today!", "error");
+      return;
+    }
+
+    if (!nearGym) {
+      toast("You must be at MK2R Ruimsig to check in (within 20m)", "error");
+      return;
+    }
+
+    await doCheckIn();
+  };
+
   // ── Redeem reward ─────────────────────────────────────────────────────────
   const redeemReward = async (rewardId: string) => {
-    if (!rewardChoice) return toast("Choose your reward first", "error");
+    const choice = rewardChoice[rewardId];
+    if (!choice) return toast("Choose your reward first", "error");
     setRedeeming(true);
     try {
       await set(ref(db, `mk2_users/${user.uid}/rewards/${rewardId}`), {
         ...rewards[rewardId],
         status: "redeemed",
-        type: rewardChoice,
+        type: choice,
         redeemedAt: Date.now(),
       });
       toast(`🎁 Reward redeemed! Show your code at reception.`, "success");
       setShowRewardModal(false);
-      setRewardChoice(null);
+      setRewardChoice((prev) => {
+        const next = { ...prev };
+        delete next[rewardId];
+        return next;
+      });
     } catch {
       toast("Redemption failed — try again", "error");
     }
@@ -179,13 +212,15 @@ export function CheckIn() {
 
   // ── Mark expired rewards ──────────────────────────────────────────────────
   useEffect(() => {
+    const ids = expiredRewards.map(([id]) => id).join(",");
+    if (!ids) return;
     expiredRewards.forEach(async ([id, r]) => {
       await set(ref(db, `mk2_users/${user.uid}/rewards/${id}`), {
         ...r,
         status: "expired",
       });
     });
-  }, [expiredRewards.length]);
+  }, [expiredRewards.map(([id]) => id).join(",")]);
 
   return (
     <div
@@ -228,8 +263,6 @@ export function CheckIn() {
       {/* ══════════════════════════════════════════════════════════════════ */}
       {activeTab === "checkin" && (
         <>
-          
-
           {/* Location status */}
           <div
             className="mb-4 rounded-xl px-4 py-3 flex items-center gap-3 text-sm"
@@ -282,6 +315,52 @@ export function CheckIn() {
             )}
           </div>
 
+          {/* QR scanner area */}
+          {showQRScanner && (
+            <div
+              className="mb-4 rounded-xl overflow-hidden"
+              style={{ border: "1px solid hsl(20 100% 50% / 0.3)" }}
+            >
+              <div
+                className="px-4 py-2 flex justify-between items-center"
+                style={{ background: "hsl(20 100% 50% / 0.08)" }}
+              >
+                <span
+                  className="text-xs font-bold"
+                  style={{ color: "hsl(20 100% 50%)" }}
+                >
+                  Scan the gym QR code at reception
+                </span>
+                <button
+                  onClick={() => {
+                    setShowQRScanner(false);
+                    setQrError(null);
+                  }}
+                  className="text-xs border-none bg-transparent cursor-pointer text-muted-foreground"
+                >
+                  ✕ Cancel
+                </button>
+              </div>
+              <div style={{ minHeight: 300 }}>
+                <QRScanner onScan={handleQRScan} />
+              </div>
+            </div>
+          )}
+
+          {/* QR error */}
+          {qrError && (
+            <div
+              className="mb-4 rounded-xl px-4 py-3 text-xs"
+              style={{
+                background: "hsl(0 84% 51% / 0.08)",
+                border: "1px solid hsl(0 84% 51% / 0.2)",
+                color: "hsl(0 84% 51%)",
+              }}
+            >
+              ⚠ {qrError}
+            </div>
+          )}
+
           <div
             className={`grid gap-4 mb-5 ${isMobile ? "grid-cols-1" : "grid-cols-2"}`}
           >
@@ -309,6 +388,31 @@ export function CheckIn() {
                   ? "Come back tomorrow for more points"
                   : "Must be at MK2R Ruimsig"}
               </div>
+
+              {/* QR scan button */}
+              {!checkedToday && (
+                <button
+                  onClick={() => {
+                    setShowQRScanner((v) => !v);
+                    setQrError(null);
+                  }}
+                  disabled={!nearGym}
+                  className="w-full mb-2 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all"
+                  style={{
+                    background: nearGym
+                      ? "hsl(20 100% 50% / 0.12)"
+                      : "hsl(var(--secondary))",
+                    color: nearGym
+                      ? "hsl(20 100% 50%)"
+                      : "hsl(var(--muted-foreground))",
+                    border: `1px solid ${nearGym ? "hsl(20 100% 50% / 0.3)" : "hsl(var(--border))"}`,
+                    cursor: nearGym ? "pointer" : "not-allowed",
+                  }}
+                >
+                  {showQRScanner ? "✕ Close Scanner" : "📷 Scan QR Code"}
+                </button>
+              )}
+
               <Btn
                 variant={checkedToday || !nearGym ? "subtle" : "primary"}
                 size="lg"
@@ -510,6 +614,13 @@ export function CheckIn() {
                         </div>
                       </div>
 
+                      {/* Redemption code — show if type already chosen */}
+                      {r.type && (
+                        <div className="mb-3">
+                          <RedemptionCode code={r.redemptionCode} />
+                        </div>
+                      )}
+
                       {/* Choose reward type */}
                       <div className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">
                         Choose Your Reward
@@ -529,19 +640,24 @@ export function CheckIn() {
                         ].map((choice) => (
                           <button
                             key={choice.val}
-                            onClick={() => setRewardChoice(choice.val)}
+                            onClick={() =>
+                              setRewardChoice((prev) => ({
+                                ...prev,
+                                [id]: choice.val,
+                              }))
+                            }
                             className="py-3 rounded-xl font-bold text-xs border-none cursor-pointer transition-all text-center"
                             style={{
                               background:
-                                rewardChoice === choice.val
+                                rewardChoice[id] === choice.val
                                   ? "hsl(20 100% 50%)"
                                   : "hsl(var(--secondary))",
                               color:
-                                rewardChoice === choice.val
+                                rewardChoice[id] === choice.val
                                   ? "#000"
                                   : "hsl(var(--foreground))",
                               border:
-                                rewardChoice === choice.val
+                                rewardChoice[id] === choice.val
                                   ? "none"
                                   : "1px solid hsl(var(--border))",
                             }}
@@ -554,21 +670,21 @@ export function CheckIn() {
 
                       <button
                         onClick={() => redeemReward(id)}
-                        disabled={!rewardChoice || redeeming}
+                        disabled={!rewardChoice[id] || redeeming}
                         className="w-full py-3 rounded-xl font-bold text-sm border-none cursor-pointer transition-all"
                         style={{
-                          background: rewardChoice
+                          background: rewardChoice[id]
                             ? "hsl(20 100% 50%)"
                             : "hsl(var(--secondary))",
-                          color: rewardChoice
+                          color: rewardChoice[id]
                             ? "#000"
                             : "hsl(var(--muted-foreground))",
-                          cursor: rewardChoice ? "pointer" : "not-allowed",
+                          cursor: rewardChoice[id] ? "pointer" : "not-allowed",
                         }}
                       >
                         {redeeming
                           ? "Redeeming…"
-                          : rewardChoice
+                          : rewardChoice[id]
                             ? "Redeem & Get Code →"
                             : "Select a reward above"}
                       </button>

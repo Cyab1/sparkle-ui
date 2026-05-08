@@ -208,7 +208,22 @@ export function PRLogbook() {
     };
 
     try {
-      await push(ref(db, PR_PATH), prData);
+      // Check if a PR already exists for this user + exercise + level
+      const existing = prs.find(
+        (p) =>
+          p.uid === user.uid &&
+          p.exercise_id === exerciseId &&
+          p.level === level,
+      );
+
+      if (existing) {
+        // Overwrite the existing record
+        await set(ref(db, `${PR_PATH}/${existing.firebaseKey}`), prData);
+      } else {
+        // Create a new record
+        await push(ref(db, PR_PATH), prData);
+      }
+
       setShowModal(false);
       resetForm();
       loadPRs();
@@ -600,7 +615,16 @@ export function PRLogbook() {
                 className="w-full py-3.5 rounded-xl font-body font-bold text-sm text-black border-none cursor-pointer transition-all active:scale-95 disabled:opacity-50"
                 style={{ background: "hsl(20 100% 50%)" }}
               >
-                {saving ? "Saving…" : "🏆 Save Personal Record"}
+                {saving
+                  ? "Saving…"
+                  : prs.some(
+                        (p) =>
+                          p.uid === user?.uid &&
+                          p.exercise_id === exerciseId &&
+                          p.level === level,
+                      )
+                    ? "🔄 Update Personal Record"
+                    : "🏆 Save Personal Record"}
               </button>
             </motion.div>
           </motion.div>

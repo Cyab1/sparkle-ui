@@ -209,10 +209,8 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
           Welcome,{" "}
           <span className="text-primary">{user.name.split(" ")[0]}</span>
         </div>
-        <div className="flex items-center gap-2 mt-1 flex-wrap">
-          <span className="text-muted-foreground text-xs">
-            {user.goal} · {user.level}
-          </span>
+        {/* Badge moved below the name, no longer inline with the subtitle */}
+        <div className="mt-1.5 mb-1">
           <span
             className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
             style={{
@@ -223,6 +221,9 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
           >
             {memberConfig.emoji} {memberConfig.label}
           </span>
+        </div>
+        <div className="text-muted-foreground text-xs">
+          {user.goal} · {user.level}
         </div>
       </div>
 
@@ -476,44 +477,47 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
       </motion.div>
 
       {/* ── My Progress — PR Logbook + Leaderboard ──────────────────────── */}
-      <div
-        className="font-display tracking-wide mt-4 mb-2"
-        style={{ color: "hsl(20 100% 50%)", fontSize: 16 }}
-      >
-        My Progress
-      </div>
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
-        className="grid grid-cols-2 gap-2 mt-2"
+        className="mk2-card"
+        style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
       >
-        {[
-          {
-            label: "PR Logbook",
-            icon: "emoji_events",
-            page: "PRLogbook",
-          },
-          {
-            label: "Leaderboard",
-            icon: "leaderboard",
-            page: "Leaderboard",
-          },
-        ].map((a) => (
-          <button
-            key={a.label}
-            onClick={() => setPage(a.page)}
-            className="bg-card border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
-          >
-            <MI icon={a.icon} size={18} />
-            <span
-              className="font-display tracking-wide text-primary"
-              style={{ fontSize: 14 }}
+        <div
+          className="font-display tracking-wide mb-3"
+          style={{ color: "hsl(20 100% 50%)", fontSize: 15 }}
+        >
+          My Progress
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            {
+              label: "PR Logbook",
+              icon: "emoji_events",
+              page: "PRLogbook",
+            },
+            {
+              label: "Leaderboard",
+              icon: "leaderboard",
+              page: "Leaderboard",
+            },
+          ].map((a) => (
+            <button
+              key={a.label}
+              onClick={() => setPage(a.page)}
+              className="bg-secondary border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
             >
-              {a.label}
-            </span>
-          </button>
-        ))}
+              <MI icon={a.icon} size={18} />
+              <span
+                className="font-display tracking-wide text-primary"
+                style={{ fontSize: 14 }}
+              >
+                {a.label}
+              </span>
+            </button>
+          ))}
+        </div>
       </motion.div>
     </div>
   );

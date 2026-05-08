@@ -14,6 +14,7 @@ const GYM_LAT = -26.073057;
 const GYM_LNG = 27.888273;
 const RADIUS_METERS = 20;
 
+
 function getDistanceMeters(
   lat1: number,
   lng1: number,

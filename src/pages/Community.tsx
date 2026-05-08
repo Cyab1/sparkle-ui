@@ -535,8 +535,9 @@ export function Community() {
         <div
           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pt-5" : "px-6 pt-10"}`}
         >
+          {/* ✅ UPDATED: Page title with "Chat" highlighted */}
           <PageTitle sub="Share wins, ask questions, motivate each other">
-            Community
+            Community <span className="text-primary">Chat</span>
           </PageTitle>
         </div>
       )}
@@ -767,11 +768,12 @@ export function Community() {
                         <div ref={bottomRef} />
                       </div>
 
+                      {/* ✅ UPDATED: Poll creation disabled for members */}
                       <ChatInput
                         text={chatText}
                         setText={setChatText}
                         sendMessage={sendMessage}
-                        createPoll={createPoll}
+                        createPoll={null} // ← Poll button hidden/disabled
                         replyTo={replyTo}
                         setReplyTo={setReplyTo}
                         onFileSelect={handleFileSelect}
@@ -894,14 +896,23 @@ export function Community() {
 // import { logEvent, db, storage } from "@/lib/firebase";
 // import { Btn } from "@/components/shared/Btn";
 // import { PageTitle } from "@/components/shared/PageTitle";
-// import { motion, AnimatePresence } from "framer-motion";
-// import { ref, push, onValue, remove, set, update } from "firebase/database";
+// import { motion } from "framer-motion";
+// import {
+//   ref,
+//   push,
+//   onValue,
+//   remove,
+//   set,
+//   update,
+//   get,
+// } from "firebase/database";
 // import {
 //   ref as storageRef,
 //   uploadBytes,
 //   getDownloadURL,
 // } from "firebase/storage";
 // import imageCompression from "browser-image-compression";
+// import { requestNotificationPermission } from "@/lib/firebase-messaging";
 
 // import ChatHeader from "@/components/ui/ChatHeader";
 // import ChatInput from "@/components/ui/ChatInput";
@@ -930,10 +941,13 @@ export function Community() {
 // }
 
 // const ROOMS = [
-//   { name: "💬 MK2R General", desc: "News, updates & schedules" },
+//   { name: "💬 MK2R General", desc: "News, updates & schedules." },
 //   { name: "🏆 MK2R Competitive Group", desc: "Competition prep & strategy" },
 //   { name: "🔥 MK2R Hyrox", desc: "HYROX training & performance talk" },
-//   { name: "💼 MK2R Business Hub", desc: "Business, partnerships & growth" },
+//   {
+//     name: "💼 MK2R Business Hub",
+//     desc: "Business, partnerships & growth discussions",
+//   },
 // ];
 
 // const SEED_POSTS: FeedPost[] = [
@@ -976,7 +990,7 @@ export function Community() {
 
 //   const [tab, setTab] = useState<"feed" | "chat">("feed");
 
-//   // ── Feed state ────────────────────────────────────────────────────────────
+//   // Feed state
 //   const [posts, setPosts] = useState<FeedPost[]>(SEED_POSTS);
 //   const [feedText, setFeedText] = useState("");
 
@@ -998,7 +1012,7 @@ export function Community() {
 //     toast("Posted! 🙌", "success");
 //   };
 
-//   // ── Chat state ────────────────────────────────────────────────────────────
+//   // Chat state
 //   const [isChatMobile, setIsChatMobile] = useState(window.innerWidth < 768);
 //   const [messages, setMessages] = useState<Message[]>([]);
 //   const [polls, setPolls] = useState<any[]>([]);
@@ -1007,6 +1021,17 @@ export function Community() {
 //   const [joinedRooms, setJoinedRooms] = useState<string[]>([]);
 //   const [menuMsg, setMenuMsg] = useState<any | null>(null);
 //   const [replyTo, setReplyTo] = useState<any | null>(null);
+
+//   // Unread badges & local clear
+//   const [lastSeenMap, setLastSeenMap] = useState<Record<string, number>>({});
+//   const [roomMessageCounts, setRoomMessageCounts] = useState<
+//     Record<string, { latestTs: number; count: number }>
+//   >({});
+//   const [clearedBeforeMap, setClearedBeforeMap] = useState<
+//     Record<string, number>
+//   >({});
+
+//   // Poll form
 //   const [showPollForm, setShowPollForm] = useState(false);
 //   const [editingPoll, setEditingPoll] = useState<any | null>(null);
 //   const [pollQuestion, setPollQuestion] = useState("");
@@ -1019,12 +1044,16 @@ export function Community() {
 //   const menuRef = useRef<HTMLDivElement | null>(null);
 //   const pressTimer = useRef<any>(null);
 
+//   const encodeRoom = (r: string) => encodeURIComponent(r).replace(/\./g, "%2E");
+
+//   // Resize handler
 //   useEffect(() => {
 //     const onResize = () => setIsChatMobile(window.innerWidth < 768);
 //     window.addEventListener("resize", onResize);
 //     return () => window.removeEventListener("resize", onResize);
 //   }, []);
 
+//   // Close menu on outside click
 //   useEffect(() => {
 //     const onClick = (e: any) => {
 //       if (menuRef.current && !menuRef.current.contains(e.target))
@@ -1034,6 +1063,18 @@ export function Community() {
 //     return () => document.removeEventListener("mousedown", onClick);
 //   }, []);
 
+//   // Notification permission (Community‑scoped) – uses mk2_users path
+//   useEffect(() => {
+//     if (!uid || uid === "guest") return;
+//     const prefRef = ref(db, `mk2_users/${uid}/notificationPrefs/community`);
+//     get(prefRef).then((snap) => {
+//       if (snap.val() === true) {
+//         requestNotificationPermission(uid);
+//       }
+//     });
+//   }, [uid]);
+
+//   // Joined rooms – keep mk2_users path
 //   useEffect(() => {
 //     if (!canChat) return;
 //     return onValue(ref(db, `mk2_users/${uid}/joinedRooms`), (snap) => {
@@ -1041,20 +1082,84 @@ export function Community() {
 //     });
 //   }, [uid, canChat]);
 
+//   // Load lastSeen timestamps – mk2_users
+//   useEffect(() => {
+//     if (!canChat) return;
+//     return onValue(ref(db, `mk2_users/${uid}/roomLastSeen`), (snap) => {
+//       setLastSeenMap(snap.val() || {});
+//     });
+//   }, [uid, canChat]);
+
+//   // Load clearedBefore – mk2_users
+//   useEffect(() => {
+//     if (!canChat) return;
+//     return onValue(ref(db, `mk2_users/${uid}/clearedBefore`), (snap) => {
+//       setClearedBeforeMap(snap.val() || {});
+//     });
+//   }, [uid, canChat]);
+
+//   // Track unread counts for all joined rooms
+//   useEffect(() => {
+//     if (!canChat || joinedRooms.length === 0) return;
+//     const unsubs: (() => void)[] = [];
+//     joinedRooms.forEach((roomName) => {
+//       const unsub = onValue(ref(db, `rooms/${roomName}/messages`), (snap) => {
+//         const data = snap.val();
+//         if (!data) {
+//           setRoomMessageCounts((prev) => ({
+//             ...prev,
+//             [roomName]: { latestTs: 0, count: 0 },
+//           }));
+//           return;
+//         }
+//         const msgs = Object.values(data) as any[];
+//         const latestTs = Math.max(...msgs.map((m) => m.createdAt || 0));
+//         const key = encodeRoom(roomName);
+//         const lastSeen = lastSeenMap[key] || 0;
+//         const clearedBefore = clearedBeforeMap[key] || 0;
+//         const count = msgs.filter(
+//           (m) =>
+//             m.createdAt > lastSeen &&
+//             m.uid !== uid &&
+//             m.createdAt > clearedBefore,
+//         ).length;
+//         setRoomMessageCounts((prev) => ({
+//           ...prev,
+//           [roomName]: { latestTs, count },
+//         }));
+//       });
+//       unsubs.push(unsub);
+//     });
+//     return () => unsubs.forEach((u) => u());
+//   }, [joinedRooms, lastSeenMap, clearedBeforeMap, uid, canChat]);
+
+//   // Mark room as seen when opened – mk2_users
+//   useEffect(() => {
+//     if (!room || !joinedRooms.includes(room)) return;
+//     const key = encodeRoom(room);
+//     const now = Date.now();
+//     set(ref(db, `mk2_users/${uid}/roomLastSeen/${key}`), now);
+//     setLastSeenMap((prev) => ({ ...prev, [key]: now }));
+//   }, [room, joinedRooms, uid]);
+
+//   // Messages – with clearedBefore filtering
 //   useEffect(() => {
 //     setMessages([]);
 //     if (!room || !joinedRooms.includes(room)) return;
 //     return onValue(ref(db, `rooms/${room}/messages`), (snap) => {
 //       const data = snap.val();
 //       if (!data) return setMessages([]);
-//       const formatted: Message[] = Object.entries(data).map(([id, v]: any) => ({
-//         id,
-//         ...v,
-//       }));
-//       formatted.forEach((msg: any) => {
-//         if (msg.expiresAt && Date.now() > msg.expiresAt)
-//           remove(ref(db, `rooms/${room}/messages/${msg.id}`));
-//       });
+//       const key = encodeRoom(room);
+//       const clearedBefore = clearedBeforeMap[key] || 0;
+//       const formatted: Message[] = Object.entries(data)
+//         .map(([id, v]: any) => ({ id, ...v }))
+//         .filter((msg: any) => {
+//           if (msg.expiresAt && Date.now() > msg.expiresAt) {
+//             remove(ref(db, `rooms/${room}/messages/${msg.id}`));
+//             return false;
+//           }
+//           return msg.createdAt > clearedBefore;
+//         });
 //       formatted.sort((a, b) => a.createdAt - b.createdAt);
 //       setMessages(formatted);
 //       setTimeout(
@@ -1062,25 +1167,90 @@ export function Community() {
 //         100,
 //       );
 //     });
-//   }, [room, joinedRooms]);
+//   }, [room, joinedRooms, clearedBeforeMap]);
 
+//   // Polls – with clearedBefore filtering
 //   useEffect(() => {
 //     if (!room || !joinedRooms.includes(room)) return;
 //     return onValue(ref(db, `rooms/${room}/polls`), (snap) => {
+//       const key = encodeRoom(room);
+//       const clearedBefore = clearedBeforeMap[key] || 0;
 //       const formatted = Object.entries(snap.val() || {})
 //         .map(([id, val]: any) => ({ id, ...val, type: "poll" }))
+//         .filter((p: any) => p.createdAt > clearedBefore)
 //         .sort((a, b) => a.createdAt - b.createdAt);
 //       setPolls(formatted);
 //     });
-//   }, [room, joinedRooms]);
+//   }, [room, joinedRooms, clearedBeforeMap]);
 
+//   // Video compression (same as teammate’s)
+//   const compressVideo = (file: File, targetBytes: number): Promise<File> => {
+//     return new Promise((resolve) => {
+//       if (file.size <= targetBytes) {
+//         resolve(file);
+//         return;
+//       }
+//       const video = document.createElement("video");
+//       const canvas = document.createElement("canvas");
+//       const ctx = canvas.getContext("2d")!;
+//       const url = URL.createObjectURL(file);
+//       video.src = url;
+//       video.muted = true;
+//       video.onloadedmetadata = () => {
+//         const scale = Math.min(1, Math.sqrt(targetBytes / file.size));
+//         canvas.width = Math.floor(video.videoWidth * scale);
+//         canvas.height = Math.floor(video.videoHeight * scale);
+//         const stream = canvas.captureStream(24);
+//         const recorder = new MediaRecorder(stream, {
+//           mimeType: "video/webm;codecs=vp8",
+//           videoBitsPerSecond: 800_000,
+//         });
+//         const chunks: BlobPart[] = [];
+//         recorder.ondataavailable = (e) => chunks.push(e.data);
+//         recorder.onstop = () => {
+//           const blob = new Blob(chunks, { type: "video/webm" });
+//           const compressed = new File(
+//             [blob],
+//             file.name.replace(/\.[^.]+$/, ".webm"),
+//             { type: "video/webm" },
+//           );
+//           URL.revokeObjectURL(url);
+//           resolve(compressed);
+//         };
+//         video.play();
+//         recorder.start();
+//         video.ontimeupdate = () => {
+//           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+//         };
+//         video.onended = () => recorder.stop();
+//       };
+//     });
+//   };
+
+//   // ── Chat actions ──────────────────────────────────────────────────────────
 //   const joinRoom = async () => {
 //     if (room) await set(ref(db, `mk2_users/${uid}/joinedRooms/${room}`), true);
 //   };
+
 //   const leaveRoom = async () => {
 //     if (!room || !confirm("Leave this room?")) return;
 //     await remove(ref(db, `mk2_users/${uid}/joinedRooms/${room}`));
 //     setRoom(null);
+//   };
+
+//   // Local clear – mk2_users
+//   const clearRoomLocally = async () => {
+//     if (
+//       !room ||
+//       !confirm(
+//         "Clear this room from your view? Other members won't be affected.",
+//       )
+//     )
+//       return;
+//     const key = encodeRoom(room);
+//     const now = Date.now();
+//     await set(ref(db, `mk2_users/${uid}/clearedBefore/${key}`), now);
+//     setClearedBeforeMap((prev) => ({ ...prev, [key]: now }));
 //   };
 
 //   const sendMessage = async () => {
@@ -1096,9 +1266,13 @@ export function Community() {
 //     setReplyTo(null);
 //   };
 
-//   const deleteMessage = async (msg: Message) => {
+//   const deleteMessage = async (msg: any) => {
 //     if (!confirm("Delete message?")) return;
-//     await remove(ref(db, `rooms/${room}/messages/${msg.id}`));
+//     if (msg.type === "poll") {
+//       await remove(ref(db, `rooms/${room}/polls/${msg.id}`));
+//     } else {
+//       await remove(ref(db, `rooms/${room}/messages/${msg.id}`));
+//     }
 //     setMenuMsg(null);
 //   };
 
@@ -1139,14 +1313,6 @@ export function Community() {
 //   const handleFileSelect = async (file: File) => {
 //     try {
 //       if (!file || !room || !joinedRooms.includes(room)) return;
-//       if (file.type.startsWith("image") && file.size > 2 * 1024 * 1024) {
-//         alert("Image too large (max 2 MB)");
-//         return;
-//       }
-//       if (file.type.startsWith("video") && file.size > 10 * 1024 * 1024) {
-//         alert("Video too large (max 10 MB)");
-//         return;
-//       }
 //       const fileType = file.type.startsWith("image")
 //         ? "image"
 //         : file.type.startsWith("video")
@@ -1156,11 +1322,24 @@ export function Community() {
 //         alert("Only images and videos allowed");
 //         return;
 //       }
-//       if (file.type.startsWith("image"))
+//       if (fileType === "image") {
 //         file = await imageCompression(file, {
 //           maxSizeMB: 1,
 //           maxWidthOrHeight: 1024,
+//           useWebWorker: true,
 //         });
+//         if (file.size > 2 * 1024 * 1024) {
+//           alert("Image still too large after compression (max 2 MB)");
+//           return;
+//         }
+//       }
+//       if (fileType === "video") {
+//         file = await compressVideo(file, 10 * 1024 * 1024);
+//         if (file.size > 10 * 1024 * 1024) {
+//           alert("Video still too large after compression (max 10 MB)");
+//           return;
+//         }
+//       }
 //       const path = `chatFiles/${uid}/${Date.now()}_${file.name}`;
 //       const fileRef = storageRef(storage, path);
 //       await uploadBytes(fileRef, file);
@@ -1228,18 +1407,22 @@ export function Community() {
 //     return d.toLocaleDateString();
 //   };
 
+//   const totalUnread = joinedRooms.reduce(
+//     (sum, r) => sum + (roomMessageCounts[r]?.count || 0),
+//     0,
+//   );
 //   const isJoined = !!(room && joinedRooms.includes(room));
 //   let lastDateRef = { value: "" };
 
 //   return (
 //     <div
-//       className={`${tab === "chat" ? "h-screen flex flex-col overflow-hidden" : ""}`}
-//       style={{
-//         background: tab === "chat" ? "hsl(var(--background))" : undefined,
-//         color: "hsl(var(--foreground))",
-//       }}
+//       className={
+//         tab === "chat"
+//           ? "h-screen flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-200"
+//           : ""
+//       }
 //     >
-//       {/* ── Page header — feed only ─────────────────────────────────────── */}
+//       {/* Feed header */}
 //       {tab === "feed" && (
 //         <div
 //           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pt-5" : "px-6 pt-10"}`}
@@ -1250,64 +1433,58 @@ export function Community() {
 //         </div>
 //       )}
 
-//       {/* ── Tab switcher ───────────────────────────────────────────────── */}
+//       {/* Tab switcher */}
 //       <div
 //         className={`${
 //           tab === "chat"
-//             ? "px-4 pt-4 pb-2"
+//             ? "px-4 pt-3 pb-2"
 //             : `max-w-[760px] mx-auto ${isMobile ? "px-3.5" : "px-6"}`
-//         } mb-4`}
+//         } mb-3`}
 //       >
-//         <div
-//           className="flex gap-1.5 p-1 rounded-xl w-fit"
-//           style={{ background: "hsl(var(--secondary))" }}
-//         >
-//           {[
-//             { id: "feed", label: "📣 Feed" },
-//             { id: "chat", label: `💬 Chat Rooms${!canChat ? " 🔒" : ""}` },
-//           ].map((t) => (
-//             <button
-//               key={t.id}
-//               onClick={() => {
-//                 if (t.id === "chat" && !canChat) {
-//                   toast("Upgrade to Gold to unlock Chat Rooms 🔒", "error");
-//                   return;
-//                 }
-//                 setTab(t.id as any);
-//               }}
-//               className="px-5 py-2 rounded-lg text-sm font-bold transition-all border-none cursor-pointer font-body"
-//               style={{
-//                 background: tab === t.id ? "hsl(20 100% 50%)" : "transparent",
-//                 color: tab === t.id ? "#000" : "hsl(var(--muted-foreground))",
-//               }}
-//             >
-//               {t.label}
-//             </button>
-//           ))}
+//         <div className="flex gap-2 bg-muted p-1 rounded-xl w-fit">
+//           <button
+//             onClick={() => setTab("feed")}
+//             className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+//               tab === "feed"
+//                 ? "bg-primary text-primary-foreground"
+//                 : "text-muted-foreground hover:text-foreground"
+//             }`}
+//           >
+//             📣 Feed
+//           </button>
+//           <button
+//             onClick={() => {
+//               if (!canChat) {
+//                 toast("Upgrade to Gold to unlock Chat Rooms 🔒", "error");
+//                 return;
+//               }
+//               setTab("chat");
+//             }}
+//             className={`relative px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
+//               tab === "chat"
+//                 ? "bg-primary text-primary-foreground"
+//                 : "text-muted-foreground hover:text-foreground"
+//             }`}
+//           >
+//             💬 Chat Rooms {!canChat && "🔒"}
+//             {canChat && totalUnread > 0 && (
+//               <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
+//                 {totalUnread > 99 ? "99+" : totalUnread}
+//               </span>
+//             )}
+//           </button>
 //         </div>
 //       </div>
 
-//       {/* ══════════════════════════════════════════════════════════════════ */}
-//       {/* FEED TAB                                                          */}
-//       {/* ══════════════════════════════════════════════════════════════════ */}
+//       {/* FEED TAB */}
 //       {tab === "feed" && (
 //         <div
 //           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pb-5" : "px-6 pb-10"}`}
 //         >
-//           {/* Post composer */}
-//           <div className="mk2-card mb-5">
-//             <div className="flex items-center gap-3 mb-3">
-//               <div
-//                 className="w-9 h-9 rounded-full flex items-center justify-center font-display text-sm shrink-0 text-black"
-//                 style={{ background: user.color }}
-//               >
-//                 {user.name[0]}
-//               </div>
-//               <div className="text-sm font-bold">{user.name}</div>
-//             </div>
+//           <div className="mk2-card mb-4">
+//             <label className="mk2-label">Share with the MK2 Community</label>
 //             <textarea
-//               className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-sm outline-none resize-none font-body focus:border-primary/40 transition-colors mb-3"
-//               rows={3}
+//               className="mk2-textarea mb-3"
 //               placeholder="Share a win, ask a question, motivate someone…"
 //               value={feedText}
 //               onChange={(e) => setFeedText(e.target.value)}
@@ -1317,7 +1494,6 @@ export function Community() {
 //             </Btn>
 //           </div>
 
-//           {/* Posts */}
 //           <div className="flex flex-col gap-3.5">
 //             {posts.map((p, i) => (
 //               <motion.div
@@ -1327,9 +1503,9 @@ export function Community() {
 //                 transition={{ delay: i * 0.06 }}
 //                 className="mk2-card"
 //               >
-//                 <div className="flex items-center gap-2.5 mb-3">
+//                 <div className="flex items-center gap-2.5 mb-2.5">
 //                   <div
-//                     className="w-9 h-9 rounded-full flex items-center justify-center font-display text-sm text-black shrink-0"
+//                     className="w-9 h-9 rounded-full flex items-center justify-center font-display text-[15px] text-primary-foreground shrink-0"
 //                     style={{ background: p.color }}
 //                   >
 //                     {p.author[0]}
@@ -1341,9 +1517,9 @@ export function Community() {
 //                     </div>
 //                   </div>
 //                 </div>
-//                 <p className="text-sm leading-relaxed mb-3 text-foreground/80">
+//                 <div className="text-sm leading-relaxed mb-3 text-foreground/80">
 //                   {p.text}
-//                 </p>
+//                 </div>
 //                 <button
 //                   onClick={() =>
 //                     setPosts(
@@ -1352,12 +1528,7 @@ export function Community() {
 //                       ),
 //                     )
 //                   }
-//                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold cursor-pointer transition-all border font-body"
-//                   style={{
-//                     background: "transparent",
-//                     borderColor: "hsl(var(--border))",
-//                     color: "hsl(var(--muted-foreground))",
-//                   }}
+//                   className="bg-transparent border border-border rounded-full px-3.5 py-1 text-muted-foreground text-xs cursor-pointer font-body font-semibold hover:border-primary/40 hover:text-primary transition-colors"
 //                 >
 //                   ❤️ {p.likes}
 //                 </button>
@@ -1367,74 +1538,63 @@ export function Community() {
 //         </div>
 //       )}
 
-//       {/* ══════════════════════════════════════════════════════════════════ */}
-//       {/* CHAT TAB                                                          */}
-//       {/* ══════════════════════════════════════════════════════════════════ */}
+//       {/* CHAT TAB */}
 //       {tab === "chat" && canChat && (
 //         <div className="flex flex-1 min-h-0 overflow-hidden">
-//           {/* ── Sidebar ──────────────────────────────────────────────────── */}
+//           {/* Sidebar */}
 //           {(!isChatMobile || !room) && (
-//             <div
-//               className="flex flex-col w-full md:w-[280px] overflow-y-auto p-4"
-//               style={{ borderRight: "1px solid hsl(var(--border))" }}
-//             >
-//               {/* Sidebar header */}
-//               <div className="flex items-center gap-3 mb-5">
-//                 <div
-//                   className="w-10 h-10 rounded-xl flex items-center justify-center text-xl text-black font-bold"
-//                   style={{ background: "hsl(20 100% 50%)" }}
-//                 >
+//             <div className="flex flex-col w-full md:w-[300px] border-r border-border bg-card p-4 overflow-y-auto transition-colors duration-200">
+//               <div className="flex items-center gap-3 mb-6">
+//                 <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-xl">
 //                   💬
 //                 </div>
 //                 <div>
-//                   <div className="font-bold text-sm">Chat Rooms</div>
-//                   <div className="text-[11px] text-muted-foreground">
-//                     {username}
-//                   </div>
+//                   <h2 className="text-lg font-bold text-foreground">
+//                     Chat Rooms
+//                   </h2>
+//                   <p className="text-xs text-muted-foreground">
+//                     Logged in as {username}
+//                   </p>
 //                 </div>
 //               </div>
 
-//               {/* Joined rooms */}
 //               {joinedRooms.length > 0 && (
 //                 <>
-//                   <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground mb-2">
+//                   <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wider">
 //                     My Rooms
-//                   </div>
+//                   </p>
 //                   {ROOMS.filter((r) => joinedRooms.includes(r.name)).map(
 //                     (r) => (
 //                       <RoomCard
 //                         key={r.name}
 //                         room={r}
 //                         active={room === r.name}
+//                         unreadCount={roomMessageCounts[r.name]?.count || 0}
 //                         onClick={() => setRoom(r.name)}
 //                       />
 //                     ),
 //                   )}
-//                   <div
-//                     className="my-3"
-//                     style={{ height: 1, background: "hsl(var(--border))" }}
-//                   />
 //                 </>
 //               )}
 
-//               {/* Discover rooms */}
-//               <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground mb-2">
+//               <p className="text-xs text-muted-foreground mt-4 mb-2 uppercase tracking-wider">
 //                 Discover
-//               </div>
+//               </p>
 //               {ROOMS.filter((r) => !joinedRooms.includes(r.name)).map((r) => (
 //                 <RoomCard
 //                   key={r.name}
 //                   room={r}
 //                   active={false}
+//                   unreadCount={0}
 //                   onClick={() => setRoom(r.name)}
 //                 />
 //               ))}
 //             </div>
 //           )}
 
-//           {/* ── Chat panel ───────────────────────────────────────────────── */}
+//           {/* Chat panel */}
 //           {(!isChatMobile || room) && (
-//             <div className="flex-1 flex flex-col min-h-0">
+//             <div className="flex-1 flex flex-col min-h-0 bg-background transition-colors duration-200">
 //               {room ? (
 //                 <>
 //                   <ChatHeader
@@ -1442,39 +1602,24 @@ export function Community() {
 //                     isJoined={isJoined}
 //                     onBack={() => setRoom(null)}
 //                     onLeave={leaveRoom}
-//                     onClear={() => {
-//                       if (confirm("Clear all messages in this room?"))
-//                         remove(ref(db, `rooms/${room}/messages`));
-//                     }}
+//                     onClear={clearRoomLocally}
 //                   />
 
 //                   {!isJoined ? (
 //                     <div className="flex flex-col items-center justify-center flex-1 gap-4">
-//                       <div className="text-4xl">💬</div>
-//                       <div className="font-bold text-sm">
+//                       <p className="text-muted-foreground">
 //                         Join this room to chat
-//                       </div>
-//                       <p className="text-xs text-muted-foreground text-center max-w-[240px]">
-//                         Connect with other MK2R members in this room
 //                       </p>
 //                       <button
 //                         onClick={joinRoom}
-//                         className="px-8 py-3 rounded-xl font-bold text-sm border-none cursor-pointer"
-//                         style={{
-//                           background: "hsl(20 100% 50%)",
-//                           color: "#000",
-//                         }}
+//                         className="bg-primary px-8 py-3 rounded-xl text-primary-foreground font-bold"
 //                       >
-//                         Join Room →
+//                         Join Room
 //                       </button>
 //                     </div>
 //                   ) : (
 //                     <>
-//                       {/* Messages */}
-//                       <div
-//                         className="flex-1 overflow-y-auto p-4 min-h-0"
-//                         style={{ background: "hsl(var(--background))" }}
-//                       >
+//                       <div className="flex-1 overflow-y-auto p-4 min-h-0 bg-background transition-colors duration-200">
 //                         {[...messages, ...polls]
 //                           .sort((a, b) => a.createdAt - b.createdAt)
 //                           .map((item: any) => {
@@ -1485,12 +1630,7 @@ export function Community() {
 //                             return (
 //                               <div key={item.id}>
 //                                 {showDate && (
-//                                   <div
-//                                     className="text-center text-[11px] font-bold my-4 uppercase tracking-widest"
-//                                     style={{
-//                                       color: "hsl(var(--muted-foreground))",
-//                                     }}
-//                                   >
+//                                   <div className="text-center text-xs text-muted-foreground my-3">
 //                                     {date}
 //                                   </div>
 //                                 )}
@@ -1532,12 +1672,9 @@ export function Community() {
 //                   )}
 //                 </>
 //               ) : (
-//                 <div className="flex flex-col items-center justify-center flex-1 gap-3">
-//                   <div className="text-5xl">💬</div>
-//                   <div className="font-bold text-sm">Select a room</div>
-//                   <p className="text-xs text-muted-foreground">
-//                     Choose a room from the sidebar to start chatting
-//                   </p>
+//                 <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground">
+//                   <div className="text-5xl mb-4">💬</div>
+//                   <p>Select a room to start chatting</p>
 //                 </div>
 //               )}
 //             </div>
@@ -1545,35 +1682,8 @@ export function Community() {
 //         </div>
 //       )}
 
-//       {/* ── Gold gate ──────────────────────────────────────────────────── */}
-//       {tab === "chat" && !canChat && (
-//         <div
-//           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pb-10" : "px-6 pb-10"}`}
-//         >
-//           <div
-//             className="mk2-card text-center py-12"
-//             style={{ borderTop: "3px solid hsl(38 92% 50%)" }}
-//           >
-//             <div className="text-5xl mb-4">🔒</div>
-//             <div
-//               className="font-display text-xl mb-2"
-//               style={{ color: "hsl(38 92% 50%)" }}
-//             >
-//               Gold Members Only
-//             </div>
-//             <p className="text-sm text-muted-foreground mb-5 max-w-[300px] mx-auto leading-relaxed">
-//               Chat Rooms are exclusive to Gold members. Upgrade to join the
-//               conversation, share files, and connect with the MK2R community.
-//             </p>
-//             <Btn variant="primary" onClick={() => {}}>
-//               Upgrade to Gold →
-//             </Btn>
-//           </div>
-//         </div>
-//       )}
-
-//       {/* ── Context menu ───────────────────────────────────────────────── */}
-//       {menuMsg && (
+//       {/* Context menu – only for own messages */}
+//       {menuMsg && menuMsg.uid === uid && (
 //         <MessageMenu
 //           ref={menuRef}
 //           onEdit={() => {
@@ -1602,107 +1712,70 @@ export function Community() {
 //         />
 //       )}
 
-//       {/* ── Poll modal ─────────────────────────────────────────────────── */}
-//       <AnimatePresence>
-//         {showPollForm && (
-//           <motion.div
-//             initial={{ opacity: 0 }}
-//             animate={{ opacity: 1 }}
-//             exit={{ opacity: 0 }}
-//             className="fixed inset-0 flex items-center justify-center z-50 p-4"
-//             style={{ background: "rgba(0,0,0,0.7)" }}
-//           >
-//             <motion.div
-//               initial={{ scale: 0.95, y: 10 }}
-//               animate={{ scale: 1, y: 0 }}
-//               exit={{ scale: 0.95, y: 10 }}
-//               className="w-full max-w-md rounded-2xl p-6"
-//               style={{
-//                 background: "hsl(var(--card))",
-//                 border: "1px solid hsl(var(--border))",
-//               }}
-//             >
-//               <div className="flex justify-between items-center mb-5">
-//                 <div className="font-bold text-base">
-//                   {editingPoll ? "Edit Poll" : "Create Poll"}
-//                 </div>
-//                 <button
-//                   onClick={() => setShowPollForm(false)}
-//                   className="text-muted-foreground bg-transparent border-none cursor-pointer text-lg"
-//                 >
-//                   ✕
-//                 </button>
-//               </div>
-
-//               <div className="mb-3">
-//                 <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground block mb-1.5">
-//                   Question
-//                 </label>
-//                 <input
-//                   value={pollQuestion}
-//                   onChange={(e) => setPollQuestion(e.target.value)}
-//                   placeholder="What do you want to ask?"
-//                   className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-sm outline-none font-body focus:border-primary/40"
-//                 />
-//               </div>
-
-//               <div className="mb-4">
-//                 <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground block mb-1.5">
-//                   Options (comma separated)
-//                 </label>
-//                 <input
-//                   placeholder="Option 1, Option 2, Option 3"
-//                   defaultValue={pollOptions.join(", ")}
-//                   onChange={(e) => setPollOptions(e.target.value.split(","))}
-//                   className="w-full bg-secondary border border-border rounded-xl px-4 py-3 text-sm outline-none font-body focus:border-primary/40"
-//                 />
-//               </div>
-
-//               <div className="mb-5">
-//                 <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground block mb-1.5">
-//                   Duration
-//                 </label>
-//                 <div className="grid grid-cols-3 gap-2">
-//                   {[
-//                     { label: "Hours", value: pollHours, setter: setPollHours },
-//                     {
-//                       label: "Minutes",
-//                       value: pollMinutes,
-//                       setter: setPollMinutes,
-//                     },
-//                     {
-//                       label: "Seconds",
-//                       value: pollSeconds,
-//                       setter: setPollSeconds,
-//                     },
-//                   ].map(({ label, value, setter }) => (
-//                     <div key={label} className="text-center">
-//                       <input
-//                         type="number"
-//                         min={0}
-//                         value={value}
-//                         onChange={(e) => setter(Number(e.target.value))}
-//                         className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-center text-sm outline-none font-body"
-//                       />
-//                       <div className="text-[10px] text-muted-foreground mt-1">
-//                         {label}
-//                       </div>
-//                     </div>
-//                   ))}
-//                 </div>
-//               </div>
-
+//       {/* Poll modal */}
+//       {showPollForm && (
+//         <div className="fixed inset-0 bg-foreground/40 flex items-center justify-center z-50 p-4">
+//           <div className="bg-card text-foreground p-6 rounded-2xl w-full max-w-md shadow-xl border border-border transition-colors duration-200">
+//             <div className="flex justify-between items-center mb-4">
+//               <h2 className="text-xl font-bold text-foreground">
+//                 {editingPoll ? "Edit Poll" : "Create Poll"}
+//               </h2>
 //               <button
-//                 onClick={savePoll}
-//                 className="w-full py-3 rounded-xl font-bold text-sm border-none cursor-pointer font-body"
-//                 style={{ background: "hsl(20 100% 50%)", color: "#000" }}
+//                 onClick={() => setShowPollForm(false)}
+//                 className="text-muted-foreground hover:text-foreground transition-colors"
 //               >
-//                 {editingPoll ? "Save Changes" : "Create Poll →"}
+//                 ✖
 //               </button>
-//             </motion.div>
-//           </motion.div>
-//         )}
-//       </AnimatePresence>
+//             </div>
+
+//             <input
+//               value={pollQuestion}
+//               onChange={(e) => setPollQuestion(e.target.value)}
+//               placeholder="What do you want to ask?"
+//               className="w-full mb-3 p-3 rounded-lg bg-background text-foreground border border-border placeholder:text-muted-foreground transition-colors duration-200"
+//             />
+//             <input
+//               placeholder="Option 1, Option 2, Option 3"
+//               defaultValue={pollOptions.join(", ")}
+//               onChange={(e) => setPollOptions(e.target.value.split(","))}
+//               className="w-full mb-3 p-3 rounded-lg bg-background text-foreground border border-border placeholder:text-muted-foreground transition-colors duration-200"
+//             />
+
+//             <div className="mb-4">
+//               <p className="text-sm text-muted-foreground mb-2">
+//                 Poll duration
+//               </p>
+//               <div className="flex gap-3">
+//                 {[
+//                   { label: "hrs", value: pollHours, setter: setPollHours },
+//                   { label: "min", value: pollMinutes, setter: setPollMinutes },
+//                   { label: "sec", value: pollSeconds, setter: setPollSeconds },
+//                 ].map(({ label, value, setter }) => (
+//                   <div key={label} className="flex-1 text-center">
+//                     <input
+//                       type="number"
+//                       min={0}
+//                       value={value}
+//                       onChange={(e) => setter(Number(e.target.value))}
+//                       className="w-full p-3 rounded-lg bg-background text-foreground border border-border text-center placeholder:text-muted-foreground transition-colors duration-200"
+//                     />
+//                     <p className="text-xs text-muted-foreground mt-1">
+//                       {label}
+//                     </p>
+//                   </div>
+//                 ))}
+//               </div>
+//             </div>
+
+//             <button
+//               onClick={savePoll}
+//               className="w-full bg-primary py-3 rounded-xl text-primary-foreground font-bold hover:opacity-90 transition-opacity"
+//             >
+//               {editingPoll ? "Save Changes" : "Create Poll"}
+//             </button>
+//           </div>
+//         </div>
+//       )}
 //     </div>
 //   );
 // }

@@ -31,12 +31,11 @@ export interface MK2User {
   gender?: "male" | "female";
   termsAcceptedAt?: number;
   termsVersion?: string;
-  classCredits: number; // 👈 added
-  lastGoldTopUp?: string; // 👈 added (optional for existing users)
-  aiCredits: Record<string, number>;  
+  classCredits: number;
+  lastGoldTopUp?: string;
+  aiCredits: Record<string, number>;
 }
 
-// Ensures arrays are never undefined — fixes "Cannot read filter of length"
 const normalizeUser = (data: any): MK2User => ({
   ...data,
   workouts: Array.isArray(data.workouts) ? data.workouts : [],
@@ -45,11 +44,17 @@ const normalizeUser = (data: any): MK2User => ({
   checkIns: Array.isArray(data.checkIns) ? data.checkIns : [],
   points: data.points ?? 0,
   createdAt: data.createdAt ?? Date.now(),
-  membership: data.membership ?? "basic", // changed to "basic"
-  classCredits: data.classCredits ?? 0, // 👈 added, default 0
-  lastGoldTopUp: data.lastGoldTopUp ?? undefined, // 👈 added
+  membership: data.membership ?? "basic",
+  classCredits: data.classCredits ?? 0,
+  lastGoldTopUp: data.lastGoldTopUp ?? undefined,
   gender: data.gender ?? undefined,
 });
+
+interface ToastData {
+  msg: string;
+  type: string;
+  onTap?: () => void;
+}
 
 interface AuthContextType {
   user: MK2User | null;
@@ -57,8 +62,12 @@ interface AuthContextType {
   setUser: (user: MK2User | null) => void;
   updateUser: (user: MK2User) => Promise<void>;
   logout: () => Promise<void>;
-  toast: (msg: string, type?: "success" | "error" | "info") => void;
-  toastData: { msg: string; type: string } | null;
+  toast: (
+    msg: string,
+    type?: "success" | "error" | "info",
+    onTap?: () => void,
+  ) => void;
+  toastData: ToastData | null;
   clearToast: () => void;
 }
 
@@ -67,10 +76,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<MK2User | null>(null);
   const [booting, setBooting] = useState(true);
-  const [toastData, setToastData] = useState<{
-    msg: string;
-    type: string;
-  } | null>(null);
+  const [toastData, setToastData] = useState<ToastData | null>(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
@@ -97,9 +103,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  const toast = useCallback((msg: string, type: string = "info") => {
-    setToastData({ msg, type });
-  }, []);
+  const toast = useCallback(
+    (msg: string, type: string = "info", onTap?: () => void) => {
+      setToastData({ msg, type, onTap });
+    },
+    [],
+  );
 
   const clearToast = useCallback(() => setToastData(null), []);
 

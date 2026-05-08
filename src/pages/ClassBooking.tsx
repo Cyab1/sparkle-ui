@@ -591,7 +591,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         sub={
           isMember
             ? "Book your classes below"
-            : "Members book free · Non-members pay per class"
+            : "Non-members pay per class · Upgrade to unlock unlimited bookings"
         }
       >
         Class <span className="text-primary">Booking</span>
@@ -609,7 +609,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
           <div>
             <div className="font-bold text-sm">💪 Pay per class</div>
             <div className="text-xs text-muted-foreground mt-0.5">
-              Members book all classes free. Non-members pay per session via
+              Members book all classes · Non-members pay per session via
               PayFast.
             </div>
           </div>
@@ -705,10 +705,10 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
               : isPassed
                 ? "Class Passed"
                 : isMember
-                  ? "Book "
+                  ? "Book"
                   : chargeable
                     ? `Pay R${Number(cls.price).toFixed(0)} →`
-                    : "Book ";
+                    : "Book";
 
             const handleBook = () => {
               if (isMember || !chargeable) {

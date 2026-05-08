@@ -29,7 +29,6 @@ const mkEx = (cat: Category, name: string, mt: MeasurementType): Exercise => ({
 });
 
 export const EXERCISES: Exercise[] = [
-  // Weightlifting — measured in kg
   ...[
     "Back Squat",
     "Front Squat",
@@ -50,7 +49,6 @@ export const EXERCISES: Exercise[] = [
     "Clean & Jerk",
     "Thruster",
   ].map((n) => mkEx("Weightlifting", n, "kg")),
-  // Gymnastics — measured in reps
   ...[
     "Pull-Ups",
     "Chest-to-Bar",
@@ -64,7 +62,6 @@ export const EXERCISES: Exercise[] = [
     "Rope Climbs",
     "L-Sit",
   ].map((n) => mkEx("Gymnastics", n, "reps")),
-  // MetCon — measured in time
   ...[
     "Fran",
     "Murph",
@@ -75,22 +72,18 @@ export const EXERCISES: Exercise[] = [
     "Annie",
     "Karen",
   ].map((n) => mkEx("MetCon", n, "time")),
-  // Cardio — Assault Bike (time)
   ...[
     "Assault Bike - 10cal",
     "Assault Bike - 20cal",
     "Assault Bike - 50cal",
     "Assault Bike - 100cal",
   ].map((n) => mkEx("Cardio", n, "time")),
-  // Cardio — Ski (time)
   ...["Ski - 250m", "Ski - 500m", "Ski - 1km", "Ski - 2km", "Ski - 5km"].map(
     (n) => mkEx("Cardio", n, "time"),
   ),
-  // Cardio — Row (time)
   ...["Row - 500m", "Row - 1km", "Row - 2km", "Row - 5km", "Row - 10km"].map(
     (n) => mkEx("Cardio", n, "time"),
   ),
-  // Cardio — Run (time)
   ...[
     "Run - 400m",
     "Run - 800m",
@@ -117,7 +110,6 @@ function getExercisesByCategory(cat: Category) {
 function getExerciseById(id: string) {
   return EXERCISES.find((e) => e.exercise_id === id);
 }
-
 function getParentName(name: string): string {
   const i = name.indexOf(" - ");
   return i > -1 ? name.substring(0, i) : name;
@@ -148,25 +140,6 @@ function hasVariants(cat: Category, parent: string): boolean {
     v.length > 1 || (v.length === 1 && getVariantLabel(v[0].name) !== null)
   );
 }
-
-// ── Unit helpers ──────────────────────────────────────────────────────────────
-/** Returns the display unit suffix for a given measurement type */
-function unitSuffix(mt: MeasurementType, storedUnit?: string): string {
-  if (mt === "reps") return " reps";
-  if (mt === "kg") return storedUnit ? ` ${storedUnit}` : " kg";
-  if (mt === "lbs") return " lbs";
-  return ""; // time — formatted separately
-}
-
-/** Returns a short label used in forms */
-function unitLabel(mt: MeasurementType): string {
-  if (mt === "reps") return "Reps";
-  if (mt === "kg") return "Weight (kg)";
-  if (mt === "lbs") return "Weight (lbs)";
-  return "Time";
-}
-
-// ── Time utils ────────────────────────────────────────────────────────────────
 function formatTime(totalSeconds: number): string {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -195,10 +168,8 @@ function calcPace(totalSec: number, distKm: number): string {
   return `${mins}:${String(secs).padStart(2, "0")} /km`;
 }
 
-// ── Firebase PR path ──────────────────────────────────────────────────────────
 const PR_PATH = "pr_logbook";
 
-// ── Rank icon ─────────────────────────────────────────────────────────────────
 function RankIcon({ i }: { i: number }) {
   if (i === 0) return <span className="text-xl">🥇</span>;
   if (i === 1) return <span className="text-xl">🥈</span>;
@@ -210,7 +181,6 @@ function RankIcon({ i }: { i: number }) {
   );
 }
 
-// ── Level badge ───────────────────────────────────────────────────────────────
 function LevelBadge({ level }: { level: Level }) {
   const cfg: Record<Level, { bg: string; color: string; label: string }> = {
     RX: {
@@ -241,7 +211,7 @@ function LevelBadge({ level }: { level: Level }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PR LEADERBOARD TAB
+// PR LEADERBOARD
 // ══════════════════════════════════════════════════════════════════════════════
 function PRLeaderboard({ currentUid }: { currentUid: string }) {
   const [category, setCategory] = useState<Category>("Weightlifting");
@@ -295,11 +265,8 @@ function PRLeaderboard({ currentUid }: { currentUid: string }) {
   const distKm = ex ? getDistanceKm(ex.name) : null;
   const variants = category && parentEx ? getVariants(category, parentEx) : [];
   const showVariants = hasVariants(category, parentEx);
-
-  // For reps/weight: higher is better. For time: lower is better.
   const isBetter = (a: number, b: number) => (isTime ? a < b : a > b);
 
-  // Best per athlete
   const filtered = allPRs.filter((p) => p.exercise_id === exerciseId);
   const bestPerAthlete: Record<string, any> = {};
   filtered.forEach((p) => {
@@ -317,16 +284,13 @@ function PRLeaderboard({ currentUid }: { currentUid: string }) {
   const myEntry = entries.find((e) => e.uid === currentUid);
   const myRank = myEntry ? entries.indexOf(myEntry) : -1;
 
-  // Format a PR value for display
   const formatPR = (entry: any) => {
     if (!ex) return "";
     if (isTime) return formatTime(entry.value);
     if (isReps) return `${entry.value} reps`;
-    // kg or lbs
     return `${entry.value}${entry.unit || (ex.measurement_type === "kg" ? "kg" : "lbs")}`;
   };
 
-  // "gap to next rank"
   const gapToNext = (myIdx: number) => {
     if (myIdx <= 0 || !ex) return null;
     const above = entries[myIdx - 1];
@@ -337,9 +301,7 @@ function PRLeaderboard({ currentUid }: { currentUid: string }) {
 
   return (
     <div>
-      {/* ── Filters ─────────────────────────────────────────────────── */}
       <div className="mk2-card mb-4 flex flex-col gap-3">
-        {/* Category */}
         <div className="flex flex-wrap gap-1.5">
           {CATEGORIES.map((cat) => (
             <button
@@ -367,7 +329,6 @@ function PRLeaderboard({ currentUid }: { currentUid: string }) {
           ))}
         </div>
 
-        {/* Measurement type indicator */}
         {ex && (
           <div className="text-[11px] text-muted-foreground">
             Measured in:{" "}
@@ -453,7 +414,6 @@ function PRLeaderboard({ currentUid }: { currentUid: string }) {
         </div>
       </div>
 
-      {/* ── My rank card ────────────────────────────────────────────── */}
       {myEntry && myRank >= 0 && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -492,7 +452,6 @@ function PRLeaderboard({ currentUid }: { currentUid: string }) {
         </motion.div>
       )}
 
-      {/* ── Table ───────────────────────────────────────────────────── */}
       {!exerciseId ? (
         <div className="mk2-card text-center py-10 text-muted-foreground text-sm">
           <div className="text-3xl mb-3">🏋️</div>
@@ -580,7 +539,7 @@ function PRLeaderboard({ currentUid }: { currentUid: string }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// CHECK-IN LEADERBOARD TAB
+// CHECK-IN LEADERBOARD
 // ══════════════════════════════════════════════════════════════════════════════
 function CheckInLeaderboard({
   users,
@@ -698,8 +657,49 @@ function CheckInLeaderboard({
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// CHALLENGES TAB
+// CHALLENGES TAB — metric-aware score input
 // ══════════════════════════════════════════════════════════════════════════════
+export const CHALLENGE_METRICS = [
+  { value: "reps", label: "Reps", placeholder: "e.g. 42", isTime: false },
+  { value: "kg", label: "Weight (kg)", placeholder: "e.g. 100", isTime: false },
+  {
+    value: "lbs",
+    label: "Weight (lbs)",
+    placeholder: "e.g. 225",
+    isTime: false,
+  },
+  {
+    value: "time",
+    label: "Time (mm:ss)",
+    placeholder: "e.g. 4:30",
+    isTime: true,
+  },
+  {
+    value: "distance_m",
+    label: "Distance (m)",
+    placeholder: "e.g. 500",
+    isTime: false,
+  },
+  {
+    value: "distance_km",
+    label: "Distance (km)",
+    placeholder: "e.g. 5.2",
+    isTime: false,
+  },
+  {
+    value: "calories",
+    label: "Calories",
+    placeholder: "e.g. 100",
+    isTime: false,
+  },
+  {
+    value: "rounds",
+    label: "Rounds + Reps",
+    placeholder: "e.g. 5 rounds + 3 reps",
+    isTime: false,
+  },
+] as const;
+
 function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
   const { user, toast } = useAuth();
   const [challenges, setChallenges] = useState<any[]>([]);
@@ -709,6 +709,7 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
   const [submitForm, setSubmitForm] = useState<{
     challengeId: string;
     score: string;
+    metric: string;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -743,15 +744,29 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
 
   const submitScore = async () => {
     if (!submitForm || !user) return;
-    const score = Number(submitForm.score);
-    if (!submitForm.score || isNaN(score) || score <= 0)
-      return toast("Enter a valid score", "error");
+    const metricDef = CHALLENGE_METRICS.find(
+      (m) => m.value === submitForm.metric,
+    );
+    let numericScore: number;
+
+    if (metricDef?.isTime) {
+      const parsed = parseTimeInput(submitForm.score);
+      if (parsed === null)
+        return toast("Enter time as mm:ss or hh:mm:ss", "error");
+      numericScore = parsed;
+    } else {
+      numericScore = Number(submitForm.score);
+      if (!submitForm.score || isNaN(numericScore) || numericScore <= 0)
+        return toast("Enter a valid score", "error");
+    }
+
     setSubmitting(true);
     try {
       await push(ref(db, `challenge_entries/${submitForm.challengeId}`), {
         uid: user.uid,
         name: user.name,
-        score,
+        score: numericScore,
+        rawInput: submitForm.score,
         submittedAt: Date.now(),
       });
       toast("Score submitted! 🏁", "success");
@@ -760,6 +775,12 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
       toast("Failed to submit", "error");
     }
     setSubmitting(false);
+  };
+
+  // Format display score based on metric
+  const formatScore = (score: number, metric: string) => {
+    if (metric === "time") return formatTime(score);
+    return `${score} ${metric}`;
   };
 
   if (loading)
@@ -789,6 +810,10 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
           : null;
         const isExpanded = expanded === challenge.id;
         const isSubmitting = submitForm?.challengeId === challenge.id;
+        const metricDef = CHALLENGE_METRICS.find(
+          (m) => m.value === challenge.metric,
+        );
+
         return (
           <motion.div
             key={challenge.id}
@@ -808,7 +833,7 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
                 </div>
                 <div className="text-xs text-muted-foreground">
                   📅 {challenge.startDate} → {challenge.endDate} · 📏{" "}
-                  {challenge.metric}
+                  {metricDef?.label || challenge.metric}
                 </div>
               </div>
               <div className="text-right shrink-0">
@@ -842,7 +867,7 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
                     className="font-display text-lg"
                     style={{ color: challenge.color }}
                   >
-                    {myEntry.score} {challenge.metric}
+                    {formatScore(myEntry.score, challenge.metric)}
                   </div>
                 </div>
               </div>
@@ -865,7 +890,11 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
                   setSubmitForm(
                     isSubmitting
                       ? null
-                      : { challengeId: challenge.id, score: "" },
+                      : {
+                          challengeId: challenge.id,
+                          score: "",
+                          metric: challenge.metric,
+                        },
                   )
                 }
                 className="text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-all"
@@ -893,8 +922,10 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
                 >
                   <div className="flex gap-2 items-center pt-1">
                     <input
-                      type="number"
-                      placeholder={`Score in ${challenge.metric}`}
+                      type={metricDef?.isTime ? "text" : "number"}
+                      placeholder={
+                        metricDef?.placeholder || `Score in ${challenge.metric}`
+                      }
                       value={submitForm?.score ?? ""}
                       onChange={(e) =>
                         setSubmitForm((f) =>
@@ -915,6 +946,11 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
                     >
                       {submitting ? "…" : "Submit →"}
                     </button>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-1.5">
+                    {metricDef?.isTime
+                      ? "Enter as mm:ss or hh:mm:ss"
+                      : `Enter your score in ${metricDef?.label || challenge.metric}`}
                   </div>
                 </motion.div>
               )}
@@ -980,7 +1016,7 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
                               className="font-display text-base"
                               style={{ color: challenge.color }}
                             >
-                              {entry.score}
+                              {formatScore(entry.score, challenge.metric)}
                             </span>
                           </div>
                         ))}
@@ -1006,7 +1042,7 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MAIN
+// MAIN — hooks order fixed, early return moved after all hooks
 // ══════════════════════════════════════════════════════════════════════════════
 export function Leaderboard() {
   const { user } = useAuth();
@@ -1015,8 +1051,7 @@ export function Leaderboard() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  if (!user) return null;
-
+  // ── All hooks must run before any early return ────────────────────────────
   useEffect(() => {
     return onValue(ref(db, "mk2_users"), (snap) => {
       if (snap.exists()) {
@@ -1038,6 +1073,9 @@ export function Leaderboard() {
     });
   }, []);
 
+  // Safe to early-return after all hooks
+  if (!user) return null;
+
   const TABS = [
     { id: "pr", label: "🏆 PR Board" },
     { id: "checkin", label: "✅ Check-ins" },
@@ -1048,11 +1086,11 @@ export function Leaderboard() {
     <div
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
     >
+      {/* ── "Leader Board" — two words, two lines, fits container ──────── */}
       <PageTitle sub="A Little Healthy Competition">
-        Leader<span className="text-primary">board</span>
+        Leader <span className="text-primary block sm:inline">Board</span>
       </PageTitle>
 
-      {/* Tab switcher */}
       <div className="flex bg-secondary rounded-lg p-1 gap-1 mb-6 w-full overflow-x-auto">
         {TABS.map((t) => (
           <button
@@ -1668,384 +1706,6 @@ export function Leaderboard() {
 // }
 
 // // ══════════════════════════════════════════════════════════════════════════════
-// // PR LOGBOOK TAB — user sees only their own entries
-// // ══════════════════════════════════════════════════════════════════════════════
-// function PRLogbook({
-//   currentUid,
-//   currentName,
-// }: {
-//   currentUid: string;
-//   currentName: string;
-// }) {
-//   const { toast } = useAuth();
-//   const [category, setCategory] = useState<Category>("Weightlifting");
-//   const [parentEx, setParentEx] = useState<string>(
-//     () => getParentExercises("Weightlifting")[0] || "",
-//   );
-//   const [exerciseId, setExerciseId] = useState<string>("");
-//   const [valueInput, setValueInput] = useState("");
-//   const [level, setLevel] = useState<Level>("RX");
-//   const [gender, setGender] = useState<Gender>("Male");
-//   const [notes, setNotes] = useState("");
-//   const [myPRs, setMyPRs] = useState<any[]>([]);
-//   const [loading, setLoading] = useState(true);
-//   const [saving, setSaving] = useState(false);
-
-//   // Auto-set exercise when parent/category changes
-//   useEffect(() => {
-//     if (parentEx && category) {
-//       const variants = getVariants(category, parentEx);
-//       if (variants.length === 1) setExerciseId(variants[0].exercise_id);
-//       else if (!hasVariants(category, parentEx))
-//         setExerciseId(variants[0]?.exercise_id || "");
-//       else setExerciseId("");
-//     }
-//   }, [parentEx, category]);
-
-//   useEffect(() => {
-//     const parents = getParentExercises(category);
-//     setParentEx(parents[0] || "");
-//   }, [category]);
-
-//   // Only fetch current user's PRs
-//   useEffect(() => {
-//     setLoading(true);
-//     return onValue(ref(db, PR_PATH), (snap) => {
-//       if (snap.exists()) {
-//         const all = Object.entries(snap.val()).map(([k, v]: [string, any]) => ({
-//           firebaseKey: k,
-//           ...v,
-//         }));
-//         // Filter to only this user's entries
-//         setMyPRs(all.filter((p) => p.uid === currentUid));
-//       } else {
-//         setMyPRs([]);
-//       }
-//       setLoading(false);
-//     });
-//   }, [currentUid]);
-
-//   const ex = exerciseId ? getExerciseById(exerciseId) : null;
-//   const isTime = ex?.measurement_type === "time";
-//   const isReps = ex?.measurement_type === "reps";
-//   const variants = category && parentEx ? getVariants(category, parentEx) : [];
-//   const showVariants = hasVariants(category, parentEx);
-
-//   const savePR = async () => {
-//     if (!ex || !valueInput) {
-//       toast?.("Fill in all fields", "error");
-//       return;
-//     }
-
-//     let value: number;
-//     if (isTime) {
-//       const parsed = parseTimeInput(valueInput);
-//       if (!parsed) {
-//         toast?.("Enter time as mm:ss or hh:mm:ss", "error");
-//         return;
-//       }
-//       value = parsed;
-//     } else {
-//       value = parseFloat(valueInput);
-//       if (isNaN(value) || value <= 0) {
-//         toast?.("Enter a valid number", "error");
-//         return;
-//       }
-//     }
-
-//     setSaving(true);
-//     try {
-//       await push(ref(db, PR_PATH), {
-//         uid: currentUid,
-//         athlete: currentName,
-//         exercise_id: ex.exercise_id,
-//         exercise_name: ex.name,
-//         category: ex.category,
-//         measurement_type: ex.measurement_type,
-//         unit:
-//           ex.measurement_type === "kg"
-//             ? "kg"
-//             : ex.measurement_type === "lbs"
-//               ? "lbs"
-//               : ex.measurement_type === "reps"
-//                 ? "reps"
-//                 : "",
-//         value,
-//         level,
-//         gender,
-//         notes,
-//         date_logged: new Date().toLocaleDateString("en-ZA"),
-//         date: Date.now(),
-//       });
-//       toast?.("PR saved! 🎉", "success");
-//       setValueInput("");
-//       setNotes("");
-//     } catch {
-//       toast?.("Failed to save PR", "error");
-//     }
-//     setSaving(false);
-//   };
-
-//   // Group my PRs by exercise, show best
-//   const myBestByExercise: Record<string, any> = {};
-//   myPRs.forEach((p) => {
-//     const existing = myBestByExercise[p.exercise_id];
-//     const exerciseMt = getExerciseById(p.exercise_id)?.measurement_type;
-//     const isTimePR = exerciseMt === "time";
-//     if (
-//       !existing ||
-//       (isTimePR ? p.value < existing.value : p.value > existing.value)
-//     ) {
-//       myBestByExercise[p.exercise_id] = p;
-//     }
-//   });
-//   const myBests = Object.values(myBestByExercise).sort((a, b) =>
-//     (a.exercise_name || "").localeCompare(b.exercise_name || ""),
-//   );
-
-//   const formatEntryValue = (entry: any) => {
-//     const mt =
-//       entry.measurement_type ||
-//       getExerciseById(entry.exercise_id)?.measurement_type;
-//     if (mt === "time") return formatTime(entry.value);
-//     if (mt === "reps") return `${entry.value} reps`;
-//     return `${entry.value}${entry.unit || mt || ""}`;
-//   };
-
-//   const inputPlaceholder = isTime ? "mm:ss" : isReps ? "e.g. 15" : "e.g. 100";
-
-//   return (
-//     <div>
-//       {/* ── Log a PR ──────────────────────────────────────────────── */}
-//       <div className="mk2-card mb-5">
-//         <div className="font-bold text-sm mb-4">Log a New PR</div>
-
-//         {/* Category */}
-//         <div className="flex flex-wrap gap-1.5 mb-3">
-//           {CATEGORIES.map((cat) => (
-//             <button
-//               key={cat}
-//               onClick={() => setCategory(cat)}
-//               className="px-3 py-1.5 rounded-full text-[11px] font-bold border cursor-pointer transition-all font-body"
-//               style={{
-//                 background:
-//                   category === cat ? "hsl(20 100% 50%)" : "transparent",
-//                 color:
-//                   category === cat ? "#000" : "hsl(var(--muted-foreground))",
-//                 borderColor:
-//                   category === cat ? "hsl(20 100% 50%)" : "hsl(var(--border))",
-//               }}
-//             >
-//               {cat === "Weightlifting"
-//                 ? "🏋️"
-//                 : cat === "Gymnastics"
-//                   ? "🤸"
-//                   : cat === "MetCon"
-//                     ? "⏱"
-//                     : "🏃"}{" "}
-//               {cat}
-//             </button>
-//           ))}
-//         </div>
-
-//         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
-//           <div>
-//             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
-//               Exercise
-//             </div>
-//             <select
-//               value={parentEx}
-//               onChange={(e) => setParentEx(e.target.value)}
-//               className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-xs font-body outline-none text-foreground"
-//             >
-//               {getParentExercises(category).map((p) => (
-//                 <option key={p} value={p}>
-//                   {p}
-//                 </option>
-//               ))}
-//             </select>
-//           </div>
-
-//           {showVariants && (
-//             <div>
-//               <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
-//                 Variant
-//               </div>
-//               <select
-//                 value={exerciseId}
-//                 onChange={(e) => setExerciseId(e.target.value)}
-//                 className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-xs font-body outline-none text-foreground"
-//               >
-//                 <option value="">Select…</option>
-//                 {variants.map((v) => (
-//                   <option key={v.exercise_id} value={v.exercise_id}>
-//                     {getVariantLabel(v.name) || v.name}
-//                   </option>
-//                 ))}
-//               </select>
-//             </div>
-//           )}
-
-//           <div>
-//             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
-//               {ex ? unitLabel(ex.measurement_type) : "Value"}
-//             </div>
-//             <input
-//               type={isTime ? "text" : "number"}
-//               step={isReps ? "1" : "0.5"}
-//               placeholder={inputPlaceholder}
-//               value={valueInput}
-//               onChange={(e) => setValueInput(e.target.value)}
-//               className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm outline-none text-foreground font-body focus:border-primary/40 transition-colors"
-//             />
-//           </div>
-
-//           <div>
-//             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
-//               Level
-//             </div>
-//             <select
-//               value={level}
-//               onChange={(e) => setLevel(e.target.value as Level)}
-//               className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-xs font-body outline-none text-foreground"
-//             >
-//               <option value="Beginner">Beginner</option>
-//               <option value="Intermediate">Intermediate (Scaled)</option>
-//               <option value="RX">RX</option>
-//             </select>
-//           </div>
-
-//           <div>
-//             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
-//               Gender
-//             </div>
-//             <select
-//               value={gender}
-//               onChange={(e) => setGender(e.target.value as Gender)}
-//               className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-xs font-body outline-none text-foreground"
-//             >
-//               <option value="Male">Male</option>
-//               <option value="Female">Female</option>
-//               <option value="Other">Other</option>
-//             </select>
-//           </div>
-
-//           <div>
-//             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
-//               Notes
-//             </div>
-//             <input
-//               type="text"
-//               placeholder="Optional"
-//               value={notes}
-//               onChange={(e) => setNotes(e.target.value)}
-//               className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm outline-none text-foreground font-body focus:border-primary/40 transition-colors"
-//             />
-//           </div>
-//         </div>
-
-//         <button
-//           onClick={savePR}
-//           disabled={saving || !exerciseId}
-//           className="px-5 py-2.5 rounded-lg font-bold text-sm border-none cursor-pointer transition-all font-body"
-//           style={{
-//             background: "hsl(20 100% 50%)",
-//             color: "#000",
-//             opacity: saving || !exerciseId ? 0.6 : 1,
-//           }}
-//         >
-//           {saving ? "Saving…" : "Save PR 🏆"}
-//         </button>
-//       </div>
-
-//       {/* ── My PR History ───────────────────────────────────────────── */}
-//       <div>
-//         <div className="font-bold text-sm mb-3 px-1">
-//           My Personal Records ({myBests.length} exercises)
-//         </div>
-
-//         {loading ? (
-//           <div className="text-center py-8 text-muted-foreground text-sm">
-//             Loading your PRs…
-//           </div>
-//         ) : myBests.length === 0 ? (
-//           <div className="mk2-card text-center py-10 text-muted-foreground text-sm">
-//             <div className="text-3xl mb-3">📋</div>
-//             <div className="font-bold mb-1">No PRs logged yet</div>
-//             <div className="text-xs">
-//               Log your first PR above to track your progress!
-//             </div>
-//           </div>
-//         ) : (
-//           <div className="flex flex-col gap-2">
-//             {myBests.map((entry, i) => (
-//               <motion.div
-//                 key={entry.firebaseKey || i}
-//                 initial={{ opacity: 0, x: -6 }}
-//                 animate={{ opacity: 1, x: 0 }}
-//                 transition={{ delay: i * 0.03 }}
-//                 className="mk2-card flex items-center gap-3 py-3"
-//               >
-//                 <div className="flex-1 min-w-0">
-//                   <div className="font-bold text-sm truncate">
-//                     {entry.exercise_name || entry.exercise_id}
-//                   </div>
-//                   <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
-//                     <LevelBadge level={entry.level} />
-//                     <span>{entry.date_logged || ""}</span>
-//                     {entry.notes && (
-//                       <span className="italic">{entry.notes}</span>
-//                     )}
-//                   </div>
-//                 </div>
-//                 <div
-//                   className="font-display text-xl shrink-0"
-//                   style={{ color: "hsl(20 100% 50%)" }}
-//                 >
-//                   {formatEntryValue(entry)}
-//                 </div>
-//               </motion.div>
-//             ))}
-//           </div>
-//         )}
-
-//         {/* Full history */}
-//         {myPRs.length > myBests.length && (
-//           <div className="mt-4">
-//             <div className="font-bold text-xs text-muted-foreground uppercase tracking-widest mb-2 px-1">
-//               Full History ({myPRs.length} entries)
-//             </div>
-//             <div className="flex flex-col gap-1.5">
-//               {[...myPRs]
-//                 .sort((a, b) => (b.date || 0) - (a.date || 0))
-//                 .map((entry, i) => (
-//                   <div
-//                     key={entry.firebaseKey || i}
-//                     className="flex items-center justify-between px-3 py-2 rounded-lg bg-secondary text-xs"
-//                   >
-//                     <span className="font-bold truncate flex-1 mr-2">
-//                       {entry.exercise_name || entry.exercise_id}
-//                     </span>
-//                     <span className="text-muted-foreground mr-2">
-//                       {entry.date_logged || ""}
-//                     </span>
-//                     <span
-//                       style={{ color: "hsl(20 100% 50%)" }}
-//                       className="font-bold shrink-0"
-//                     >
-//                       {formatEntryValue(entry)}
-//                     </span>
-//                   </div>
-//                 ))}
-//             </div>
-//           </div>
-//         )}
-//       </div>
-//     </div>
-//   );
-// }
-
-// // ══════════════════════════════════════════════════════════════════════════════
 // // CHECK-IN LEADERBOARD TAB
 // // ══════════════════════════════════════════════════════════════════════════════
 // function CheckInLeaderboard({
@@ -2477,9 +2137,7 @@ export function Leaderboard() {
 // export function Leaderboard() {
 //   const { user } = useAuth();
 //   const { isMobile } = useBreakpoint();
-//   const [tab, setTab] = useState<"pr" | "logbook" | "checkin" | "challenges">(
-//     "pr",
-//   );
+//   const [tab, setTab] = useState<"pr" | "checkin" | "challenges">("pr");
 //   const [allUsers, setAllUsers] = useState<any[]>([]);
 //   const [loading, setLoading] = useState(true);
 
@@ -2508,7 +2166,6 @@ export function Leaderboard() {
 
 //   const TABS = [
 //     { id: "pr", label: "🏆 PR Board" },
-//     { id: "logbook", label: "📋 My PRs" },
 //     { id: "checkin", label: "✅ Check-ins" },
 //     { id: "challenges", label: "🏁 Challenges" },
 //   ];
@@ -2543,12 +2200,6 @@ export function Leaderboard() {
 //       ) : (
 //         <>
 //           {tab === "pr" && <PRLeaderboard currentUid={user.uid} />}
-//           {tab === "logbook" && (
-//             <PRLogbook
-//               currentUid={user.uid}
-//               currentName={user.name || "Athlete"}
-//             />
-//           )}
 //           {tab === "checkin" && (
 //             <CheckInLeaderboard users={allUsers} currentUid={user.uid} />
 //           )}
