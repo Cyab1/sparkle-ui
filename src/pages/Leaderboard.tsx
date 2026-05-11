@@ -1033,8 +1033,7 @@ function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
         <div className="font-bold text-sm mb-2">How Challenges Work</div>
         <div className="text-xs text-muted-foreground leading-relaxed">
           Submit your score for any active challenge. Only your best score
-          counts. Winners announced when the challenge ends — prizes at
-          reception.
+          counts. Winners announced when the challenge ends.
         </div>
       </div>
     </div>
@@ -1155,7 +1154,6 @@ export function Leaderboard() {
 // });
 
 // export const EXERCISES: Exercise[] = [
-//   // Weightlifting — measured in kg
 //   ...[
 //     "Back Squat",
 //     "Front Squat",
@@ -1176,7 +1174,6 @@ export function Leaderboard() {
 //     "Clean & Jerk",
 //     "Thruster",
 //   ].map((n) => mkEx("Weightlifting", n, "kg")),
-//   // Gymnastics — measured in reps
 //   ...[
 //     "Pull-Ups",
 //     "Chest-to-Bar",
@@ -1190,7 +1187,6 @@ export function Leaderboard() {
 //     "Rope Climbs",
 //     "L-Sit",
 //   ].map((n) => mkEx("Gymnastics", n, "reps")),
-//   // MetCon — measured in time
 //   ...[
 //     "Fran",
 //     "Murph",
@@ -1201,22 +1197,18 @@ export function Leaderboard() {
 //     "Annie",
 //     "Karen",
 //   ].map((n) => mkEx("MetCon", n, "time")),
-//   // Cardio — Assault Bike (time)
 //   ...[
 //     "Assault Bike - 10cal",
 //     "Assault Bike - 20cal",
 //     "Assault Bike - 50cal",
 //     "Assault Bike - 100cal",
 //   ].map((n) => mkEx("Cardio", n, "time")),
-//   // Cardio — Ski (time)
 //   ...["Ski - 250m", "Ski - 500m", "Ski - 1km", "Ski - 2km", "Ski - 5km"].map(
 //     (n) => mkEx("Cardio", n, "time"),
 //   ),
-//   // Cardio — Row (time)
 //   ...["Row - 500m", "Row - 1km", "Row - 2km", "Row - 5km", "Row - 10km"].map(
 //     (n) => mkEx("Cardio", n, "time"),
 //   ),
-//   // Cardio — Run (time)
 //   ...[
 //     "Run - 400m",
 //     "Run - 800m",
@@ -1243,7 +1235,6 @@ export function Leaderboard() {
 // function getExerciseById(id: string) {
 //   return EXERCISES.find((e) => e.exercise_id === id);
 // }
-
 // function getParentName(name: string): string {
 //   const i = name.indexOf(" - ");
 //   return i > -1 ? name.substring(0, i) : name;
@@ -1274,25 +1265,6 @@ export function Leaderboard() {
 //     v.length > 1 || (v.length === 1 && getVariantLabel(v[0].name) !== null)
 //   );
 // }
-
-// // ── Unit helpers ──────────────────────────────────────────────────────────────
-// /** Returns the display unit suffix for a given measurement type */
-// function unitSuffix(mt: MeasurementType, storedUnit?: string): string {
-//   if (mt === "reps") return " reps";
-//   if (mt === "kg") return storedUnit ? ` ${storedUnit}` : " kg";
-//   if (mt === "lbs") return " lbs";
-//   return ""; // time — formatted separately
-// }
-
-// /** Returns a short label used in forms */
-// function unitLabel(mt: MeasurementType): string {
-//   if (mt === "reps") return "Reps";
-//   if (mt === "kg") return "Weight (kg)";
-//   if (mt === "lbs") return "Weight (lbs)";
-//   return "Time";
-// }
-
-// // ── Time utils ────────────────────────────────────────────────────────────────
 // function formatTime(totalSeconds: number): string {
 //   const h = Math.floor(totalSeconds / 3600);
 //   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -1321,10 +1293,8 @@ export function Leaderboard() {
 //   return `${mins}:${String(secs).padStart(2, "0")} /km`;
 // }
 
-// // ── Firebase PR path ──────────────────────────────────────────────────────────
 // const PR_PATH = "pr_logbook";
 
-// // ── Rank icon ─────────────────────────────────────────────────────────────────
 // function RankIcon({ i }: { i: number }) {
 //   if (i === 0) return <span className="text-xl">🥇</span>;
 //   if (i === 1) return <span className="text-xl">🥈</span>;
@@ -1336,7 +1306,6 @@ export function Leaderboard() {
 //   );
 // }
 
-// // ── Level badge ───────────────────────────────────────────────────────────────
 // function LevelBadge({ level }: { level: Level }) {
 //   const cfg: Record<Level, { bg: string; color: string; label: string }> = {
 //     RX: {
@@ -1367,7 +1336,7 @@ export function Leaderboard() {
 // }
 
 // // ══════════════════════════════════════════════════════════════════════════════
-// // PR LEADERBOARD TAB
+// // PR LEADERBOARD
 // // ══════════════════════════════════════════════════════════════════════════════
 // function PRLeaderboard({ currentUid }: { currentUid: string }) {
 //   const [category, setCategory] = useState<Category>("Weightlifting");
@@ -1421,11 +1390,8 @@ export function Leaderboard() {
 //   const distKm = ex ? getDistanceKm(ex.name) : null;
 //   const variants = category && parentEx ? getVariants(category, parentEx) : [];
 //   const showVariants = hasVariants(category, parentEx);
-
-//   // For reps/weight: higher is better. For time: lower is better.
 //   const isBetter = (a: number, b: number) => (isTime ? a < b : a > b);
 
-//   // Best per athlete
 //   const filtered = allPRs.filter((p) => p.exercise_id === exerciseId);
 //   const bestPerAthlete: Record<string, any> = {};
 //   filtered.forEach((p) => {
@@ -1443,16 +1409,13 @@ export function Leaderboard() {
 //   const myEntry = entries.find((e) => e.uid === currentUid);
 //   const myRank = myEntry ? entries.indexOf(myEntry) : -1;
 
-//   // Format a PR value for display
 //   const formatPR = (entry: any) => {
 //     if (!ex) return "";
 //     if (isTime) return formatTime(entry.value);
 //     if (isReps) return `${entry.value} reps`;
-//     // kg or lbs
 //     return `${entry.value}${entry.unit || (ex.measurement_type === "kg" ? "kg" : "lbs")}`;
 //   };
 
-//   // "gap to next rank"
 //   const gapToNext = (myIdx: number) => {
 //     if (myIdx <= 0 || !ex) return null;
 //     const above = entries[myIdx - 1];
@@ -1463,9 +1426,7 @@ export function Leaderboard() {
 
 //   return (
 //     <div>
-//       {/* ── Filters ─────────────────────────────────────────────────── */}
 //       <div className="mk2-card mb-4 flex flex-col gap-3">
-//         {/* Category */}
 //         <div className="flex flex-wrap gap-1.5">
 //           {CATEGORIES.map((cat) => (
 //             <button
@@ -1493,7 +1454,6 @@ export function Leaderboard() {
 //           ))}
 //         </div>
 
-//         {/* Measurement type indicator */}
 //         {ex && (
 //           <div className="text-[11px] text-muted-foreground">
 //             Measured in:{" "}
@@ -1579,7 +1539,6 @@ export function Leaderboard() {
 //         </div>
 //       </div>
 
-//       {/* ── My rank card ────────────────────────────────────────────── */}
 //       {myEntry && myRank >= 0 && (
 //         <motion.div
 //           initial={{ opacity: 0, y: 8 }}
@@ -1618,7 +1577,6 @@ export function Leaderboard() {
 //         </motion.div>
 //       )}
 
-//       {/* ── Table ───────────────────────────────────────────────────── */}
 //       {!exerciseId ? (
 //         <div className="mk2-card text-center py-10 text-muted-foreground text-sm">
 //           <div className="text-3xl mb-3">🏋️</div>
@@ -1706,7 +1664,7 @@ export function Leaderboard() {
 // }
 
 // // ══════════════════════════════════════════════════════════════════════════════
-// // CHECK-IN LEADERBOARD TAB
+// // CHECK-IN LEADERBOARD
 // // ══════════════════════════════════════════════════════════════════════════════
 // function CheckInLeaderboard({
 //   users,
@@ -1824,8 +1782,49 @@ export function Leaderboard() {
 // }
 
 // // ══════════════════════════════════════════════════════════════════════════════
-// // CHALLENGES TAB
+// // CHALLENGES TAB — metric-aware score input
 // // ══════════════════════════════════════════════════════════════════════════════
+// export const CHALLENGE_METRICS = [
+//   { value: "reps", label: "Reps", placeholder: "e.g. 42", isTime: false },
+//   { value: "kg", label: "Weight (kg)", placeholder: "e.g. 100", isTime: false },
+//   {
+//     value: "lbs",
+//     label: "Weight (lbs)",
+//     placeholder: "e.g. 225",
+//     isTime: false,
+//   },
+//   {
+//     value: "time",
+//     label: "Time (mm:ss)",
+//     placeholder: "e.g. 4:30",
+//     isTime: true,
+//   },
+//   {
+//     value: "distance_m",
+//     label: "Distance (m)",
+//     placeholder: "e.g. 500",
+//     isTime: false,
+//   },
+//   {
+//     value: "distance_km",
+//     label: "Distance (km)",
+//     placeholder: "e.g. 5.2",
+//     isTime: false,
+//   },
+//   {
+//     value: "calories",
+//     label: "Calories",
+//     placeholder: "e.g. 100",
+//     isTime: false,
+//   },
+//   {
+//     value: "rounds",
+//     label: "Rounds + Reps",
+//     placeholder: "e.g. 5 rounds + 3 reps",
+//     isTime: false,
+//   },
+// ] as const;
+
 // function ChallengesLeaderboard({ currentUid }: { currentUid: string }) {
 //   const { user, toast } = useAuth();
 //   const [challenges, setChallenges] = useState<any[]>([]);
@@ -1835,6 +1834,7 @@ export function Leaderboard() {
 //   const [submitForm, setSubmitForm] = useState<{
 //     challengeId: string;
 //     score: string;
+//     metric: string;
 //   } | null>(null);
 //   const [submitting, setSubmitting] = useState(false);
 
@@ -1869,15 +1869,29 @@ export function Leaderboard() {
 
 //   const submitScore = async () => {
 //     if (!submitForm || !user) return;
-//     const score = Number(submitForm.score);
-//     if (!submitForm.score || isNaN(score) || score <= 0)
-//       return toast("Enter a valid score", "error");
+//     const metricDef = CHALLENGE_METRICS.find(
+//       (m) => m.value === submitForm.metric,
+//     );
+//     let numericScore: number;
+
+//     if (metricDef?.isTime) {
+//       const parsed = parseTimeInput(submitForm.score);
+//       if (parsed === null)
+//         return toast("Enter time as mm:ss or hh:mm:ss", "error");
+//       numericScore = parsed;
+//     } else {
+//       numericScore = Number(submitForm.score);
+//       if (!submitForm.score || isNaN(numericScore) || numericScore <= 0)
+//         return toast("Enter a valid score", "error");
+//     }
+
 //     setSubmitting(true);
 //     try {
 //       await push(ref(db, `challenge_entries/${submitForm.challengeId}`), {
 //         uid: user.uid,
 //         name: user.name,
-//         score,
+//         score: numericScore,
+//         rawInput: submitForm.score,
 //         submittedAt: Date.now(),
 //       });
 //       toast("Score submitted! 🏁", "success");
@@ -1886,6 +1900,12 @@ export function Leaderboard() {
 //       toast("Failed to submit", "error");
 //     }
 //     setSubmitting(false);
+//   };
+
+//   // Format display score based on metric
+//   const formatScore = (score: number, metric: string) => {
+//     if (metric === "time") return formatTime(score);
+//     return `${score} ${metric}`;
 //   };
 
 //   if (loading)
@@ -1915,6 +1935,10 @@ export function Leaderboard() {
 //           : null;
 //         const isExpanded = expanded === challenge.id;
 //         const isSubmitting = submitForm?.challengeId === challenge.id;
+//         const metricDef = CHALLENGE_METRICS.find(
+//           (m) => m.value === challenge.metric,
+//         );
+
 //         return (
 //           <motion.div
 //             key={challenge.id}
@@ -1934,7 +1958,7 @@ export function Leaderboard() {
 //                 </div>
 //                 <div className="text-xs text-muted-foreground">
 //                   📅 {challenge.startDate} → {challenge.endDate} · 📏{" "}
-//                   {challenge.metric}
+//                   {metricDef?.label || challenge.metric}
 //                 </div>
 //               </div>
 //               <div className="text-right shrink-0">
@@ -1968,7 +1992,7 @@ export function Leaderboard() {
 //                     className="font-display text-lg"
 //                     style={{ color: challenge.color }}
 //                   >
-//                     {myEntry.score} {challenge.metric}
+//                     {formatScore(myEntry.score, challenge.metric)}
 //                   </div>
 //                 </div>
 //               </div>
@@ -1991,7 +2015,11 @@ export function Leaderboard() {
 //                   setSubmitForm(
 //                     isSubmitting
 //                       ? null
-//                       : { challengeId: challenge.id, score: "" },
+//                       : {
+//                           challengeId: challenge.id,
+//                           score: "",
+//                           metric: challenge.metric,
+//                         },
 //                   )
 //                 }
 //                 className="text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-all"
@@ -2019,8 +2047,10 @@ export function Leaderboard() {
 //                 >
 //                   <div className="flex gap-2 items-center pt-1">
 //                     <input
-//                       type="number"
-//                       placeholder={`Score in ${challenge.metric}`}
+//                       type={metricDef?.isTime ? "text" : "number"}
+//                       placeholder={
+//                         metricDef?.placeholder || `Score in ${challenge.metric}`
+//                       }
 //                       value={submitForm?.score ?? ""}
 //                       onChange={(e) =>
 //                         setSubmitForm((f) =>
@@ -2041,6 +2071,11 @@ export function Leaderboard() {
 //                     >
 //                       {submitting ? "…" : "Submit →"}
 //                     </button>
+//                   </div>
+//                   <div className="text-[11px] text-muted-foreground mt-1.5">
+//                     {metricDef?.isTime
+//                       ? "Enter as mm:ss or hh:mm:ss"
+//                       : `Enter your score in ${metricDef?.label || challenge.metric}`}
 //                   </div>
 //                 </motion.div>
 //               )}
@@ -2106,7 +2141,7 @@ export function Leaderboard() {
 //                               className="font-display text-base"
 //                               style={{ color: challenge.color }}
 //                             >
-//                               {entry.score}
+//                               {formatScore(entry.score, challenge.metric)}
 //                             </span>
 //                           </div>
 //                         ))}
@@ -2123,8 +2158,7 @@ export function Leaderboard() {
 //         <div className="font-bold text-sm mb-2">How Challenges Work</div>
 //         <div className="text-xs text-muted-foreground leading-relaxed">
 //           Submit your score for any active challenge. Only your best score
-//           counts. Winners announced when the challenge ends — prizes at
-//           reception.
+//           counts. Winners announced when the challenge ends.
 //         </div>
 //       </div>
 //     </div>
@@ -2132,7 +2166,7 @@ export function Leaderboard() {
 // }
 
 // // ══════════════════════════════════════════════════════════════════════════════
-// // MAIN
+// // MAIN — hooks order fixed, early return moved after all hooks
 // // ══════════════════════════════════════════════════════════════════════════════
 // export function Leaderboard() {
 //   const { user } = useAuth();
@@ -2141,8 +2175,7 @@ export function Leaderboard() {
 //   const [allUsers, setAllUsers] = useState<any[]>([]);
 //   const [loading, setLoading] = useState(true);
 
-//   if (!user) return null;
-
+//   // ── All hooks must run before any early return ────────────────────────────
 //   useEffect(() => {
 //     return onValue(ref(db, "mk2_users"), (snap) => {
 //       if (snap.exists()) {
@@ -2164,6 +2197,9 @@ export function Leaderboard() {
 //     });
 //   }, []);
 
+//   // Safe to early-return after all hooks
+//   if (!user) return null;
+
 //   const TABS = [
 //     { id: "pr", label: "🏆 PR Board" },
 //     { id: "checkin", label: "✅ Check-ins" },
@@ -2174,11 +2210,11 @@ export function Leaderboard() {
 //     <div
 //       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
 //     >
+//       {/* ── "Leader Board" — two words, two lines, fits container ──────── */}
 //       <PageTitle sub="A Little Healthy Competition">
-//         Leader<span className="text-primary">board</span>
+//         Leader <span className="text-primary block sm:inline">Board</span>
 //       </PageTitle>
 
-//       {/* Tab switcher */}
 //       <div className="flex bg-secondary rounded-lg p-1 gap-1 mb-6 w-full overflow-x-auto">
 //         {TABS.map((t) => (
 //           <button
@@ -2194,7 +2230,7 @@ export function Leaderboard() {
 //           </button>
 //         ))}
 //       </div>
-
+// n
 //       {loading && tab === "checkin" ? (
 //         <div className="text-center py-12 text-muted-foreground">Loading…</div>
 //       ) : (

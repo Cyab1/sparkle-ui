@@ -73,7 +73,7 @@ const MORE_PAGES = [
   { id: "Community", label: "Community", group: "gym" },
   { id: "News", label: "News & Events", group: "gym" },
   { id: "Membership", label: "Membership", group: "gym" },
-  { id: "Notifications", label: "Notification Settings", group: "settings" },
+  { id: "NotificationSettings", label: "Notification Settings", group: "settings" },
   { id: "About", label: "About Us", group: "settings" },
   { id: "Contact", label: "Contact Us", group: "settings" },
   { id: "Advertise", label: "Advertise 📣", group: "settings" },
@@ -94,13 +94,17 @@ export function Layout({ children, page, setPage }: LayoutProps) {
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // 🔔 Listen to user's personal notifications, count unread
   useEffect(() => {
     if (!user) return;
-    return onValue(ref(db, "admin_news"), (snap) => {
-      if (!snap.exists()) return;
-      const lastSeen = (user as any).lastSeenNewsAt ?? 0;
+    const notifRef = ref(db, `users/${user.uid}/notifications`);
+    return onValue(notifRef, (snap) => {
+      if (!snap.exists()) {
+        setUnreadCount(0);
+        return;
+      }
       const items = Object.values(snap.val()) as any[];
-      const unread = items.filter((n) => (n.createdAt ?? 0) > lastSeen).length;
+      const unread = items.filter((n) => !n.read).length;
       setUnreadCount(unread);
     });
   }, [user]);
@@ -204,7 +208,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
           <div className="flex items-center gap-2 shrink-0">
             <ThemeToggle />
             <button
-              onClick={() => navigate("Notifications")}
+              onClick={() => navigate("NotificationsInbox")}
               className="relative w-9 h-9 flex items-center justify-center rounded-full bg-secondary border border-border cursor-pointer hover:border-primary/40 transition-colors"
             >
               <MI icon="notifications" size={18} />
@@ -269,7 +273,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <button
-              onClick={() => navigate("Notifications")}
+              onClick={() => navigate("NotificationsInbox")}
               className="relative w-8 h-8 flex items-center justify-center rounded-full bg-secondary border border-border cursor-pointer"
             >
               <MI icon="notifications" size={18} />
@@ -451,18 +455,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 // import { ref, onValue } from "firebase/database";
 // import { db } from "@/lib/firebase";
 
-// // function ensureMaterialIcons() {
-// //   if (typeof document === "undefined") return;
-// //   if (document.getElementById("material-symbols")) return;
-// //   const link = document.createElement("link");
-// //   link.id = "material-symbols";
-// //   link.rel = "stylesheet";
-// //   link.href =
-// //     "https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0";
-// //   document.head.appendChild(link);
-// // }
-// // ensureMaterialIcons();
-
 // function MI({ icon, size = 22 }: { icon: string; size?: number }) {
 //   return (
 //     <span
@@ -481,7 +473,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //       { id: "Dashboard", label: "Home" },
 //       { id: "Checkin", label: "Check-In" },
 //       { id: "Leaderboard", label: "Leaderboard" },
-//       // Notifications removed — bell icon handles this in top bar
 //     ],
 //   },
 //   {
@@ -511,8 +502,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   },
 // ];
 
-// // ── Bottom nav: Home | Gallery | Tools | Me
-// // Classes & Check-In removed — they're accessible from the Dashboard
 // const BOTTOM_TABS = [
 //   { id: "Dashboard", icon: "home", label: "Home" },
 //   { id: "Gallery", icon: "photo_library", label: "Gallery" },
@@ -520,14 +509,11 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   { id: "Account", icon: "account_circle", label: "Me" },
 // ];
 
-// // More drawer pages
 // const MORE_PAGES = [
-//   // Tools
 //   { id: "BMR", label: "BMR Calculator", group: "tools" },
 //   { id: "Nutrition", label: "AI Nutrition Coach", group: "tools" },
 //   { id: "InBody", label: "InBody Assessments", group: "tools" },
 //   { id: "Progress", label: "Progress Report", group: "tools" },
-//   // Gym
 //   { id: "Classes", label: "Book a Class", group: "gym" },
 //   { id: "Checkin", label: "Check-In", group: "gym" },
 //   { id: "Leaderboard", label: "Leaderboard", group: "gym" },
@@ -535,7 +521,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   { id: "Community", label: "Community", group: "gym" },
 //   { id: "News", label: "News & Events", group: "gym" },
 //   { id: "Membership", label: "Membership", group: "gym" },
-//   // Settings & Info — Notification Settings lives here now
 //   { id: "Notifications", label: "Notification Settings", group: "settings" },
 //   { id: "About", label: "About Us", group: "settings" },
 //   { id: "Contact", label: "Contact Us", group: "settings" },
@@ -557,7 +542,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   const [activeGroup, setActiveGroup] = useState<string | null>(null);
 //   const [unreadCount, setUnreadCount] = useState(0);
 
-//   // Track unread notification count for the bell
 //   useEffect(() => {
 //     if (!user) return;
 //     return onValue(ref(db, "admin_news"), (snap) => {
@@ -581,17 +565,13 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //     <div
 //       className="min-h-screen bg-background text-foreground font-body"
 //       style={{
-//         paddingBottom: isMobile
-//           ? "calc(72px + env(safe-area-inset-bottom, 0px))"
-//           : 0,
 //         overflowX: "hidden",
 //         maxWidth: "100vw",
 //       }}
 //     >
-//       {/* ── Desktop nav */}
+//       {/* Desktop nav */}
 //       {!isMobile && (
 //         <nav className="sticky top-0 z-[200] bg-background/95 backdrop-blur-xl border-b border-border px-5 h-[58px] flex items-center justify-between gap-4">
-//           {/* Logo + wordmark */}
 //           <div
 //             onClick={() => navigate("Dashboard")}
 //             className="flex items-center gap-2.5 cursor-pointer shrink-0 hover:opacity-80 transition-opacity"
@@ -671,8 +651,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 
 //           <div className="flex items-center gap-2 shrink-0">
 //             <ThemeToggle />
-
-//             {/* 🔔 Bell — actual notification messages */}
 //             <button
 //               onClick={() => navigate("Notifications")}
 //               className="relative w-9 h-9 flex items-center justify-center rounded-full bg-secondary border border-border cursor-pointer hover:border-primary/40 transition-colors"
@@ -687,7 +665,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //                 </span>
 //               )}
 //             </button>
-
 //             <div
 //               onClick={() => navigate("Account")}
 //               className="flex items-center gap-2 bg-secondary border border-border rounded-full py-1 pl-1.5 pr-3 cursor-pointer hover:border-primary/40 transition-colors"
@@ -708,7 +685,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         </nav>
 //       )}
 
-//       {/* ── Mobile top bar */}
+//       {/* Mobile top bar */}
 //       {isMobile && (
 //         <div
 //           className="sticky top-0 z-[200] bg-background/97 border-b border-border px-4 flex items-center justify-between"
@@ -717,7 +694,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //             paddingBottom: "12px",
 //           }}
 //         >
-//           {/* Logo + wordmark */}
 //           <div className="flex items-center gap-2">
 //             <img
 //               src="/mk2r-logo.jpg"
@@ -738,12 +714,8 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //               </div>
 //             </div>
 //           </div>
-
-//           {/* Right side — theme toggle + bell + avatar */}
 //           <div className="flex items-center gap-2">
 //             <ThemeToggle />
-
-//             {/* 🔔 Bell — actual notification messages */}
 //             <button
 //               onClick={() => navigate("Notifications")}
 //               className="relative w-8 h-8 flex items-center justify-center rounded-full bg-secondary border border-border cursor-pointer"
@@ -758,7 +730,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //                 </span>
 //               )}
 //             </button>
-
 //             <div
 //               onClick={() => navigate("Account")}
 //               className="w-8 h-8 rounded-full flex items-center justify-center font-display text-[15px] cursor-pointer"
@@ -770,17 +741,22 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         </div>
 //       )}
 
-//       {/* ── Page content */}
+//       {/* Page content with bottom padding on mobile */}
 //       <motion.div
 //         key={page}
 //         initial={{ opacity: 0, y: 6 }}
 //         animate={{ opacity: 1, y: 0 }}
 //         transition={{ duration: 0.22, ease: "easeOut" }}
+//         style={
+//           isMobile
+//             ? { paddingBottom: "calc(72px + env(safe-area-inset-bottom, 0px))" }
+//             : undefined
+//         }
 //       >
 //         {children}
 //       </motion.div>
 
-//       {/* ── Mobile bottom nav: Home | Gallery | Tools | Me */}
+//       {/* Mobile bottom nav */}
 //       {isMobile && (
 //         <nav
 //           className="fixed bottom-0 left-0 right-0 z-[200] bg-background/98 border-t border-border flex backdrop-blur-xl"
@@ -808,7 +784,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //               </span>
 //             </button>
 //           ))}
-//           {/* More / Grid button */}
 //           <button
 //             onClick={() => setShowMore(!showMore)}
 //             className={`flex-1 flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors ${
@@ -824,14 +799,14 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         </nav>
 //       )}
 
-//       {/* ── More drawer */}
+//       {/* More drawer with corrected z-index */}
 //       <AnimatePresence>
 //         {isMobile && showMore && (
 //           <motion.div
 //             initial={{ opacity: 0 }}
 //             animate={{ opacity: 1 }}
 //             exit={{ opacity: 0 }}
-//             className="fixed inset-0 z-[199] bg-black/85 flex items-end"
+//             className="fixed inset-0 z-[201] bg-black/85 flex items-end"
 //             onClick={() => setShowMore(false)}
 //           >
 //             <motion.div
@@ -881,7 +856,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //                 </div>
 //               </div>
 
-//               {/* Settings & Info — Notification Settings is here */}
+//               {/* Settings & Info */}
 //               <div>
 //                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
 //                   Settings & Info

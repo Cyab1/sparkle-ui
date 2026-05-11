@@ -72,8 +72,13 @@ export function Advertise() {
       if (!snap.exists()) return;
       const banners = Object.values(snap.val()) as any[];
       const now = Date.now();
+      // ── CHANGED: also respect activatesAt — banner only shows once its
+      //    scheduled start date has passed AND before its expiry date. ──────
       const active = banners.find(
-        (b) => b.active && (!b.expiresAt || b.expiresAt > now),
+        (b) =>
+          b.active &&
+          (!b.activatesAt || b.activatesAt <= now) &&
+          (!b.expiresAt || b.expiresAt > now),
       );
       setActiveBanner(active ?? null);
     });
@@ -91,7 +96,6 @@ export function Advertise() {
   const [done, setDone] = useState(false);
 
   const submit = async () => {
-    // Validation
     if (!bizName || !contactName || !email) {
       toast("Fill in business name, contact name and email", "error");
       return;
@@ -99,7 +103,6 @@ export function Advertise() {
 
     setSending(true);
     try {
-      // Firebase push with timeout fallback
       const pushPromise = push(ref(db, "ad_enquiries"), {
         bizName,
         contactName,
@@ -113,7 +116,6 @@ export function Advertise() {
         status: "new",
       });
 
-      // Timeout after 15 seconds to avoid infinite hanging
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error("Request timed out")), 15000),
       );
@@ -122,9 +124,6 @@ export function Advertise() {
 
       setDone(true);
       toast("✓ Enquiry submitted! We'll be in touch soon.", "success");
-
-      // Clear sensitive fields but keep business name for thank you message
-      // (We'll reset everything when user clicks "Submit another enquiry")
     } catch (error: any) {
       console.error("Advertise submit error:", error);
       toast(
@@ -263,7 +262,7 @@ export function Advertise() {
         </div>
       </div>
 
-      {/* Packages — 1 col mobile, 3 col desktop */}
+      {/* Packages */}
       <div className="mb-6">
         <div className="font-bold text-sm mb-3 text-foreground">
           Advertising Packages
@@ -345,7 +344,6 @@ export function Advertise() {
           </span>
           Submit Advertising Enquiry
         </div>
-        {/* 🔁 Changed copy from "within 24 hours" → "we will be in touch soon" */}
         <div className="text-xs text-muted-foreground mb-5">
           Fill in your details and we will be in touch soon.
         </div>
@@ -373,7 +371,6 @@ export function Advertise() {
                 setBizName("");
                 setPhone("");
                 setMessage("");
-                // Keep contactName and email pre-filled if user is logged in
                 if (!user?.name) setContactName("");
                 if (!user?.email) setEmail("");
               }}
@@ -455,7 +452,7 @@ export function Advertise() {
             </div>
             <div className="mb-4">
               <label className={lbl}>
-                Tell us about your business & goals (optional)
+                Tell us about your business &amp; goals (optional)
               </label>
               <textarea
                 className={`${inp} resize-none`}
@@ -473,7 +470,6 @@ export function Advertise() {
             >
               {sending ? "Submitting…" : "Submit Advertising Enquiry →"}
             </button>
-            {/* 🔁 Changed footer copy */}
             <div className="mt-3 text-center text-xs text-muted-foreground">
               We will be in touch soon · No commitment required
             </div>
@@ -554,7 +550,7 @@ export function Advertise() {
 //   const [activeBanner, setActiveBanner] = useState<any>(null);
 
 //   useEffect(() => {
-//     return onValue(ref(db, "ad_banners"), (snap) => {
+//     const unsub = onValue(ref(db, "ad_banners"), (snap) => {
 //       if (!snap.exists()) return;
 //       const banners = Object.values(snap.val()) as any[];
 //       const now = Date.now();
@@ -563,6 +559,7 @@ export function Advertise() {
 //       );
 //       setActiveBanner(active ?? null);
 //     });
+//     return () => unsub();
 //   }, []);
 
 //   const [bizName, setBizName] = useState("");
@@ -576,11 +573,16 @@ export function Advertise() {
 //   const [done, setDone] = useState(false);
 
 //   const submit = async () => {
-//     if (!bizName || !contactName || !email)
-//       return toast("Fill in business name, contact name and email", "error");
+//     // Validation
+//     if (!bizName || !contactName || !email) {
+//       toast("Fill in business name, contact name and email", "error");
+//       return;
+//     }
+
 //     setSending(true);
 //     try {
-//       await push(ref(db, "ad_enquiries"), {
+//       // Firebase push with timeout fallback
+//       const pushPromise = push(ref(db, "ad_enquiries"), {
 //         bizName,
 //         contactName,
 //         email,
@@ -592,12 +594,30 @@ export function Advertise() {
 //         timestamp: new Date().toISOString(),
 //         status: "new",
 //       });
+
+//       // Timeout after 15 seconds to avoid infinite hanging
+//       const timeoutPromise = new Promise((_, reject) =>
+//         setTimeout(() => reject(new Error("Request timed out")), 15000),
+//       );
+
+//       await Promise.race([pushPromise, timeoutPromise]);
+
 //       setDone(true);
 //       toast("✓ Enquiry submitted! We'll be in touch soon.", "success");
-//     } catch {
-//       toast("Submission failed — please try again", "error");
+
+//       // Clear sensitive fields but keep business name for thank you message
+//       // (We'll reset everything when user clicks "Submit another enquiry")
+//     } catch (error: any) {
+//       console.error("Advertise submit error:", error);
+//       toast(
+//         error.message === "Request timed out"
+//           ? "The request took too long. Please check your internet and try again."
+//           : "Submission failed — please try again",
+//         "error",
+//       );
+//     } finally {
+//       setSending(false);
 //     }
-//     setSending(false);
 //   };
 
 //   const inp =
@@ -807,8 +827,9 @@ export function Advertise() {
 //           </span>
 //           Submit Advertising Enquiry
 //         </div>
+//         {/* 🔁 Changed copy from "within 24 hours" → "we will be in touch soon" */}
 //         <div className="text-xs text-muted-foreground mb-5">
-//           Fill in your details and we'll get back to you within 24 hours.
+//           Fill in your details and we will be in touch soon.
 //         </div>
 
 //         {done ? (
@@ -834,6 +855,9 @@ export function Advertise() {
 //                 setBizName("");
 //                 setPhone("");
 //                 setMessage("");
+//                 // Keep contactName and email pre-filled if user is logged in
+//                 if (!user?.name) setContactName("");
+//                 if (!user?.email) setEmail("");
 //               }}
 //               className="text-xs font-bold bg-transparent border-none cursor-pointer"
 //               style={{ color: "hsl(20 100% 50%)" }}
@@ -931,8 +955,9 @@ export function Advertise() {
 //             >
 //               {sending ? "Submitting…" : "Submit Advertising Enquiry →"}
 //             </button>
+//             {/* 🔁 Changed footer copy */}
 //             <div className="mt-3 text-center text-xs text-muted-foreground">
-//               We'll contact you within 24 hours · No commitment required
+//               We will be in touch soon · No commitment required
 //             </div>
 //           </>
 //         )}

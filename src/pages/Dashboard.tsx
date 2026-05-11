@@ -209,7 +209,6 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
           Welcome,{" "}
           <span className="text-primary">{user.name.split(" ")[0]}</span>
         </div>
-        {/* Badge moved below the name, no longer inline with the subtitle */}
         <div className="mt-1.5 mb-1">
           <span
             className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
@@ -376,7 +375,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         </div>
       </motion.div>
 
-      {/* ── Not a member yet? ─────────────────────────────────────── */}
+      {/* ── Not a member yet? ───────────────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -492,26 +491,20 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
         </div>
         <div className="grid grid-cols-2 gap-2">
           {[
-            {
-              label: "PR Logbook",
-              icon: "emoji_events",
-              page: "PRLogbook",
-            },
-            {
-              label: "Leaderboard",
-              icon: "leaderboard",
-              page: "Leaderboard",
-            },
+            { label: "PR Logbook", icon: "emoji_events", page: "PRLogbook" },
+            { label: "Leaderboard", icon: "leaderboard", page: "Leaderboard" },
           ].map((a) => (
             <button
               key={a.label}
               onClick={() => setPage(a.page)}
-              className="bg-secondary border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
+              // ── FIXED: tighter gap + padding so "Leaderboard" fits on one
+              //    line on mobile; reduced tracking on the label ────────────
+              className="bg-secondary border border-border rounded-xl flex items-center gap-2 py-3 px-3 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
             >
               <MI icon={a.icon} size={18} />
               <span
-                className="font-display tracking-wide text-primary"
-                style={{ fontSize: 14 }}
+                className="font-display text-primary leading-tight"
+                style={{ fontSize: 13, letterSpacing: "0.04em" }}
               >
                 {a.label}
               </span>
@@ -596,6 +589,78 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //   };
 // }
 
+// // ── News Slider ───────────────────────────────────────────────────────────────
+// function NewsSlider({ items }: { items: any[] }) {
+//   const [current, setCurrent] = useState(0);
+
+//   useEffect(() => {
+//     if (items.length <= 1) return;
+//     const timer = setInterval(() => {
+//       setCurrent((c) => (c + 1) % items.length);
+//     }, 3500);
+//     return () => clearInterval(timer);
+//   }, [items.length]);
+
+//   if (!items.length) return null;
+
+//   const n = items[current];
+
+//   return (
+//     <div>
+//       <AnimatePresence mode="wait">
+//         <motion.div
+//           key={current}
+//           initial={{ opacity: 0, x: 24 }}
+//           animate={{ opacity: 1, x: 0 }}
+//           exit={{ opacity: 0, x: -24 }}
+//           transition={{ duration: 0.28 }}
+//           className="flex items-center gap-3 py-1.5"
+//         >
+//           <span className="text-xl shrink-0">{n.emoji}</span>
+//           <div className="flex-1 min-w-0">
+//             <div className="text-xs font-medium truncate text-foreground">
+//               {n.title}
+//             </div>
+//             <div className="text-[10px] text-muted-foreground">{n.date}</div>
+//           </div>
+//           {n.type && (
+//             <span
+//               className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0"
+//               style={{
+//                 background: "hsl(20 100% 50% / 0.12)",
+//                 color: "hsl(20 100% 45%)",
+//               }}
+//             >
+//               {n.type}
+//             </span>
+//           )}
+//         </motion.div>
+//       </AnimatePresence>
+
+//       {/* Dot indicators */}
+//       {items.length > 1 && (
+//         <div className="flex gap-1.5 mt-2 justify-center">
+//           {items.map((_, i) => (
+//             <button
+//               key={i}
+//               onClick={() => setCurrent(i)}
+//               className="border-none cursor-pointer p-0 transition-all"
+//               style={{
+//                 width: i === current ? 16 : 6,
+//                 height: 6,
+//                 borderRadius: 3,
+//                 background:
+//                   i === current ? "hsl(20 100% 50%)" : "hsl(var(--border))",
+//               }}
+//             />
+//           ))}
+//         </div>
+//       )}
+//     </div>
+//   );
+// }
+
+// // ── Dashboard ─────────────────────────────────────────────────────────────────
 // export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //   const { user } = useAuth();
 //   const { isMobile, isTablet } = useBreakpoint();
@@ -662,10 +727,8 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //           Welcome,{" "}
 //           <span className="text-primary">{user.name.split(" ")[0]}</span>
 //         </div>
-//         <div className="flex items-center gap-2 mt-1 flex-wrap">
-//           <span className="text-muted-foreground text-xs">
-//             {user.goal} · {user.level}
-//           </span>
+//         {/* Badge moved below the name, no longer inline with the subtitle */}
+//         <div className="mt-1.5 mb-1">
 //           <span
 //             className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
 //             style={{
@@ -676,6 +739,9 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //           >
 //             {memberConfig.emoji} {memberConfig.label}
 //           </span>
+//         </div>
+//         <div className="text-muted-foreground text-xs">
+//           {user.goal} · {user.level}
 //         </div>
 //       </div>
 
@@ -688,7 +754,7 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //         >
 //           <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
 //             Please verify your email address to unlock all features. If you
-//             don’t see the verification email in your inbox, please check your
+//             don't see the verification email in your inbox, please check your
 //             Junk or Spam folder
 //           </span>
 //           <div className="flex items-center gap-2 shrink-0">
@@ -879,11 +945,13 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //         initial={{ opacity: 0, y: 8 }}
 //         animate={{ opacity: 1, y: 0 }}
 //         transition={{ delay: 0.4 }}
-//         className="mk2-card cursor-pointer hover:border-primary/30 transition-colors mb-4"
-//         onClick={() => setPage("News")}
+//         className="mk2-card mb-4"
 //         style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
 //       >
-//         <div className="flex items-center justify-between mb-3">
+//         <div
+//           className="flex items-center justify-between mb-3 cursor-pointer"
+//           onClick={() => setPage("News")}
+//         >
 //           <span
 //             className="font-display tracking-wide text-primary"
 //             style={{ fontSize: 15 }}
@@ -892,24 +960,8 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //           </span>
 //           <span className="text-[10px] text-primary font-bold">View all →</span>
 //         </div>
-//         <div className="flex flex-col gap-2">
-//           {newsToShow.map((n: any, i: number) => (
-//             <div
-//               key={i}
-//               className="flex items-center gap-2 py-1.5 border-b border-border"
-//             >
-//               <span className="text-base shrink-0">{n.emoji}</span>
-//               <div className="flex-1 min-w-0">
-//                 <div className="text-xs font-medium truncate text-foreground">
-//                   {n.title}
-//                 </div>
-//                 <div className="text-[10px] text-muted-foreground">
-//                   {n.date}
-//                 </div>
-//               </div>
-//             </div>
-//           ))}
-//         </div>
+
+//         <NewsSlider items={newsToShow} />
 //       </motion.div>
 
 //       {/* ── Community ──────────────────────────────────────────────────── */}
@@ -943,44 +995,47 @@ export function Dashboard({ setPage }: { setPage: (p: string) => void }) {
 //       </motion.div>
 
 //       {/* ── My Progress — PR Logbook + Leaderboard ──────────────────────── */}
-//       <div
-//         className="font-display tracking-wide mt-4 mb-2"
-//         style={{ color: "hsl(20 100% 50%)", fontSize: 16 }}
-//       >
-//         My Progress
-//       </div>
 //       <motion.div
 //         initial={{ opacity: 0, y: 8 }}
 //         animate={{ opacity: 1, y: 0 }}
 //         transition={{ delay: 0.5 }}
-//         className="grid grid-cols-2 gap-2 mt-2"
+//         className="mk2-card"
+//         style={{ borderLeft: "3px solid hsl(20 100% 50%)" }}
 //       >
-//         {[
-//           {
-//             label: "PR Logbook",
-//             icon: "emoji_events",
-//             page: "PRLogbook",
-//           },
-//           {
-//             label: "Leaderboard",
-//             icon: "leaderboard",
-//             page: "Leaderboard",
-//           },
-//         ].map((a) => (
-//           <button
-//             key={a.label}
-//             onClick={() => setPage(a.page)}
-//             className="bg-card border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
-//           >
-//             <MI icon={a.icon} size={18} />
-//             <span
-//               className="font-display tracking-wide text-primary"
-//               style={{ fontSize: 14 }}
+//         <div
+//           className="font-display tracking-wide mb-3"
+//           style={{ color: "hsl(20 100% 50%)", fontSize: 15 }}
+//         >
+//           My Progress
+//         </div>
+//         <div className="grid grid-cols-2 gap-2">
+//           {[
+//             {
+//               label: "PR Logbook",
+//               icon: "emoji_events",
+//               page: "PRLogbook",
+//             },
+//             {
+//               label: "Leaderboard",
+//               icon: "leaderboard",
+//               page: "Leaderboard",
+//             },
+//           ].map((a) => (
+//             <button
+//               key={a.label}
+//               onClick={() => setPage(a.page)}
+//               className="bg-secondary border border-border rounded-xl flex items-center gap-2.5 py-3 px-4 cursor-pointer hover:border-primary/30 transition-all text-left w-full"
 //             >
-//               {a.label}
-//             </span>
-//           </button>
-//         ))}
+//               <MI icon={a.icon} size={18} />
+//               <span
+//                 className="font-display tracking-wide text-primary"
+//                 style={{ fontSize: 14 }}
+//               >
+//                 {a.label}
+//               </span>
+//             </button>
+//           ))}
+//         </div>
 //       </motion.div>
 //     </div>
 //   );

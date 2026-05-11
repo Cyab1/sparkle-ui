@@ -29,6 +29,8 @@ import MessageBubble from "@/components/ui/MessageBubble";
 import PollMessage from "@/components/ui/PollMessage";
 import MessageMenu from "@/components/ui/MessageMenu";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 interface Message {
   id: string;
   text: string;
@@ -48,7 +50,14 @@ interface FeedPost {
   date: string;
 }
 
-const ROOMS = [
+interface Room {
+  name: string;
+  desc: string;
+}
+
+// ── Fallback rooms (used when community_rooms hasn't been written to Firebase yet) ──
+
+const FALLBACK_ROOMS: Room[] = [
   { name: "💬 MK2R General", desc: "News, updates & schedules." },
   { name: "🏆 MK2R Competitive Group", desc: "Competition prep & strategy" },
   { name: "🔥 MK2R Hyrox", desc: "HYROX training & performance talk" },
@@ -57,6 +66,8 @@ const ROOMS = [
     desc: "Business, partnerships & growth discussions",
   },
 ];
+
+// ── Seed feed posts (local only — shown until real feed is implemented) ────────
 
 const SEED_POSTS: FeedPost[] = [
   {
@@ -85,6 +96,8 @@ const SEED_POSTS: FeedPost[] = [
   },
 ];
 
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export function Community() {
   const { user, toast } = useAuth();
   const { isMobile } = useBreakpoint();
@@ -98,7 +111,7 @@ export function Community() {
 
   const [tab, setTab] = useState<"feed" | "chat">("feed");
 
-  // Feed state
+  // ── Feed state ──────────────────────────────────────────────────────────────
   const [posts, setPosts] = useState<FeedPost[]>(SEED_POSTS);
   const [feedText, setFeedText] = useState("");
 
@@ -120,8 +133,9 @@ export function Community() {
     toast("Posted! 🙌", "success");
   };
 
-  // Chat state
+  // ── Chat state ──────────────────────────────────────────────────────────────
   const [isChatMobile, setIsChatMobile] = useState(window.innerWidth < 768);
+  const [rooms, setRooms] = useState<Room[]>([]); // ← replaces hardcoded ROOMS
   const [messages, setMessages] = useState<Message[]>([]);
   const [polls, setPolls] = useState<any[]>([]);
   const [chatText, setChatText] = useState("");
@@ -154,6 +168,8 @@ export function Community() {
 
   const encodeRoom = (r: string) => encodeURIComponent(r).replace(/\./g, "%2E");
 
+  // ── Effects ─────────────────────────────────────────────────────────────────
+
   // Resize handler
   useEffect(() => {
     const onResize = () => setIsChatMobile(window.innerWidth < 768);
@@ -171,7 +187,7 @@ export function Community() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  // Notification permission (Community‑scoped) – uses mk2_users path
+  // Notification permission (Community-scoped)
   useEffect(() => {
     if (!uid || uid === "guest") return;
     const prefRef = ref(db, `mk2_users/${uid}/notificationPrefs/community`);
@@ -182,7 +198,28 @@ export function Community() {
     });
   }, [uid]);
 
-  // Joined rooms – keep mk2_users path
+  // ── CHANGED: sync rooms from Firebase community_rooms (live subscription) ──
+  useEffect(() => {
+    const roomsRef = ref(db, "community_rooms");
+    return onValue(roomsRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.val();
+        // Admin stores as { room_0: {name, desc}, room_1: {name, desc}, ... }
+        const list = (Object.values(data) as any[])
+          .filter((r) => r?.name) // guard malformed entries
+          .map((r) => ({
+            name: r.name as string,
+            desc: (r.desc ?? "") as string,
+          }));
+        setRooms(list);
+      } else {
+        // Fallback: admin hasn't written community_rooms to Firebase yet
+        setRooms(FALLBACK_ROOMS);
+      }
+    });
+  }, []);
+
+  // Joined rooms
   useEffect(() => {
     if (!canChat) return;
     return onValue(ref(db, `mk2_users/${uid}/joinedRooms`), (snap) => {
@@ -190,7 +227,7 @@ export function Community() {
     });
   }, [uid, canChat]);
 
-  // Load lastSeen timestamps – mk2_users
+  // Load lastSeen timestamps
   useEffect(() => {
     if (!canChat) return;
     return onValue(ref(db, `mk2_users/${uid}/roomLastSeen`), (snap) => {
@@ -198,7 +235,7 @@ export function Community() {
     });
   }, [uid, canChat]);
 
-  // Load clearedBefore – mk2_users
+  // Load clearedBefore
   useEffect(() => {
     if (!canChat) return;
     return onValue(ref(db, `mk2_users/${uid}/clearedBefore`), (snap) => {
@@ -241,7 +278,7 @@ export function Community() {
     return () => unsubs.forEach((u) => u());
   }, [joinedRooms, lastSeenMap, clearedBeforeMap, uid, canChat]);
 
-  // Mark room as seen when opened – mk2_users
+  // Mark room as seen when opened
   useEffect(() => {
     if (!room || !joinedRooms.includes(room)) return;
     const key = encodeRoom(room);
@@ -250,7 +287,7 @@ export function Community() {
     setLastSeenMap((prev) => ({ ...prev, [key]: now }));
   }, [room, joinedRooms, uid]);
 
-  // Messages – with clearedBefore filtering
+  // Messages — with clearedBefore filtering
   useEffect(() => {
     setMessages([]);
     if (!room || !joinedRooms.includes(room)) return;
@@ -277,7 +314,7 @@ export function Community() {
     });
   }, [room, joinedRooms, clearedBeforeMap]);
 
-  // Polls – with clearedBefore filtering
+  // Polls — with clearedBefore filtering
   useEffect(() => {
     if (!room || !joinedRooms.includes(room)) return;
     return onValue(ref(db, `rooms/${room}/polls`), (snap) => {
@@ -291,7 +328,8 @@ export function Community() {
     });
   }, [room, joinedRooms, clearedBeforeMap]);
 
-  // Video compression (same as teammate’s)
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
   const compressVideo = (file: File, targetBytes: number): Promise<File> => {
     return new Promise((resolve) => {
       if (file.size <= targetBytes) {
@@ -335,7 +373,8 @@ export function Community() {
     });
   };
 
-  // ── Chat actions ──────────────────────────────────────────────────────────
+  // ── Chat actions ──────────────────────────────────────────────────────────────
+
   const joinRoom = async () => {
     if (room) await set(ref(db, `mk2_users/${uid}/joinedRooms/${room}`), true);
   };
@@ -346,7 +385,6 @@ export function Community() {
     setRoom(null);
   };
 
-  // Local clear – mk2_users
   const clearRoomLocally = async () => {
     if (
       !room ||
@@ -522,6 +560,8 @@ export function Community() {
   const isJoined = !!(room && joinedRooms.includes(room));
   let lastDateRef = { value: "" };
 
+  // ── Render ────────────────────────────────────────────────────────────────────
+
   return (
     <div
       className={
@@ -535,7 +575,6 @@ export function Community() {
         <div
           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pt-5" : "px-6 pt-10"}`}
         >
-          {/* ✅ UPDATED: Page title with "Chat" highlighted */}
           <PageTitle sub="Share wins, ask questions, motivate each other">
             Community <span className="text-primary">Chat</span>
           </PageTitle>
@@ -585,7 +624,7 @@ export function Community() {
         </div>
       </div>
 
-      {/* FEED TAB */}
+      {/* ── FEED TAB ──────────────────────────────────────────────────────────── */}
       {tab === "feed" && (
         <div
           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pb-5" : "px-6 pb-10"}`}
@@ -647,7 +686,7 @@ export function Community() {
         </div>
       )}
 
-      {/* CHAT TAB */}
+      {/* ── CHAT TAB ──────────────────────────────────────────────────────────── */}
       {tab === "chat" && canChat && (
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Sidebar */}
@@ -667,13 +706,15 @@ export function Community() {
                 </div>
               </div>
 
-              {joinedRooms.length > 0 && (
+              {/* My Rooms — joined rooms that still exist in Firebase */}
+              {rooms.filter((r) => joinedRooms.includes(r.name)).length > 0 && (
                 <>
                   <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wider">
                     My Rooms
                   </p>
-                  {ROOMS.filter((r) => joinedRooms.includes(r.name)).map(
-                    (r) => (
+                  {rooms
+                    .filter((r) => joinedRooms.includes(r.name))
+                    .map((r) => (
                       <RoomCard
                         key={r.name}
                         room={r}
@@ -681,23 +722,37 @@ export function Community() {
                         unreadCount={roomMessageCounts[r.name]?.count || 0}
                         onClick={() => setRoom(r.name)}
                       />
-                    ),
-                  )}
+                    ))}
                 </>
               )}
 
-              <p className="text-xs text-muted-foreground mt-4 mb-2 uppercase tracking-wider">
-                Discover
-              </p>
-              {ROOMS.filter((r) => !joinedRooms.includes(r.name)).map((r) => (
-                <RoomCard
-                  key={r.name}
-                  room={r}
-                  active={false}
-                  unreadCount={0}
-                  onClick={() => setRoom(r.name)}
-                />
-              ))}
+              {/* Discover — rooms not yet joined */}
+              {rooms.filter((r) => !joinedRooms.includes(r.name)).length >
+                0 && (
+                <>
+                  <p className="text-xs text-muted-foreground mt-4 mb-2 uppercase tracking-wider">
+                    Discover
+                  </p>
+                  {rooms
+                    .filter((r) => !joinedRooms.includes(r.name))
+                    .map((r) => (
+                      <RoomCard
+                        key={r.name}
+                        room={r}
+                        active={false}
+                        unreadCount={0}
+                        onClick={() => setRoom(r.name)}
+                      />
+                    ))}
+                </>
+              )}
+
+              {/* Empty state while rooms are loading */}
+              {rooms.length === 0 && (
+                <p className="text-xs text-muted-foreground mt-4">
+                  Loading rooms…
+                </p>
+              )}
             </div>
           )}
 
@@ -768,12 +823,11 @@ export function Community() {
                         <div ref={bottomRef} />
                       </div>
 
-                      {/* ✅ UPDATED: Poll creation disabled for members */}
                       <ChatInput
                         text={chatText}
                         setText={setChatText}
                         sendMessage={sendMessage}
-                        createPoll={null} // ← Poll button hidden/disabled
+                        createPoll={null}
                         replyTo={replyTo}
                         setReplyTo={setReplyTo}
                         onFileSelect={handleFileSelect}
@@ -792,7 +846,7 @@ export function Community() {
         </div>
       )}
 
-      {/* Context menu – only for own messages */}
+      {/* Context menu — only for own messages */}
       {menuMsg && menuMsg.uid === uid && (
         <MessageMenu
           ref={menuRef}
@@ -858,8 +912,16 @@ export function Community() {
               <div className="flex gap-3">
                 {[
                   { label: "hrs", value: pollHours, setter: setPollHours },
-                  { label: "min", value: pollMinutes, setter: setPollMinutes },
-                  { label: "sec", value: pollSeconds, setter: setPollSeconds },
+                  {
+                    label: "min",
+                    value: pollMinutes,
+                    setter: setPollMinutes,
+                  },
+                  {
+                    label: "sec",
+                    value: pollSeconds,
+                    setter: setPollSeconds,
+                  },
                 ].map(({ label, value, setter }) => (
                   <div key={label} className="flex-1 text-center">
                     <input
@@ -1427,8 +1489,9 @@ export function Community() {
 //         <div
 //           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pt-5" : "px-6 pt-10"}`}
 //         >
+//           {/* ✅ UPDATED: Page title with "Chat" highlighted */}
 //           <PageTitle sub="Share wins, ask questions, motivate each other">
-//             Community
+//             Community <span className="text-primary">Chat</span>
 //           </PageTitle>
 //         </div>
 //       )}
@@ -1659,11 +1722,12 @@ export function Community() {
 //                         <div ref={bottomRef} />
 //                       </div>
 
+//                       {/* ✅ UPDATED: Poll creation disabled for members */}
 //                       <ChatInput
 //                         text={chatText}
 //                         setText={setChatText}
 //                         sendMessage={sendMessage}
-//                         createPoll={createPoll}
+//                         createPoll={null} // ← Poll button hidden/disabled
 //                         replyTo={replyTo}
 //                         setReplyTo={setReplyTo}
 //                         onFileSelect={handleFileSelect}

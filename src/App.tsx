@@ -14,7 +14,9 @@ import { Gallery } from "@/pages/Gallery";
 import { NewsEvents } from "@/pages/NewsEvents";
 import { Account } from "@/pages/Account";
 import { Leaderboard } from "@/pages/Leaderboard";
-import { Notifications } from "@/pages/Notifications";
+import { NotificationsInbox } from "@/pages/NotificationsInbox";
+// If you renamed the file:
+import { NotificationSettings } from "@/pages/NotificationSettings";
 import { InBody } from "@/pages/Inbody";
 import { BMR } from "@/pages/BMR";
 import { PRLogbook } from "@/pages/PRLogbook";
@@ -37,7 +39,7 @@ function AppContent() {
   const { user, booting, toastData, clearToast } = useAuth();
   const [page, setPage] = useState("Dashboard");
 
-  usePushNotifications();
+  usePushNotifications(setPage);
 
   // Admin panel — no login required, accessed via /#admin
   if (typeof window !== "undefined" && window.location.hash === "#admin") {
@@ -123,18 +125,14 @@ function AppContent() {
         {page === "Terms" && <Terms />}
         {page === "Privacy" && <Privacy />}
         {page === "Advertise" && <Advertise />}
+        {page === "NotificationsInbox" && (
+          <NotificationsInbox setPage={setPage} />
+        )}
+        {page === "NotificationSettings" && (
+          <NotificationSettings setPage={setPage} />
+        )}
 
         {/* ── Silver tier ─────────────────────────────────────────────────── */}
-        {page === "Notifications" && (
-          <MembershipGate
-            required="silver"
-            feature="Push Notifications"
-            icon="notifications"
-            setPage={setPage}
-          >
-            <Notifications setPage={setPage} />
-          </MembershipGate>
-        )}
         {page === "Community" && (
           <MembershipGate
             required="silver"
