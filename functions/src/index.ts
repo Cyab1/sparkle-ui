@@ -6,6 +6,220 @@ import * as admin from "firebase-admin";
 admin.initializeApp();
 const db = admin.database();
 
+// ── Anthropic config ──────────────────────────────────────────────────────────
+// Store your key in Firebase config:
+//   firebase functions:secrets:set ANTHROPIC_API_KEY
+// Then add  secrets: ["ANTHROPIC_API_KEY"]  to any function that needs it.
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
+
+// ── Quota config ──────────────────────────────────────────────────────────────
+const QUOTA: Record<string, number> = {
+  gold: 100,
+  silver: 20,
+  basic: 0,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  HELPER: Check + increment AI quota for a user
+//  Returns remaining count after increment, or throws if over limit.
+// ─────────────────────────────────────────────────────────────────────────────
+async function checkAndIncrementQuota(uid: string): Promise<number> {
+  const userSnap = await db.ref(`mk2_users/${uid}`).once("value");
+  const user = userSnap.val();
+  if (!user)
+    throw new functions.https.HttpsError("not-found", "User not found");
+
+  const membership = user.membership ?? "basic";
+  const isActive = membership === "silver" || membership === "gold";
+  if (!isActive) {
+    throw new functions.https.HttpsError("permission-denied", "JOIN_GYM");
+  }
+
+  const total = QUOTA[membership] ?? 0;
+  const now = new Date();
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  const quotaRef = db.ref(`mk2_users/${uid}/aiQuota`);
+  const quotaSnap = await quotaRef.once("value");
+  const quota = quotaSnap.val() || { used: 0, month };
+
+  // Reset counter if it's a new month
+  if (quota.month !== month) {
+    quota.used = 0;
+    quota.month = month;
+  }
+
+  if (quota.used >= total) {
+    throw new functions.https.HttpsError(
+      "resource-exhausted",
+      "QUOTA_EXCEEDED",
+    );
+  }
+
+  const newUsed = quota.used + 1;
+  await quotaRef.set({ used: newUsed, month });
+
+  return Math.max(0, total - newUsed);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  HELPER: Call Anthropic API
+// ─────────────────────────────────────────────────────────────────────────────
+async function callAnthropic(
+  apiKey: string,
+  systemPrompt: string,
+  messages: any[],
+): Promise<string> {
+  const response = await fetch(ANTHROPIC_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: ANTHROPIC_MODEL,
+      max_tokens: 1500,
+      system: systemPrompt,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    console.error("Anthropic API error:", response.status, err);
+    throw new functions.https.HttpsError(
+      "internal",
+      `Anthropic API error: ${response.status}`,
+    );
+  }
+
+  const data = await response.json();
+  const text = data.content?.find((b: any) => b.type === "text")?.text ?? "";
+
+  if (!text) {
+    throw new functions.https.HttpsError("internal", "EMPTY_RESPONSE");
+  }
+
+  return text;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  aiChat — unified AI callable
+//
+//  Modes:
+//    "nutrition"      → text-only meal plan generation
+//    "inbody"         → text-only body composition analysis
+//    "inbody_extract" → vision/PDF extraction from uploaded InBody report
+//
+//  All modes enforce membership + monthly quota.
+// ─────────────────────────────────────────────────────────────────────────────
+export const aiChat = onCall(
+  {
+    region: "europe-west1",
+    secrets: ["ANTHROPIC_API_KEY"],
+    // Increase timeout for vision requests (default 60s)
+    timeoutSeconds: 120,
+    // Allow larger payloads for base64 file uploads
+    memory: "512MiB",
+  },
+  async (request) => {
+    // ── Auth check ────────────────────────────────────────────────────────
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new functions.https.HttpsError("unauthenticated", "Not logged in");
+    }
+
+    const {
+      mode,
+      prompt,
+      systemPrompt,
+      // inbody_extract specific
+      fileData,
+      mediaType,
+      isPDF,
+    } = request.data as {
+      mode: string;
+      prompt?: string;
+      systemPrompt?: string;
+      fileData?: string; // base64 encoded file
+      mediaType?: string; // e.g. "image/jpeg" or "application/pdf"
+      isPDF?: boolean;
+    };
+
+    // ── Quota check (applies to all modes) ───────────────────────────────
+    const quotaRemaining = await checkAndIncrementQuota(uid);
+
+    // ── Get API key from secret ───────────────────────────────────────────
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw new functions.https.HttpsError(
+        "internal",
+        "API key not configured",
+      );
+    }
+
+    const sysPrompt =
+      systemPrompt ||
+      "You are a helpful fitness assistant at MK2 Rivers Fitness, South Africa.";
+
+    // ── Mode: inbody_extract (vision) ─────────────────────────────────────
+    if (mode === "inbody_extract") {
+      if (!fileData || !mediaType) {
+        throw new functions.https.HttpsError(
+          "invalid-argument",
+          "fileData and mediaType are required for inbody_extract mode",
+        );
+      }
+
+      const contentBlock = isPDF
+        ? {
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: fileData,
+            },
+          }
+        : {
+            type: "image",
+            source: { type: "base64", media_type: mediaType, data: fileData },
+          };
+
+      const messages = [
+        {
+          role: "user",
+          content: [
+            contentBlock,
+            {
+              type: "text",
+              text:
+                prompt ||
+                `Extract InBody values as JSON with keys: weight, bodyFat, muscleMass, fatMass, visceralFat, totalBodyWater. Respond ONLY with the JSON object.`,
+            },
+          ],
+        },
+      ];
+
+      const response = await callAnthropic(apiKey, sysPrompt, messages);
+      return { response, quotaRemaining };
+    }
+
+    // ── Mode: nutrition or inbody (text only) ─────────────────────────────
+    if (!prompt) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "prompt is required for this mode",
+      );
+    }
+
+    const messages = [{ role: "user", content: prompt }];
+    const response = await callAnthropic(apiKey, sysPrompt, messages);
+    return { response, quotaRemaining };
+  },
+);
+
 // ── Helper: Write a notification record for a user ───────────────────────────
 async function writeNotification(
   uid: string,
@@ -22,7 +236,7 @@ async function writeNotification(
   });
 }
 
-// ── Helper: Write notifications for multiple users ──────────────────────────
+// ── Helper: Write notifications for multiple users ────────────────────────────
 async function writeNotificationForAll(
   uidTokenPairs: { uid: string }[],
   title: string,
@@ -35,13 +249,13 @@ async function writeNotificationForAll(
   await Promise.all(writes);
 }
 
-// ── Helper: Get FCM token for a single user ─────────────────────────────────
+// ── Helper: Get FCM token for a single user ───────────────────────────────────
 async function getUserToken(uid: string): Promise<string | null> {
   const snap = await db.ref(`mk2_users/${uid}/fcmToken`).once("value");
   return snap.val() as string | null;
 }
 
-// ── Helper: Get user notification preferences ────────────────────────────────
+// ── Helper: Get user notification preferences ─────────────────────────────────
 async function getUserPrefs(uid: string): Promise<Record<string, boolean>> {
   const snap = await db.ref(`mk2_users/${uid}/notificationPrefs`).once("value");
   return snap.val() || {};
@@ -97,13 +311,11 @@ async function sendToUser(
 ) {
   const token = await getUserToken(uid);
   await writeNotification(uid, title, body, link);
-  if (token) {
-    await sendToTokens([token], title, body);
-  }
+  if (token) await sendToTokens([token], title, body);
   console.log(`Notification sent + written for ${uid}`);
 }
 
-// ── Helper: Send push + in‑app to all users (with preference filter) ─────────
+// ── Helper: Send push + in‑app to all users (with preference filter) ──────────
 async function sendToAllUsers(
   title: string,
   body: string,
@@ -116,14 +328,11 @@ async function sendToAllUsers(
 
   usersSnap.forEach((user) => {
     if (!user.key) return;
-
     if (prefKey) {
       const prefs = user.child("notificationPrefs").val() || {};
       if (prefs[prefKey] === false) return;
     }
-
     eligibleUids.push({ uid: user.key });
-
     const token = user.child("fcmToken").val() as string | null;
     if (token) tokens.push(token);
   });
@@ -133,7 +342,7 @@ async function sendToAllUsers(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Existing triggers (unchanged)
+//  Existing triggers
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const onClassBookingCreate = functions.database.onValueCreated(
@@ -180,15 +389,11 @@ export const onMessageCreate = functions.database.onValueCreated(
 
     usersSnap.forEach((user) => {
       if (!user.key || user.key === message.uid) return;
-
       const prefs = user.child("notificationPrefs").val() || {};
       if (prefs.community === false) return;
-
       const joinedRooms = user.child("joinedRooms").val() || {};
       if (!joinedRooms[roomId]) return;
-
       eligibleUids.push({ uid: user.key });
-
       const token = user.child("fcmToken").val() as string | null;
       if (token) tokens.push(token);
     });
@@ -200,7 +405,6 @@ export const onMessageCreate = functions.database.onValueCreated(
 
     await writeNotificationForAll(eligibleUids, title, body, "community");
     await sendToTokens(tokens, title, body);
-
     return null;
   },
 );
@@ -222,15 +426,11 @@ export const onPollCreate = functions.database.onValueCreated(
 
     usersSnap.forEach((user) => {
       if (!user.key || user.key === poll.uid) return;
-
       const prefs = user.child("notificationPrefs").val() || {};
       if (prefs.community === false) return;
-
       const joinedRooms = user.child("joinedRooms").val() || {};
       if (!joinedRooms[roomId]) return;
-
       eligibleUids.push({ uid: user.key });
-
       const token = user.child("fcmToken").val() as string | null;
       if (token) tokens.push(token);
     });
@@ -240,7 +440,6 @@ export const onPollCreate = functions.database.onValueCreated(
 
     await writeNotificationForAll(eligibleUids, title, body, "community");
     await sendToTokens(tokens, title, body);
-
     return null;
   },
 );
@@ -277,7 +476,7 @@ export const checkinReminder = onSchedule(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  UPDATED PayFast Webhook – supports class_booking, credits, membership
+//  PayFast Webhook
 // ─────────────────────────────────────────────────────────────────────────────
 export const payfastNotify = onRequest(
   { region: "europe-west1" },
@@ -344,7 +543,6 @@ export const payfastNotify = onRequest(
         return;
       }
 
-      // Confirm the booking
       await bookingRef.update({
         status: "confirmed",
         paymentId: data.pf_payment_id,
@@ -377,29 +575,24 @@ export const payfastNotify = onRequest(
 
       const newBooking = {
         name: className,
-        time: time,
-        dateKey: dateKey,
+        time,
+        dateKey,
         displayDate: booking.dateDisplay,
         category: category || "Class",
         trainer: trainer || "Coach",
-        price: price,
+        price,
       };
       const existingBookings = userData.bookings || [];
       await db
         .ref(`mk2_users/${userId}/bookings`)
         .set([...existingBookings, newBooking]);
 
-      // Increment class bookedCount
       if (classId) {
-        const classRef = db.ref(`admin_classes/${classId}`);
-        await classRef.transaction((current) => {
-          if (current) {
-            current.bookedCount = (current.bookedCount || 0) + 1;
-          }
+        await db.ref(`admin_classes/${classId}`).transaction((current) => {
+          if (current) current.bookedCount = (current.bookedCount || 0) + 1;
           return current;
         });
       } else {
-        // Fallback: search by name and date – fixed TypeScript error
         const classesSnap = await db.ref("admin_classes").once("value");
         let foundId: string | null = null;
         classesSnap.forEach((child) => {
@@ -437,6 +630,7 @@ export const payfastNotify = onRequest(
         res.status(400).send("Missing uid");
         return;
       }
+
       const credRef = db.ref(`mk2_users/${uid}/classCredits`);
       const snap = await credRef.once("value");
       const current = snap.exists() ? (snap.val() as number) : 0;
@@ -466,8 +660,8 @@ export const payfastNotify = onRequest(
         res.status(400).send("Missing uid");
         return;
       }
-      await db.ref(`mk2_users/${uid}/membership`).set(refId);
 
+      await db.ref(`mk2_users/${uid}/membership`).set(refId);
       await db.ref(`mk2_users/${uid}/membershipHistory`).push({
         tier: refId,
         type: "payfast_upgrade",
@@ -492,61 +686,57 @@ export const payfastNotify = onRequest(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  NEW: Log Personal Record (callable function)
+//  Log Personal Record
 // ─────────────────────────────────────────────────────────────────────────────
-export const logPR = onCall(
-  {
-    region: "europe-west1",
-  },
-  async (request) => {
-    const uid = request.auth?.uid;
-    if (!uid)
-      throw new functions.https.HttpsError("unauthenticated", "Not logged in");
+export const logPR = onCall({ region: "europe-west1" }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid)
+    throw new functions.https.HttpsError("unauthenticated", "Not logged in");
 
-    const data = request.data;
-    const required = [
-      "exercise_id",
-      "value",
-      "displayValue",
-      "category",
-      "level",
-    ];
-    for (const field of required) {
-      if (!data[field])
-        throw new functions.https.HttpsError(
-          "invalid-argument",
-          `Missing ${field}`,
-        );
+  const data = request.data;
+  const required = [
+    "exercise_id",
+    "value",
+    "displayValue",
+    "category",
+    "level",
+  ];
+  for (const field of required) {
+    if (!data[field]) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        `Missing ${field}`,
+      );
     }
+  }
 
-    const userSnap = await db.ref(`mk2_users/${uid}`).once("value");
-    const user = userSnap.val();
-    if (!user)
-      throw new functions.https.HttpsError("not-found", "User not found");
+  const userSnap = await db.ref(`mk2_users/${uid}`).once("value");
+  const user = userSnap.val();
+  if (!user)
+    throw new functions.https.HttpsError("not-found", "User not found");
 
-    const prData = {
-      uid,
-      athlete: user.name || "Unknown",
-      gender: user.gender === "female" ? "Female" : "Male",
-      level: data.level,
-      category: data.category,
-      exercise_id: data.exercise_id,
-      exercise: data.exercise,
-      value: data.value,
-      unit: data.unit,
-      displayValue: data.displayValue,
-      notes: data.notes || "",
-      date_logged: data.date_logged,
-      timestamp: Date.now(),
-    };
+  const prData = {
+    uid,
+    athlete: user.name || "Unknown",
+    gender: user.gender === "female" ? "Female" : "Male",
+    level: data.level,
+    category: data.category,
+    exercise_id: data.exercise_id,
+    exercise: data.exercise,
+    value: data.value,
+    unit: data.unit,
+    displayValue: data.displayValue,
+    notes: data.notes || "",
+    date_logged: data.date_logged,
+    timestamp: Date.now(),
+  };
 
-    const newRef = await db.ref("pr_logbook").push(prData);
-    return { success: true, key: newRef.key };
-  },
-);
+  const newRef = await db.ref("pr_logbook").push(prData);
+  return { success: true, key: newRef.key };
+});
 
 // import * as functions from "firebase-functions/v2";
-// import { onRequest } from "firebase-functions/v2/https";
+// import { onRequest, onCall } from "firebase-functions/v2/https";
 // import { onSchedule } from "firebase-functions/v2/scheduler";
 // import * as admin from "firebase-admin";
 
@@ -1035,5 +1225,59 @@ export const logPR = onCall(
 
 //     console.warn("Unknown payment type:", paymentType);
 //     res.status(400).send("Unknown payment type");
+//   },
+// );
+
+// // ─────────────────────────────────────────────────────────────────────────────
+// //  NEW: Log Personal Record (callable function)
+// // ─────────────────────────────────────────────────────────────────────────────
+// export const logPR = onCall(
+//   {
+//     region: "europe-west1",
+//   },
+//   async (request) => {
+//     const uid = request.auth?.uid;
+//     if (!uid)
+//       throw new functions.https.HttpsError("unauthenticated", "Not logged in");
+
+//     const data = request.data;
+//     const required = [
+//       "exercise_id",
+//       "value",
+//       "displayValue",
+//       "category",
+//       "level",
+//     ];
+//     for (const field of required) {
+//       if (!data[field])
+//         throw new functions.https.HttpsError(
+//           "invalid-argument",
+//           `Missing ${field}`,
+//         );
+//     }
+
+//     const userSnap = await db.ref(`mk2_users/${uid}`).once("value");
+//     const user = userSnap.val();
+//     if (!user)
+//       throw new functions.https.HttpsError("not-found", "User not found");
+
+//     const prData = {
+//       uid,
+//       athlete: user.name || "Unknown",
+//       gender: user.gender === "female" ? "Female" : "Male",
+//       level: data.level,
+//       category: data.category,
+//       exercise_id: data.exercise_id,
+//       exercise: data.exercise,
+//       value: data.value,
+//       unit: data.unit,
+//       displayValue: data.displayValue,
+//       notes: data.notes || "",
+//       date_logged: data.date_logged,
+//       timestamp: Date.now(),
+//     };
+
+//     const newRef = await db.ref("pr_logbook").push(prData);
+//     return { success: true, key: newRef.key };
 //   },
 // );
