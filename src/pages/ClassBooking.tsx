@@ -2,13 +2,13 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { logEvent, db } from "@/lib/firebase";
-import { ref, onValue, set, push } from "firebase/database";
+import { ref, onValue, set, push, get, remove } from "firebase/database";
 import { Btn } from "@/components/shared/Btn";
 import { Tag } from "@/components/shared/Tag";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { motion, AnimatePresence } from "framer-motion";
 
-// ── Only MK2R categories ──────────────────────────────────────────────────────
+// ── Category colours ──────────────────────────────────────────────────────────
 export const CATEGORY_COLORS: Record<string, string> = {
   Crossfit: "hsl(20 100% 50%)",
   Gymnastics: "hsl(263 85% 58%)",
@@ -41,6 +41,9 @@ const MONTH_NAMES = [
   "November",
   "December",
 ];
+
+// ── Cancellation cutoff: members cannot cancel within this many minutes of class ──
+const CANCEL_CUTOFF_MINUTES = 60;
 
 const FALLBACK_CLASSES = [
   {
@@ -139,7 +142,7 @@ const intColor = (i: string) =>
         ? "hsl(38 92% 44%)"
         : "hsl(142 72% 37%)";
 
-// ─── TIMEZONE-SAFE date helpers ───────────────────────────────────────────────
+// ── Date helpers ──────────────────────────────────────────────────────────────
 export function formatDateKey(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -160,7 +163,9 @@ export function buildBookingKey(className: string, dateKey: string): string {
   return `${safeKey(className)}_${dateKey}`;
 }
 
-// ── TIME VALIDATION helper ───────────────────────────────────────────────────
+// ── Time helpers ──────────────────────────────────────────────────────────────
+
+/** Returns true if class time has already passed today */
 function isClassTimePassed(classTime: string, selectedDate: Date): boolean {
   const now = new Date();
   const today = new Date();
@@ -168,14 +173,23 @@ function isClassTimePassed(classTime: string, selectedDate: Date): boolean {
   const selected = new Date(selectedDate);
   selected.setHours(0, 0, 0, 0);
   if (selected.getTime() !== today.getTime()) return false;
-  const [hourStr, minuteStr] = classTime.split(":");
-  const hour = parseInt(hourStr, 10);
-  const minute = parseInt(minuteStr, 10);
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
-  if (hour < currentHour) return true;
-  if (hour === currentHour && minute < currentMinute) return true;
-  return false;
+  const [h, mn] = classTime.split(":").map(Number);
+  return h < now.getHours() || (h === now.getHours() && mn < now.getMinutes());
+}
+
+/**
+ * Returns true if the cancellation window has closed.
+ * Window closes CANCEL_CUTOFF_MINUTES before class start on the class date.
+ */
+function isCancelWindowClosed(classTime: string, classDate: Date): boolean {
+  const now = new Date();
+  const [h, mn] = classTime.split(":").map(Number);
+  const classStart = new Date(classDate);
+  classStart.setHours(h, mn, 0, 0);
+  const cutoff = new Date(
+    classStart.getTime() - CANCEL_CUTOFF_MINUTES * 60 * 1000,
+  );
+  return now >= cutoff;
 }
 
 // ── Mini Calendar ─────────────────────────────────────────────────────────────
@@ -194,6 +208,7 @@ function MiniCalendar({
   today.setHours(0, 0, 0, 0);
   const firstDay = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
   const prevMonth = () => {
     if (viewMonth === 0) {
       setViewMonth(11);
@@ -206,6 +221,7 @@ function MiniCalendar({
       setViewYear((y) => y + 1);
     } else setViewMonth((m) => m + 1);
   };
+
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
@@ -289,7 +305,7 @@ function MiniCalendar({
   );
 }
 
-// ── WOD Panel — collapsible dropdown ─────────────────────────────────────────
+// ── WOD Panel ─────────────────────────────────────────────────────────────────
 function WodPanel({ cls, color }: { cls: any; color: string }) {
   const [open, setOpen] = useState(false);
   const wod: string = String(cls.wod ?? "").trim();
@@ -298,7 +314,6 @@ function WodPanel({ cls, color }: { cls: any; color: string }) {
 
   return (
     <div className="mt-3 rounded-xl border border-border overflow-hidden">
-      {/* Toggle button */}
       <button
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold transition-colors hover:bg-secondary"
@@ -317,8 +332,6 @@ function WodPanel({ cls, color }: { cls: any; color: string }) {
           {open ? "▲ Hide" : "▼ Show"}
         </span>
       </button>
-
-      {/* Collapsible content */}
       <AnimatePresence>
         {open && (
           <motion.div
@@ -396,10 +409,17 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
   const [classBookings, setClassBookings] = useState<
     Record<string, Record<string, any>>
   >({});
+  const [classWaitlists, setClassWaitlists] = useState<
+    Record<string, Record<string, any>>
+  >({});
   const [adminClasses, setAdminClasses] = useState<any[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [processingPayment, setProcessingPayment] = useState(false);
+  const [processingWaitlist, setProcessingWaitlist] = useState<string | null>(
+    null,
+  );
 
+  // ── Firebase listeners ────────────────────────────────────────────────────
   useEffect(() => {
     return onValue(ref(db, "admin_classes"), (snap) => {
       if (snap.exists()) {
@@ -415,6 +435,13 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
   useEffect(() => {
     return onValue(ref(db, "class_bookings"), (snap) =>
       setClassBookings(snap.val() ?? {}),
+    );
+  }, []);
+
+  // ── NEW: listen to all waitlists ──────────────────────────────────────────
+  useEffect(() => {
+    return onValue(ref(db, "class_waitlist"), (snap) =>
+      setClassWaitlists(snap.val() ?? {}),
     );
   }, []);
 
@@ -442,21 +469,70 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
   const spotsLeft = (cls: any): number =>
     Math.max(0, Number(cls.spots || 20) - bookedCount(cls));
 
+  // ── Waitlist helpers ──────────────────────────────────────────────────────
+  const isOnWaitlist = (cls: any): boolean =>
+    !!classWaitlists[bKey(cls)]?.[user.uid];
+  const waitlistCount = (cls: any): number =>
+    Object.keys(classWaitlists[bKey(cls)] ?? {}).length;
+  const waitlistPosition = (cls: any): number => {
+    const entries = Object.entries(classWaitlists[bKey(cls)] ?? {})
+      .map(([uid, val]: [string, any]) => ({
+        uid,
+        joinedAt: val.joinedAt ?? 0,
+      }))
+      .sort((a, b) => a.joinedAt - b.joinedAt);
+    const pos = entries.findIndex((e) => e.uid === user.uid);
+    return pos >= 0 ? pos + 1 : -1;
+  };
+
   const bookedDates = new Set<string>(
     user.bookings.map((b: any) => b.dateKey).filter(Boolean),
   );
 
   const isMember = user.membership === "silver" || user.membership === "gold";
-
-  // ── Determine if this class is chargeable for non-members ────────────────
   const isChargeable = (cls: any): boolean =>
     Boolean(cls.chargeNonMembers) && Number(cls.price) > 0;
 
-  // ── Member: free booking ──────────────────────────────────────────────────
+  // ── Auto-promote first waitlist member into the class ────────────────────
+  const promoteFromWaitlist = async (cls: any, releasedDateKey: string) => {
+    const key = buildBookingKey(cls.name, releasedDateKey);
+    const waitlistSnap = await get(ref(db, `class_waitlist/${key}`));
+    if (!waitlistSnap.exists()) return;
+
+    const entries = Object.entries(waitlistSnap.val())
+      .map(([uid, val]: [string, any]) => ({ uid, ...val }))
+      .sort((a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0));
+
+    if (entries.length === 0) return;
+    const next = entries[0];
+
+    // Book them in
+    await set(ref(db, `class_bookings/${key}/${next.uid}`), {
+      name: next.name,
+      email: next.email ?? "",
+      bookedAt: Date.now(),
+      promotedFromWaitlist: true,
+    });
+
+    // Remove from waitlist
+    await remove(ref(db, `class_waitlist/${key}/${next.uid}`));
+
+    // Write notification to their inbox
+    await push(ref(db, `users/${next.uid}/notifications`), {
+      title: "🎉 Spot Available!",
+      body: `A spot opened up in ${cls.name} on ${releasedDateKey} at ${cls.time}. You've been booked in!`,
+      type: "waitlist_promoted",
+      read: false,
+      createdAt: Date.now(),
+    });
+  };
+
+  // ── Free booking (members) ────────────────────────────────────────────────
   const bookFree = async (cls: any) => {
     if (isBooked(cls))
       return toast("You're already booked for this class!", "error");
-    if (spotsLeft(cls) === 0) return toast("This class is full!", "error");
+    if (spotsLeft(cls) === 0)
+      return toast("This class is full — join the waitlist!", "error");
 
     await set(ref(db, `class_bookings/${bKey(cls)}/${user.uid}`), {
       name: user.name,
@@ -488,7 +564,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
     toast(`✓ ${cls.name} booked!`, "success");
   };
 
-  // ── Non‑member: PayFast redirect ─────────────────────────────────────────
+  // ── PayFast (non-members) ─────────────────────────────────────────────────
   const initiatePayFast = async (cls: any) => {
     if (isBooked(cls))
       return toast("You're already booked for this class!", "error");
@@ -505,16 +581,27 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         classId: cls.id || cls.name,
         className: cls.name,
         dateKey,
+        dayName, // ← webhook needs this for weekly class lookup
         dateDisplay: selectedDate.toLocaleDateString("en-ZA", {
           weekday: "long",
           day: "numeric",
           month: "long",
         }),
         time: cls.time,
+        category: cls.category || "Class",
+        trainer: cls.trainer || "Coach",
         price,
         status: "pending_payment",
         createdAt: Date.now(),
       });
+
+// Switching from sandbox to live PayFast:
+// When you're ready to go live, in ClassBooking.tsx replace:
+// tsxconst PAYFAST_MERCHANT_ID = "10000100";
+// const PAYFAST_MERCHANT_KEY = "46f0cd694581a";
+// const PAYFAST_BASE = "https://sandbox.payfast.co.za/eng/process";
+// With your real credentials from the PayFast dashboard and:
+// tsxconst PAYFAST_BASE = "https://www.payfast.co.za/eng/process";
 
       const PAYFAST_MERCHANT_ID = "10000100";
       const PAYFAST_MERCHANT_KEY = "46f0cd694581a";
@@ -525,10 +612,13 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         merchant_key: PAYFAST_MERCHANT_KEY,
         return_url: `${window.location.origin}/booking-success?bookingId=${bookingId}`,
         cancel_url: `${window.location.origin}/booking-cancel`,
-        notify_url: `${window.location.origin}/api/payfast-webhook`,
+        notify_url: `https://europe-west1-gym-pro-20ee6.cloudfunctions.net/payfastNotify`,
         amount: price.toFixed(2),
         item_name: `${cls.name} - ${selectedDate.toLocaleDateString("en-ZA")}`,
-        custom_str1: bookingId,
+        custom_str1: bookingId, // bookingId for webhook lookup
+        custom_str2: "", // not used for class booking
+        custom_str3: "0", // not used for class booking
+        custom_str4: "class_booking", // ← tells webhook what payment type this is
         email_address: user.email,
         name_first: user.name.split(" ")[0],
         name_last: user.name.split(" ").slice(1).join(" ") || "-",
@@ -552,10 +642,24 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
     }
   };
 
+  // ── Cancel booking — with cutoff check + auto-promote ────────────────────
   const cancel = async (cls: any) => {
+    // ── CHANGED: enforce cancellation cutoff ─────────────────────────────
+    if (isCancelWindowClosed(cls.time, selectedDate)) {
+      toast(
+        `Cancellations close ${CANCEL_CUTOFF_MINUTES} min before class`,
+        "error",
+      );
+      return;
+    }
+
     if (
       !confirm(
-        `Cancel ${cls.name} on ${selectedDate.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}?`,
+        `Cancel ${cls.name} on ${selectedDate.toLocaleDateString("en-ZA", {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+        })}?`,
       )
     )
       return;
@@ -567,7 +671,36 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         (b: any) => !(b.name === cls.name && b.dateKey === dateKey),
       ),
     });
+
+    // ── CHANGED: auto-promote next person on waitlist ────────────────────
+    await promoteFromWaitlist(cls, dateKey);
+
     toast("Booking cancelled.", "info");
+  };
+
+  // ── Join waitlist ─────────────────────────────────────────────────────────
+  const joinWaitlist = async (cls: any) => {
+    if (isOnWaitlist(cls))
+      return toast("You're already on the waitlist", "error");
+    setProcessingWaitlist(bKey(cls));
+    try {
+      await set(ref(db, `class_waitlist/${bKey(cls)}/${user.uid}`), {
+        name: user.name,
+        email: user.email ?? "",
+        joinedAt: Date.now(),
+      });
+      toast(`Added to waitlist for ${cls.name} ✓`, "success");
+    } catch {
+      toast("Failed to join waitlist", "error");
+    }
+    setProcessingWaitlist(null);
+  };
+
+  // ── Leave waitlist ────────────────────────────────────────────────────────
+  const leaveWaitlist = async (cls: any) => {
+    if (!confirm("Leave the waitlist for this class?")) return;
+    await remove(ref(db, `class_waitlist/${bKey(cls)}/${user.uid}`));
+    toast("Removed from waitlist", "info");
   };
 
   const displayDate = selectedDate.toLocaleDateString("en-ZA", {
@@ -597,7 +730,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         Class <span className="text-primary">Booking</span>
       </PageTitle>
 
-      {/* ── Non-member banner ─────────────────────────────────────────────── */}
+      {/* Non-member banner */}
       {!isMember && (
         <div
           className="mb-5 rounded-xl px-4 py-3 flex items-center justify-between flex-wrap gap-3"
@@ -649,7 +782,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         )}
       </div>
 
-      {/* ── Category legend ───────────────────────────────────────────────── */}
+      {/* Category legend */}
       <div className="flex gap-2 flex-wrap mb-4">
         {Object.entries(CATEGORY_COLORS).map(([cat, color]) => (
           <div
@@ -698,8 +831,13 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
             const hasWod = String(cls.wod ?? "").trim().length > 0;
             const isPassed = isClassTimePassed(cls.time, selectedDate);
             const chargeable = isChargeable(cls);
+            const onWaitlist = isOnWaitlist(cls);
+            const wlCount = waitlistCount(cls);
+            const wlPos = waitlistPosition(cls);
+            const cancelBlocked =
+              booked && isCancelWindowClosed(cls.time, selectedDate);
+            const isProcessingWl = processingWaitlist === bKey(cls);
 
-            // ── Button label & action logic ───────────────────────────────
             const bookLabel = full
               ? "Class Full"
               : isPassed
@@ -711,11 +849,8 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                     : "Book";
 
             const handleBook = () => {
-              if (isMember || !chargeable) {
-                bookFree(cls);
-              } else {
-                initiatePayFast(cls);
-              }
+              if (isMember || !chargeable) bookFree(cls);
+              else initiatePayFast(cls);
             };
 
             return (
@@ -751,12 +886,11 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                         {booked ? (
                           <span className="text-green-400">✓ You're in</span>
                         ) : full ? (
-                          "FULL"
+                          `FULL · ${wlCount} waiting`
                         ) : (
                           `${left}/${cls.spots} spots`
                         )}
                       </div>
-                      {/* Price badge for non-members only */}
                       {!isMember &&
                         !booked &&
                         !full &&
@@ -792,7 +926,36 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                     👤 {cls.trainer}
                   </div>
 
-                  {/* WOD — collapsible dropdown, hidden by default */}
+                  {/* ── CHANGED: Waitlist position pill ─────────────────── */}
+                  {onWaitlist && wlPos > 0 && (
+                    <div
+                      className="mb-2 inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full"
+                      style={{
+                        background: "hsl(38 92% 44% / 0.12)",
+                        color: "hsl(38 92% 44%)",
+                        border: "1px solid hsl(38 92% 44% / 0.3)",
+                      }}
+                    >
+                      ⏳ You're #{wlPos} on the waitlist
+                    </div>
+                  )}
+
+                  {/* ── CHANGED: Cancellation cutoff warning ─────────────── */}
+                  {cancelBlocked && (
+                    <div
+                      className="mb-2 inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full"
+                      style={{
+                        background: "hsl(0 84% 51% / 0.10)",
+                        color: "hsl(0 84% 51%)",
+                        border: "1px solid hsl(0 84% 51% / 0.25)",
+                      }}
+                    >
+                      🔒 Cancel window closed ({CANCEL_CUTOFF_MINUTES} min
+                      before class)
+                    </div>
+                  )}
+
+                  {/* WOD panel */}
                   {hasWod && <WodPanel cls={cls} color={color} />}
 
                   {/* Action row */}
@@ -809,14 +972,36 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                         >
                           ✓ Booked
                         </span>
+                        {/* ── CHANGED: disable cancel when window is closed ── */}
                         <Btn
                           variant="subtle"
                           size="sm"
                           onClick={() => cancel(cls)}
+                          disabled={cancelBlocked}
                         >
-                          Cancel
+                          {cancelBlocked ? "🔒 Locked" : "Cancel"}
                         </Btn>
                       </>
+                    ) : onWaitlist ? (
+                      /* ── CHANGED: waitlist controls ──────────────────────── */
+                      <Btn
+                        variant="subtle"
+                        size="sm"
+                        onClick={() => leaveWaitlist(cls)}
+                        disabled={isProcessingWl}
+                      >
+                        Leave Waitlist
+                      </Btn>
+                    ) : full && !isPassed ? (
+                      /* ── CHANGED: join waitlist CTA when full ───────────── */
+                      <Btn
+                        variant="subtle"
+                        size="sm"
+                        onClick={() => joinWaitlist(cls)}
+                        disabled={isProcessingWl}
+                      >
+                        {isProcessingWl ? "Joining…" : "⏳ Join Waitlist"}
+                      </Btn>
                     ) : (
                       <Btn
                         variant={!full && !isPassed ? "primary" : "subtle"}
@@ -845,11 +1030,12 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                       className="text-muted-foreground text-[11px] bg-transparent border-none cursor-pointer hover:text-foreground transition-colors ml-auto"
                     >
                       👥 {bookedCount(cls)}
+                      {wlCount > 0 ? ` · ⏳ ${wlCount}` : ""}
                     </button>
                   </div>
                 </div>
 
-                {/* Details panel — only when no WOD */}
+                {/* Details panel */}
                 {open && !hasWod && details.length > 0 && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
@@ -907,8 +1093,50 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
                                 {b.name?.[0] ?? "?"}
                               </div>
                               <span className="font-medium">{b.name}</span>
+                              {b.promotedFromWaitlist && (
+                                <span className="text-[9px] text-amber-400 font-bold">
+                                  ⏳→✓
+                                </span>
+                              )}
                             </div>
                           ))}
+                        </div>
+                      )}
+
+                      {/* ── CHANGED: show waitlist in the booked panel ─── */}
+                      {wlCount > 0 && (
+                        <div className="mt-3 pt-3 border-t border-border">
+                          <div
+                            className="text-[10px] font-bold uppercase tracking-[0.1em] mb-1.5"
+                            style={{ color: "hsl(38 92% 44%)" }}
+                          >
+                            Waitlist ({wlCount})
+                          </div>
+                          {Object.entries(classWaitlists[bKey(cls)] ?? {})
+                            .map(([uid, val]: [string, any]) => ({
+                              uid,
+                              ...val,
+                            }))
+                            .sort(
+                              (a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0),
+                            )
+                            .map((w, wi) => (
+                              <div
+                                key={wi}
+                                className="flex items-center gap-2 text-xs mb-1"
+                              >
+                                <span className="text-[10px] text-muted-foreground font-bold w-4">
+                                  {wi + 1}.
+                                </span>
+                                <div
+                                  className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-black shrink-0"
+                                  style={{ background: "hsl(38 92% 44%)" }}
+                                >
+                                  {w.name?.[0] ?? "?"}
+                                </div>
+                                <span className="font-medium">{w.name}</span>
+                              </div>
+                            ))}
                         </div>
                       )}
                     </motion.div>
@@ -920,7 +1148,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
         </div>
       )}
 
-      {/* ── Upcoming bookings ─────────────────────────────────────────────── */}
+      {/* Upcoming bookings */}
       {upcomingBookings.length > 0 && (
         <div className="mk2-card mt-7">
           <div className="font-bold text-sm mb-3">
@@ -955,18 +1183,17 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
   );
 }
 
-//--------------UPDATED Class Booking--------------------------------------------------------
 // import { useState, useEffect } from "react";
 // import { useAuth } from "@/context/AuthContext";
 // import { useBreakpoint } from "@/hooks/useBreakpoint";
 // import { logEvent, db } from "@/lib/firebase";
-// import { ref, onValue, set, push, get, remove } from "firebase/database";
+// import { ref, onValue, set, push } from "firebase/database";
 // import { Btn } from "@/components/shared/Btn";
 // import { Tag } from "@/components/shared/Tag";
 // import { PageTitle } from "@/components/shared/PageTitle";
 // import { motion, AnimatePresence } from "framer-motion";
 
-// // ── Category colours ──────────────────────────────────────────────────────────
+// // ── Only MK2R categories ──────────────────────────────────────────────────────
 // export const CATEGORY_COLORS: Record<string, string> = {
 //   Crossfit: "hsl(20 100% 50%)",
 //   Gymnastics: "hsl(263 85% 58%)",
@@ -976,17 +1203,29 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 // };
 
 // const DAYS = [
-//   "Monday", "Tuesday", "Wednesday", "Thursday",
-//   "Friday", "Saturday", "Sunday",
+//   "Monday",
+//   "Tuesday",
+//   "Wednesday",
+//   "Thursday",
+//   "Friday",
+//   "Saturday",
+//   "Sunday",
 // ];
 // const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // const MONTH_NAMES = [
-//   "January", "February", "March", "April", "May", "June",
-//   "July", "August", "September", "October", "November", "December",
+//   "January",
+//   "February",
+//   "March",
+//   "April",
+//   "May",
+//   "June",
+//   "July",
+//   "August",
+//   "September",
+//   "October",
+//   "November",
+//   "December",
 // ];
-
-// // ── Cancellation cutoff: members cannot cancel within this many minutes of class ──
-// const CANCEL_CUTOFF_MINUTES = 60;
 
 // const FALLBACK_CLASSES = [
 //   {
@@ -1085,7 +1324,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //         ? "hsl(38 92% 44%)"
 //         : "hsl(142 72% 37%)";
 
-// // ── Date helpers ──────────────────────────────────────────────────────────────
+// // ─── TIMEZONE-SAFE date helpers ───────────────────────────────────────────────
 // export function formatDateKey(date: Date): string {
 //   const y = date.getFullYear();
 //   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -1106,9 +1345,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //   return `${safeKey(className)}_${dateKey}`;
 // }
 
-// // ── Time helpers ──────────────────────────────────────────────────────────────
-
-// /** Returns true if class time has already passed today */
+// // ── TIME VALIDATION helper ───────────────────────────────────────────────────
 // function isClassTimePassed(classTime: string, selectedDate: Date): boolean {
 //   const now = new Date();
 //   const today = new Date();
@@ -1116,21 +1353,14 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //   const selected = new Date(selectedDate);
 //   selected.setHours(0, 0, 0, 0);
 //   if (selected.getTime() !== today.getTime()) return false;
-//   const [h, mn] = classTime.split(":").map(Number);
-//   return h < now.getHours() || (h === now.getHours() && mn < now.getMinutes());
-// }
-
-// /**
-//  * Returns true if the cancellation window has closed.
-//  * Window closes CANCEL_CUTOFF_MINUTES before class start on the class date.
-//  */
-// function isCancelWindowClosed(classTime: string, classDate: Date): boolean {
-//   const now = new Date();
-//   const [h, mn] = classTime.split(":").map(Number);
-//   const classStart = new Date(classDate);
-//   classStart.setHours(h, mn, 0, 0);
-//   const cutoff = new Date(classStart.getTime() - CANCEL_CUTOFF_MINUTES * 60 * 1000);
-//   return now >= cutoff;
+//   const [hourStr, minuteStr] = classTime.split(":");
+//   const hour = parseInt(hourStr, 10);
+//   const minute = parseInt(minuteStr, 10);
+//   const currentHour = now.getHours();
+//   const currentMinute = now.getMinutes();
+//   if (hour < currentHour) return true;
+//   if (hour === currentHour && minute < currentMinute) return true;
+//   return false;
 // }
 
 // // ── Mini Calendar ─────────────────────────────────────────────────────────────
@@ -1149,16 +1379,18 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //   today.setHours(0, 0, 0, 0);
 //   const firstDay = new Date(viewYear, viewMonth, 1).getDay();
 //   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
-
 //   const prevMonth = () => {
-//     if (viewMonth === 0) { setViewMonth(11); setViewYear((y) => y - 1); }
-//     else setViewMonth((m) => m - 1);
+//     if (viewMonth === 0) {
+//       setViewMonth(11);
+//       setViewYear((y) => y - 1);
+//     } else setViewMonth((m) => m - 1);
 //   };
 //   const nextMonth = () => {
-//     if (viewMonth === 11) { setViewMonth(0); setViewYear((y) => y + 1); }
-//     else setViewMonth((m) => m + 1);
+//     if (viewMonth === 11) {
+//       setViewMonth(0);
+//       setViewYear((y) => y + 1);
+//     } else setViewMonth((m) => m + 1);
 //   };
-
 //   const cells: (number | null)[] = [];
 //   for (let i = 0; i < firstDay; i++) cells.push(null);
 //   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
@@ -1166,13 +1398,30 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //   return (
 //     <div className="mk2-card mb-5" style={{ maxWidth: 320 }}>
 //       <div className="flex items-center justify-between mb-2">
-//         <button onClick={prevMonth} className="text-muted-foreground hover:text-foreground w-7 h-7 flex items-center justify-center rounded transition-colors">←</button>
-//         <span className="font-bold text-xs">{MONTH_NAMES[viewMonth]} {viewYear}</span>
-//         <button onClick={nextMonth} className="text-muted-foreground hover:text-foreground w-7 h-7 flex items-center justify-center rounded transition-colors">→</button>
+//         <button
+//           onClick={prevMonth}
+//           className="text-muted-foreground hover:text-foreground w-7 h-7 flex items-center justify-center rounded transition-colors"
+//         >
+//           ←
+//         </button>
+//         <span className="font-bold text-xs">
+//           {MONTH_NAMES[viewMonth]} {viewYear}
+//         </span>
+//         <button
+//           onClick={nextMonth}
+//           className="text-muted-foreground hover:text-foreground w-7 h-7 flex items-center justify-center rounded transition-colors"
+//         >
+//           →
+//         </button>
 //       </div>
 //       <div className="grid grid-cols-7 mb-0.5">
 //         {DAY_NAMES.map((d) => (
-//           <div key={d} className="text-center text-[9px] font-bold text-muted-foreground py-0.5">{d}</div>
+//           <div
+//             key={d}
+//             className="text-center text-[9px] font-bold text-muted-foreground py-0.5"
+//           >
+//             {d}
+//           </div>
 //         ))}
 //       </div>
 //       <div className="grid grid-cols-7 gap-0.5">
@@ -1188,13 +1437,19 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //           return (
 //             <button
 //               key={i}
-//               onClick={() => !isPast && onSelect(new Date(viewYear, viewMonth, day))}
+//               onClick={() =>
+//                 !isPast && onSelect(new Date(viewYear, viewMonth, day))
+//               }
 //               disabled={isPast}
 //               className={[
 //                 "relative w-full aspect-square rounded text-[11px] font-semibold transition-all flex flex-col items-center justify-center leading-none",
-//                 isPast ? "opacity-20 cursor-not-allowed" : "cursor-pointer hover:bg-secondary",
+//                 isPast
+//                   ? "opacity-20 cursor-not-allowed"
+//                   : "cursor-pointer hover:bg-secondary",
 //                 isSel ? "bg-orange-500 text-black" : "",
-//                 isToday && !isSel ? "ring-1 ring-orange-500 text-orange-500" : "",
+//                 isToday && !isSel
+//                   ? "ring-1 ring-orange-500 text-orange-500"
+//                   : "",
 //               ].join(" ")}
 //             >
 //               {day}
@@ -1207,17 +1462,19 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //       </div>
 //       <div className="flex gap-3 mt-2 text-[9px] text-muted-foreground">
 //         <div className="flex items-center gap-1">
-//           <span className="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block" /> Booked
+//           <span className="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block" />{" "}
+//           Booked
 //         </div>
 //         <div className="flex items-center gap-1">
-//           <span className="w-3 h-3 rounded ring-1 ring-orange-500 inline-block" /> Today
+//           <span className="w-3 h-3 rounded ring-1 ring-orange-500 inline-block" />{" "}
+//           Today
 //         </div>
 //       </div>
 //     </div>
 //   );
 // }
 
-// // ── WOD Panel ─────────────────────────────────────────────────────────────────
+// // ── WOD Panel — collapsible dropdown ─────────────────────────────────────────
 // function WodPanel({ cls, color }: { cls: any; color: string }) {
 //   const [open, setOpen] = useState(false);
 //   const wod: string = String(cls.wod ?? "").trim();
@@ -1226,14 +1483,27 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 
 //   return (
 //     <div className="mt-3 rounded-xl border border-border overflow-hidden">
+//       {/* Toggle button */}
 //       <button
 //         onClick={() => setOpen((o) => !o)}
 //         className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold transition-colors hover:bg-secondary"
-//         style={{ background: "hsl(var(--secondary))", color, border: "none", cursor: "pointer" }}
+//         style={{
+//           background: "hsl(var(--secondary))",
+//           color,
+//           border: "none",
+//           cursor: "pointer",
+//         }}
 //       >
-//         <span className="flex items-center gap-2"><span>📋</span><span>View Today's WOD</span></span>
-//         <span style={{ fontSize: 10, opacity: 0.7 }}>{open ? "▲ Hide" : "▼ Show"}</span>
+//         <span className="flex items-center gap-2">
+//           <span>📋</span>
+//           <span>View Today's WOD</span>
+//         </span>
+//         <span style={{ fontSize: 10, opacity: 0.7 }}>
+//           {open ? "▲ Hide" : "▼ Show"}
+//         </span>
 //       </button>
+
+//       {/* Collapsible content */}
 //       <AnimatePresence>
 //         {open && (
 //           <motion.div
@@ -1246,19 +1516,48 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //             <div className="px-3 pb-3 pt-2 text-xs leading-relaxed bg-background">
 //               <div className="mb-2 pb-2 border-b border-border">
 //                 <div className="font-bold text-sm">{cls.trainer}</div>
-//                 <div className="text-[11px]" style={{ color }}>{cls.category}</div>
+//                 <div className="text-[11px]" style={{ color }}>
+//                   {cls.category}
+//                 </div>
 //               </div>
 //               <div>
 //                 {lines.map((line, i) => {
 //                   const t = line.trim();
 //                   if (!t) return <div key={i} className="h-1.5" />;
 //                   const isPart = /^part\s/i.test(t);
-//                   const isHeader = !isPart && (t.endsWith(":") || (t === t.toUpperCase() && t.length < 40 && /[A-Z]/.test(t)));
+//                   const isHeader =
+//                     !isPart &&
+//                     (t.endsWith(":") ||
+//                       (t === t.toUpperCase() &&
+//                         t.length < 40 &&
+//                         /[A-Z]/.test(t)));
 //                   const isWeight = /^(comp|scaled|beg|rx)\s*:/i.test(t);
-//                   if (isPart) return <div key={i} className="font-bold mt-2" style={{ color }}>{t}</div>;
-//                   if (isHeader) return <div key={i} className="font-bold text-foreground mt-1">{t}</div>;
-//                   if (isWeight) return <div key={i} className="text-[10px] text-muted-foreground italic">{t}</div>;
-//                   return <div key={i} className="text-muted-foreground">{t}</div>;
+//                   if (isPart)
+//                     return (
+//                       <div key={i} className="font-bold mt-2" style={{ color }}>
+//                         {t}
+//                       </div>
+//                     );
+//                   if (isHeader)
+//                     return (
+//                       <div key={i} className="font-bold text-foreground mt-1">
+//                         {t}
+//                       </div>
+//                     );
+//                   if (isWeight)
+//                     return (
+//                       <div
+//                         key={i}
+//                         className="text-[10px] text-muted-foreground italic"
+//                       >
+//                         {t}
+//                       </div>
+//                     );
+//                   return (
+//                     <div key={i} className="text-muted-foreground">
+//                       {t}
+//                     </div>
+//                   );
 //                 })}
 //               </div>
 //             </div>
@@ -1279,14 +1578,13 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //   const [selectedDate, setSelectedDate] = useState<Date>(new Date(today));
 //   const [expanded, setExpanded] = useState<string | null>(null);
 //   const [showWhoBooked, setShowWhoBooked] = useState<string | null>(null);
-//   const [classBookings, setClassBookings] = useState<Record<string, Record<string, any>>>({});
-//   const [classWaitlists, setClassWaitlists] = useState<Record<string, Record<string, any>>>({});
+//   const [classBookings, setClassBookings] = useState<
+//     Record<string, Record<string, any>>
+//   >({});
 //   const [adminClasses, setAdminClasses] = useState<any[]>([]);
 //   const [loadingClasses, setLoadingClasses] = useState(true);
 //   const [processingPayment, setProcessingPayment] = useState(false);
-//   const [processingWaitlist, setProcessingWaitlist] = useState<string | null>(null);
 
-//   // ── Firebase listeners ────────────────────────────────────────────────────
 //   useEffect(() => {
 //     return onValue(ref(db, "admin_classes"), (snap) => {
 //       if (snap.exists()) {
@@ -1305,13 +1603,6 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //     );
 //   }, []);
 
-//   // ── NEW: listen to all waitlists ──────────────────────────────────────────
-//   useEffect(() => {
-//     return onValue(ref(db, "class_waitlist"), (snap) =>
-//       setClassWaitlists(snap.val() ?? {}),
-//     );
-//   }, []);
-
 //   if (!user) return null;
 
 //   const dateKey = formatDateKey(selectedDate);
@@ -1327,67 +1618,30 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //   });
 
 //   const bKey = (cls: any) => buildBookingKey(cls.name, dateKey);
-//   const isBooked = (cls: any): boolean => !!classBookings[bKey(cls)]?.[user.uid];
-//   const bookedCount = (cls: any): number => Object.keys(classBookings[bKey(cls)] ?? {}).length;
-//   const bookedList = (cls: any): any[] => Object.values(classBookings[bKey(cls)] ?? {});
-//   const spotsLeft = (cls: any): number => Math.max(0, Number(cls.spots || 20) - bookedCount(cls));
-
-//   // ── Waitlist helpers ──────────────────────────────────────────────────────
-//   const isOnWaitlist = (cls: any): boolean => !!classWaitlists[bKey(cls)]?.[user.uid];
-//   const waitlistCount = (cls: any): number => Object.keys(classWaitlists[bKey(cls)] ?? {}).length;
-//   const waitlistPosition = (cls: any): number => {
-//     const entries = Object.entries(classWaitlists[bKey(cls)] ?? {})
-//       .map(([uid, val]: [string, any]) => ({ uid, joinedAt: val.joinedAt ?? 0 }))
-//       .sort((a, b) => a.joinedAt - b.joinedAt);
-//     const pos = entries.findIndex((e) => e.uid === user.uid);
-//     return pos >= 0 ? pos + 1 : -1;
-//   };
+//   const isBooked = (cls: any): boolean =>
+//     !!classBookings[bKey(cls)]?.[user.uid];
+//   const bookedCount = (cls: any): number =>
+//     Object.keys(classBookings[bKey(cls)] ?? {}).length;
+//   const bookedList = (cls: any): any[] =>
+//     Object.values(classBookings[bKey(cls)] ?? {});
+//   const spotsLeft = (cls: any): number =>
+//     Math.max(0, Number(cls.spots || 20) - bookedCount(cls));
 
 //   const bookedDates = new Set<string>(
 //     user.bookings.map((b: any) => b.dateKey).filter(Boolean),
 //   );
 
 //   const isMember = user.membership === "silver" || user.membership === "gold";
-//   const isChargeable = (cls: any): boolean => Boolean(cls.chargeNonMembers) && Number(cls.price) > 0;
 
-//   // ── Auto-promote first waitlist member into the class ────────────────────
-//   const promoteFromWaitlist = async (cls: any, releasedDateKey: string) => {
-//     const key = buildBookingKey(cls.name, releasedDateKey);
-//     const waitlistSnap = await get(ref(db, `class_waitlist/${key}`));
-//     if (!waitlistSnap.exists()) return;
+//   // ── Determine if this class is chargeable for non-members ────────────────
+//   const isChargeable = (cls: any): boolean =>
+//     Boolean(cls.chargeNonMembers) && Number(cls.price) > 0;
 
-//     const entries = Object.entries(waitlistSnap.val())
-//       .map(([uid, val]: [string, any]) => ({ uid, ...val }))
-//       .sort((a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0));
-
-//     if (entries.length === 0) return;
-//     const next = entries[0];
-
-//     // Book them in
-//     await set(ref(db, `class_bookings/${key}/${next.uid}`), {
-//       name: next.name,
-//       email: next.email ?? "",
-//       bookedAt: Date.now(),
-//       promotedFromWaitlist: true,
-//     });
-
-//     // Remove from waitlist
-//     await remove(ref(db, `class_waitlist/${key}/${next.uid}`));
-
-//     // Write notification to their inbox
-//     await push(ref(db, `users/${next.uid}/notifications`), {
-//       title: "🎉 Spot Available!",
-//       body: `A spot opened up in ${cls.name} on ${releasedDateKey} at ${cls.time}. You've been booked in!`,
-//       type: "waitlist_promoted",
-//       read: false,
-//       createdAt: Date.now(),
-//     });
-//   };
-
-//   // ── Free booking (members) ────────────────────────────────────────────────
+//   // ── Member: free booking ──────────────────────────────────────────────────
 //   const bookFree = async (cls: any) => {
-//     if (isBooked(cls)) return toast("You're already booked for this class!", "error");
-//     if (spotsLeft(cls) === 0) return toast("This class is full — join the waitlist!", "error");
+//     if (isBooked(cls))
+//       return toast("You're already booked for this class!", "error");
+//     if (spotsLeft(cls) === 0) return toast("This class is full!", "error");
 
 //     await set(ref(db, `class_bookings/${bKey(cls)}/${user.uid}`), {
 //       name: user.name,
@@ -1407,7 +1661,9 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //             dateKey,
 //             date: dayName,
 //             displayDate: selectedDate.toLocaleDateString("en-ZA", {
-//               weekday: "short", day: "numeric", month: "short",
+//               weekday: "short",
+//               day: "numeric",
+//               month: "short",
 //             }),
 //           },
 //         ];
@@ -1417,9 +1673,10 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //     toast(`✓ ${cls.name} booked!`, "success");
 //   };
 
-//   // ── PayFast (non-members) ─────────────────────────────────────────────────
+//   // ── Non‑member: PayFast redirect ─────────────────────────────────────────
 //   const initiatePayFast = async (cls: any) => {
-//     if (isBooked(cls)) return toast("You're already booked for this class!", "error");
+//     if (isBooked(cls))
+//       return toast("You're already booked for this class!", "error");
 //     if (spotsLeft(cls) === 0) return toast("This class is full!", "error");
 //     setProcessingPayment(true);
 
@@ -1434,7 +1691,9 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //         className: cls.name,
 //         dateKey,
 //         dateDisplay: selectedDate.toLocaleDateString("en-ZA", {
-//           weekday: "long", day: "numeric", month: "long",
+//           weekday: "long",
+//           day: "numeric",
+//           month: "long",
 //         }),
 //         time: cls.time,
 //         price,
@@ -1478,21 +1737,13 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //     }
 //   };
 
-//   // ── Cancel booking — with cutoff check + auto-promote ────────────────────
 //   const cancel = async (cls: any) => {
-//     // ── CHANGED: enforce cancellation cutoff ─────────────────────────────
-//     if (isCancelWindowClosed(cls.time, selectedDate)) {
-//       toast(`Cancellations close ${CANCEL_CUTOFF_MINUTES} min before class`, "error");
-//       return;
-//     }
-
 //     if (
 //       !confirm(
-//         `Cancel ${cls.name} on ${selectedDate.toLocaleDateString("en-ZA", {
-//           weekday: "long", day: "numeric", month: "long",
-//         })}?`,
+//         `Cancel ${cls.name} on ${selectedDate.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}?`,
 //       )
-//     ) return;
+//     )
+//       return;
 
 //     await set(ref(db, `class_bookings/${bKey(cls)}/${user.uid}`), null);
 //     await updateUser({
@@ -1501,47 +1752,26 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //         (b: any) => !(b.name === cls.name && b.dateKey === dateKey),
 //       ),
 //     });
-
-//     // ── CHANGED: auto-promote next person on waitlist ────────────────────
-//     await promoteFromWaitlist(cls, dateKey);
-
 //     toast("Booking cancelled.", "info");
 //   };
 
-//   // ── Join waitlist ─────────────────────────────────────────────────────────
-//   const joinWaitlist = async (cls: any) => {
-//     if (isOnWaitlist(cls)) return toast("You're already on the waitlist", "error");
-//     setProcessingWaitlist(bKey(cls));
-//     try {
-//       await set(ref(db, `class_waitlist/${bKey(cls)}/${user.uid}`), {
-//         name: user.name,
-//         email: user.email ?? "",
-//         joinedAt: Date.now(),
-//       });
-//       toast(`Added to waitlist for ${cls.name} ✓`, "success");
-//     } catch {
-//       toast("Failed to join waitlist", "error");
-//     }
-//     setProcessingWaitlist(null);
-//   };
-
-//   // ── Leave waitlist ────────────────────────────────────────────────────────
-//   const leaveWaitlist = async (cls: any) => {
-//     if (!confirm("Leave the waitlist for this class?")) return;
-//     await remove(ref(db, `class_waitlist/${bKey(cls)}/${user.uid}`));
-//     toast("Removed from waitlist", "info");
-//   };
-
 //   const displayDate = selectedDate.toLocaleDateString("en-ZA", {
-//     weekday: "long", day: "numeric", month: "long", year: "numeric",
+//     weekday: "long",
+//     day: "numeric",
+//     month: "long",
+//     year: "numeric",
 //   });
 
 //   const upcomingBookings = user.bookings
 //     .filter((b: any) => b.dateKey && parseDateKey(b.dateKey) >= today)
-//     .sort((a: any, bk: any) => (a.dateKey || "").localeCompare(bk.dateKey || ""));
+//     .sort((a: any, bk: any) =>
+//       (a.dateKey || "").localeCompare(bk.dateKey || ""),
+//     );
 
 //   return (
-//     <div className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}>
+//     <div
+//       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
+//     >
 //       <PageTitle
 //         sub={
 //           isMember
@@ -1552,7 +1782,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //         Class <span className="text-primary">Booking</span>
 //       </PageTitle>
 
-//       {/* Non-member banner */}
+//       {/* ── Non-member banner ─────────────────────────────────────────────── */}
 //       {!isMember && (
 //         <div
 //           className="mb-5 rounded-xl px-4 py-3 flex items-center justify-between flex-wrap gap-3"
@@ -1564,7 +1794,8 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //           <div>
 //             <div className="font-bold text-sm">💪 Pay per class</div>
 //             <div className="text-xs text-muted-foreground mt-0.5">
-//               Members book all classes · Non-members pay per session via PayFast.
+//               Members book all classes · Non-members pay per session via
+//               PayFast.
 //             </div>
 //           </div>
 //           <button
@@ -1591,7 +1822,8 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //         <div>
 //           <div className="font-bold text-base">{displayDate}</div>
 //           <div className="text-xs text-muted-foreground">
-//             {dayClasses.length} {dayClasses.length === 1 ? "class" : "classes"} available
+//             {dayClasses.length} {dayClasses.length === 1 ? "class" : "classes"}{" "}
+//             available
 //           </div>
 //         </div>
 //         {adminClasses.length > 0 && (
@@ -1602,27 +1834,40 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //         )}
 //       </div>
 
-//       {/* Category legend */}
+//       {/* ── Category legend ───────────────────────────────────────────────── */}
 //       <div className="flex gap-2 flex-wrap mb-4">
 //         {Object.entries(CATEGORY_COLORS).map(([cat, color]) => (
 //           <div
 //             key={cat}
 //             className="flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full"
-//             style={{ background: `${color}18`, color, border: `1px solid ${color}40` }}
+//             style={{
+//               background: `${color}18`,
+//               color,
+//               border: `1px solid ${color}40`,
+//             }}
 //           >
-//             <span className="w-2 h-2 rounded-full inline-block" style={{ background: color }} />
+//             <span
+//               className="w-2 h-2 rounded-full inline-block"
+//               style={{ background: color }}
+//             />
 //             {cat}
 //           </div>
 //         ))}
 //       </div>
 
 //       {loadingClasses ? (
-//         <div className="text-center py-12 text-muted-foreground text-sm">Loading classes…</div>
+//         <div className="text-center py-12 text-muted-foreground text-sm">
+//           Loading classes…
+//         </div>
 //       ) : dayClasses.length === 0 ? (
 //         <div className="mk2-card flex flex-col items-center justify-center py-16 gap-3 text-center">
 //           <span className="text-4xl">🗓</span>
-//           <p className="font-bold text-sm">No classes scheduled for {dayName}</p>
-//           <p className="text-xs text-muted-foreground">Select another date or check back later.</p>
+//           <p className="font-bold text-sm">
+//             No classes scheduled for {dayName}
+//           </p>
+//           <p className="text-xs text-muted-foreground">
+//             Select another date or check back later.
+//           </p>
 //         </div>
 //       ) : (
 //         <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3.5">
@@ -1638,12 +1883,8 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //             const hasWod = String(cls.wod ?? "").trim().length > 0;
 //             const isPassed = isClassTimePassed(cls.time, selectedDate);
 //             const chargeable = isChargeable(cls);
-//             const onWaitlist = isOnWaitlist(cls);
-//             const wlCount = waitlistCount(cls);
-//             const wlPos = waitlistPosition(cls);
-//             const cancelBlocked = booked && isCancelWindowClosed(cls.time, selectedDate);
-//             const isProcessingWl = processingWaitlist === bKey(cls);
 
+//             // ── Button label & action logic ───────────────────────────────
 //             const bookLabel = full
 //               ? "Class Full"
 //               : isPassed
@@ -1655,8 +1896,11 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //                     : "Book";
 
 //             const handleBook = () => {
-//               if (isMember || !chargeable) bookFree(cls);
-//               else initiatePayFast(cls);
+//               if (isMember || !chargeable) {
+//                 bookFree(cls);
+//               } else {
+//                 initiatePayFast(cls);
+//               }
 //             };
 
 //             return (
@@ -1675,27 +1919,45 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //                   {/* Header row */}
 //                   <div className="flex justify-between items-start mb-2">
 //                     <div className="flex-1 min-w-0 pr-2">
-//                       <div className="font-display text-[17px] tracking-wide leading-tight">{cls.name}</div>
-//                       <div className="text-[11px] text-muted-foreground mt-0.5">{cls.subtitle}</div>
+//                       <div className="font-display text-[17px] tracking-wide leading-tight">
+//                         {cls.name}
+//                       </div>
+//                       <div className="text-[11px] text-muted-foreground mt-0.5">
+//                         {cls.subtitle}
+//                       </div>
 //                     </div>
 //                     <div className="text-right shrink-0">
-//                       <div className="font-display text-2xl" style={{ color }}>{cls.time}</div>
-//                       <div className={`text-[10px] font-bold ${full ? "text-red-400" : "text-muted-foreground"}`}>
+//                       <div className="font-display text-2xl" style={{ color }}>
+//                         {cls.time}
+//                       </div>
+//                       <div
+//                         className={`text-[10px] font-bold ${full ? "text-red-400" : "text-muted-foreground"}`}
+//                       >
 //                         {booked ? (
 //                           <span className="text-green-400">✓ You're in</span>
 //                         ) : full ? (
-//                           `FULL · ${wlCount} waiting`
+//                           "FULL"
 //                         ) : (
 //                           `${left}/${cls.spots} spots`
 //                         )}
 //                       </div>
-//                       {!isMember && !booked && !full && !isPassed && chargeable && (
-//                         <div className="text-[11px] font-bold mt-1" style={{ color }}>
-//                           R{Number(cls.price).toFixed(0)}
-//                         </div>
-//                       )}
+//                       {/* Price badge for non-members only */}
+//                       {!isMember &&
+//                         !booked &&
+//                         !full &&
+//                         !isPassed &&
+//                         chargeable && (
+//                           <div
+//                             className="text-[11px] font-bold mt-1"
+//                             style={{ color }}
+//                           >
+//                             R{Number(cls.price).toFixed(0)}
+//                           </div>
+//                         )}
 //                       {isPassed && !booked && (
-//                         <div className="text-[10px] font-bold mt-1 text-red-400">Class passed</div>
+//                         <div className="text-[10px] font-bold mt-1 text-red-400">
+//                           Class passed
+//                         </div>
 //                       )}
 //                     </div>
 //                   </div>
@@ -1703,41 +1965,19 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //                   {/* Tags */}
 //                   <div className="flex gap-1.5 flex-wrap mb-2.5">
 //                     <Tag color={color}>{cls.category}</Tag>
-//                     {cls.intensity && <Tag color={intColor(cls.intensity)}>{cls.intensity}</Tag>}
-//                     {cls.duration && <Tag color="hsl(0 0% 35%)">⏱ {cls.duration}</Tag>}
+//                     {cls.intensity && (
+//                       <Tag color={intColor(cls.intensity)}>{cls.intensity}</Tag>
+//                     )}
+//                     {cls.duration && (
+//                       <Tag color="hsl(0 0% 35%)">⏱ {cls.duration}</Tag>
+//                     )}
 //                   </div>
 
-//                   <div className="text-[11px] text-muted-foreground mb-2">👤 {cls.trainer}</div>
+//                   <div className="text-[11px] text-muted-foreground mb-2">
+//                     👤 {cls.trainer}
+//                   </div>
 
-//                   {/* ── CHANGED: Waitlist position pill ─────────────────── */}
-//                   {onWaitlist && wlPos > 0 && (
-//                     <div
-//                       className="mb-2 inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full"
-//                       style={{
-//                         background: "hsl(38 92% 44% / 0.12)",
-//                         color: "hsl(38 92% 44%)",
-//                         border: "1px solid hsl(38 92% 44% / 0.3)",
-//                       }}
-//                     >
-//                       ⏳ You're #{wlPos} on the waitlist
-//                     </div>
-//                   )}
-
-//                   {/* ── CHANGED: Cancellation cutoff warning ─────────────── */}
-//                   {cancelBlocked && (
-//                     <div
-//                       className="mb-2 inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full"
-//                       style={{
-//                         background: "hsl(0 84% 51% / 0.10)",
-//                         color: "hsl(0 84% 51%)",
-//                         border: "1px solid hsl(0 84% 51% / 0.25)",
-//                       }}
-//                     >
-//                       🔒 Cancel window closed ({CANCEL_CUTOFF_MINUTES} min before class)
-//                     </div>
-//                   )}
-
-//                   {/* WOD panel */}
+//                   {/* WOD — collapsible dropdown, hidden by default */}
 //                   {hasWod && <WodPanel cls={cls} color={color} />}
 
 //                   {/* Action row */}
@@ -1754,36 +1994,14 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //                         >
 //                           ✓ Booked
 //                         </span>
-//                         {/* ── CHANGED: disable cancel when window is closed ── */}
 //                         <Btn
 //                           variant="subtle"
 //                           size="sm"
 //                           onClick={() => cancel(cls)}
-//                           disabled={cancelBlocked}
 //                         >
-//                           {cancelBlocked ? "🔒 Locked" : "Cancel"}
+//                           Cancel
 //                         </Btn>
 //                       </>
-//                     ) : onWaitlist ? (
-//                       /* ── CHANGED: waitlist controls ──────────────────────── */
-//                       <Btn
-//                         variant="subtle"
-//                         size="sm"
-//                         onClick={() => leaveWaitlist(cls)}
-//                         disabled={isProcessingWl}
-//                       >
-//                         Leave Waitlist
-//                       </Btn>
-//                     ) : full && !isPassed ? (
-//                       /* ── CHANGED: join waitlist CTA when full ───────────── */
-//                       <Btn
-//                         variant="subtle"
-//                         size="sm"
-//                         onClick={() => joinWaitlist(cls)}
-//                         disabled={isProcessingWl}
-//                       >
-//                         {isProcessingWl ? "Joining…" : "⏳ Join Waitlist"}
-//                       </Btn>
 //                     ) : (
 //                       <Btn
 //                         variant={!full && !isPassed ? "primary" : "subtle"}
@@ -1806,26 +2024,34 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //                     )}
 
 //                     <button
-//                       onClick={() => setShowWhoBooked(showingWho ? null : cls.name)}
+//                       onClick={() =>
+//                         setShowWhoBooked(showingWho ? null : cls.name)
+//                       }
 //                       className="text-muted-foreground text-[11px] bg-transparent border-none cursor-pointer hover:text-foreground transition-colors ml-auto"
 //                     >
-//                       👥 {bookedCount(cls)}{wlCount > 0 ? ` · ⏳ ${wlCount}` : ""}
+//                       👥 {bookedCount(cls)}
 //                     </button>
 //                   </div>
 //                 </div>
 
-//                 {/* Details panel */}
+//                 {/* Details panel — only when no WOD */}
 //                 {open && !hasWod && details.length > 0 && (
 //                   <motion.div
 //                     initial={{ height: 0, opacity: 0 }}
 //                     animate={{ height: "auto", opacity: 1 }}
 //                     className="bg-secondary border-t border-border px-4 py-3"
 //                   >
-//                     <div className="text-[10px] font-bold uppercase tracking-[0.1em] mb-2" style={{ color }}>
+//                     <div
+//                       className="text-[10px] font-bold uppercase tracking-[0.1em] mb-2"
+//                       style={{ color }}
+//                     >
 //                       What's Included
 //                     </div>
 //                     {details.map((d: string, di: number) => (
-//                       <div key={di} className="flex gap-2 mb-1 text-xs text-muted-foreground">
+//                       <div
+//                         key={di}
+//                         className="flex gap-2 mb-1 text-xs text-muted-foreground"
+//                       >
 //                         <span style={{ color }}>▸</span> {d}
 //                       </div>
 //                     ))}
@@ -1842,15 +2068,23 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //                       className="bg-background border-t px-4 py-3"
 //                       style={{ borderColor: `${color}40` }}
 //                     >
-//                       <div className="text-[10px] font-bold uppercase tracking-[0.1em] mb-2" style={{ color }}>
+//                       <div
+//                         className="text-[10px] font-bold uppercase tracking-[0.1em] mb-2"
+//                         style={{ color }}
+//                       >
 //                         Booked ({bookers.length}/{cls.spots})
 //                       </div>
 //                       {bookers.length === 0 ? (
-//                         <div className="text-xs text-muted-foreground">No bookings yet — be first!</div>
+//                         <div className="text-xs text-muted-foreground">
+//                           No bookings yet — be first!
+//                         </div>
 //                       ) : (
 //                         <div className="flex flex-col gap-1">
 //                           {bookers.map((b: any, bi: number) => (
-//                             <div key={bi} className="flex items-center gap-2 text-xs">
+//                             <div
+//                               key={bi}
+//                               className="flex items-center gap-2 text-xs"
+//                             >
 //                               <div
 //                                 className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-black shrink-0"
 //                                 style={{ background: color }}
@@ -1858,40 +2092,8 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //                                 {b.name?.[0] ?? "?"}
 //                               </div>
 //                               <span className="font-medium">{b.name}</span>
-//                               {b.promotedFromWaitlist && (
-//                                 <span className="text-[9px] text-amber-400 font-bold">⏳→✓</span>
-//                               )}
 //                             </div>
 //                           ))}
-//                         </div>
-//                       )}
-
-//                       {/* ── CHANGED: show waitlist in the booked panel ─── */}
-//                       {wlCount > 0 && (
-//                         <div className="mt-3 pt-3 border-t border-border">
-//                           <div
-//                             className="text-[10px] font-bold uppercase tracking-[0.1em] mb-1.5"
-//                             style={{ color: "hsl(38 92% 44%)" }}
-//                           >
-//                             Waitlist ({wlCount})
-//                           </div>
-//                           {Object.entries(classWaitlists[bKey(cls)] ?? {})
-//                             .map(([uid, val]: [string, any]) => ({ uid, ...val }))
-//                             .sort((a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0))
-//                             .map((w, wi) => (
-//                               <div key={wi} className="flex items-center gap-2 text-xs mb-1">
-//                                 <span className="text-[10px] text-muted-foreground font-bold w-4">
-//                                   {wi + 1}.
-//                                 </span>
-//                                 <div
-//                                   className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-black shrink-0"
-//                                   style={{ background: "hsl(38 92% 44%)" }}
-//                                 >
-//                                   {w.name?.[0] ?? "?"}
-//                                 </div>
-//                                 <span className="font-medium">{w.name}</span>
-//                               </div>
-//                             ))}
 //                         </div>
 //                       )}
 //                     </motion.div>
@@ -1903,7 +2105,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //         </div>
 //       )}
 
-//       {/* Upcoming bookings */}
+//       {/* ── Upcoming bookings ─────────────────────────────────────────────── */}
 //       {upcomingBookings.length > 0 && (
 //         <div className="mk2-card mt-7">
 //           <div className="font-bold text-sm mb-3">
@@ -1915,11 +2117,20 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
 //               <div
 //                 key={i}
 //                 className="flex justify-between items-center px-3 py-2 rounded-lg mb-1.5 text-xs flex-wrap gap-1.5"
-//                 style={{ background: `${bColor}10`, border: `1px solid ${bColor}30` }}
+//                 style={{
+//                   background: `${bColor}10`,
+//                   border: `1px solid ${bColor}30`,
+//                 }}
 //               >
-//                 <span className="font-bold" style={{ color: bColor }}>{b.name}</span>
-//                 <span className="text-muted-foreground">{b.displayDate || b.dateKey}</span>
-//                 <span className="text-muted-foreground">{b.time} · {b.trainer}</span>
+//                 <span className="font-bold" style={{ color: bColor }}>
+//                   {b.name}
+//                 </span>
+//                 <span className="text-muted-foreground">
+//                   {b.displayDate || b.dateKey}
+//                 </span>
+//                 <span className="text-muted-foreground">
+//                   {b.time} · {b.trainer}
+//                 </span>
 //               </div>
 //             );
 //           })}

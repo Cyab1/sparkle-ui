@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { logEvent, db } from "@/lib/firebase";
@@ -13,14 +13,18 @@ import { QRScanner } from "@/components/shared/QRScanner";
 // ── Constants ─────────────────────────────────────────────────────────────────
 const CHECKIN_MILESTONE = 40;
 const REWARD_EXPIRY_DAYS = 60;
-const GYM_CHECKIN_QR_CODE = "MK2R_CHECKIN_RUIMSIG";
+
+// ✅ This must exactly match what your QR code encodes.
+// Scan the QR with Google Lens / phone camera to confirm the raw text,
+// then update this value if it differs.
+const GYM_CHECKIN_QR_CODE = "MK2R-GYM-ENTRY";
 
 // ── Unique code generator ─────────────────────────────────────────────────────
 function generateCode(): string {
   return `MK2R-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
 }
 
-// ── Simple QR-like code display (text based) ──────────────────────────────────
+// ── Redemption code display ───────────────────────────────────────────────────
 function RedemptionCode({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -57,8 +61,9 @@ function RedemptionCode({ code }: { code: string }) {
 }
 
 export function CheckIn() {
-  const { user, updateUser, toast } = useAuth();
+  const { user, setUser, toast } = useAuth();
   const { isMobile } = useBreakpoint();
+
   const [loading, setLoading] = useState(false);
   const [rewardChoice, setRewardChoice] = useState<
     Record<string, "inbody" | "buddy">
@@ -69,6 +74,12 @@ export function CheckIn() {
   const [activeTab, setActiveTab] = useState<"checkin" | "history">("checkin");
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [qrError, setQrError] = useState<string | null>(null);
+  const [qrScanning, setQrScanning] = useState(false);
+  // u2705 Ref-based lock: guards against duplicate scans BEFORE React state flushes.
+  // useState alone fails because QRScanner fires onScan multiple times synchronously;
+  // the second call sees stale state (false) and bypasses the guard. A ref updates
+  // synchronously so the lock holds immediately.
+  const qrScanningRef = useRef(false);
 
   const {
     nearGym,
@@ -100,89 +111,162 @@ export function CheckIn() {
     ([, r]) => r.status === "redeemed",
   );
 
-  // ── Core check-in logic (shared by button and QR) ────────────────────────
-  const doCheckIn = async () => {
-    if (checkedToday) return toast("Already checked in today!", "error");
-    if (!nearGym)
-      return toast(
-        "You must be at MK2R Ruimsig to check in (within 20m)",
-        "error",
-      );
-
-    setLoading(true);
-    const newCheckIns = [
-      ...user.checkIns,
-      {
-        date: today,
-        time: new Date().toLocaleTimeString("en-ZA", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      },
-    ];
-
-    const newTotal = newCheckIns.length;
-    const newMilestones = Math.floor(newTotal / CHECKIN_MILESTONE);
-    const oldMilestones = Math.floor(user.checkIns.length / CHECKIN_MILESTONE);
-
-    const updated = {
-      ...user,
-      points: user.points + 10,
-      checkIns: newCheckIns,
-    };
-    await updateUser(updated);
-    logEvent("gym_checkin", { points: updated.points });
-
-    if (newMilestones > oldMilestones) {
-      const code = generateCode();
-      const earnedAt = Date.now();
-      const expiresAt = earnedAt + REWARD_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-      await push(ref(db, `mk2_users/${user.uid}/rewards`), {
-        status: "pending",
-        earnedAt,
-        expiresAt,
-        redemptionCode: code,
-        checkInMilestone: newMilestones * CHECKIN_MILESTONE,
-        type: null,
-      });
-      toast(
-        `🎉 ${newTotal} check-ins! You've earned a reward — choose below!`,
-        "success",
-      );
-      setShowRewardModal(true);
-    } else {
-      toast(
-        `Checked in! +10 points 💪 (${newTotal % CHECKIN_MILESTONE}/${CHECKIN_MILESTONE} to next reward)`,
-        "success",
-      );
+  // ── Core check-in logic ───────────────────────────────────────────────────
+  const doCheckIn = async (calledFromQR = false) => {
+    // Guards — only run on manual button press, QR path pre-checks these
+    if (!calledFromQR) {
+      if (checkedToday) {
+        toast("Already checked in today!", "error");
+        return;
+      }
+      if (geoLoading) {
+        toast("Still detecting location — try again in a moment", "error");
+        return;
+      }
+      if (!nearGym) {
+        toast(
+          distanceM !== null
+            ? `You're ${distanceM}m away — must be within 20m of MK2R Ruimsig`
+            : "Enable location to check in at MK2R Ruimsig",
+          "error",
+        );
+        return;
+      }
     }
 
-    setLoading(false);
+    // ✅ Always set loading true — both manual AND QR paths need the button locked.
+    //    Previously calledFromQR skipped setLoading, so the QR button never showed
+    //    "Processing…" and could be tapped again mid-flight.
+    setLoading(true);
+
+    try {
+      const newCheckIns = [
+        ...user.checkIns,
+        {
+          date: today,
+          time: new Date().toLocaleTimeString("en-ZA", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        },
+      ];
+
+      const newTotal = newCheckIns.length;
+      const newMilestones = Math.floor(newTotal / CHECKIN_MILESTONE);
+      const oldMilestones = Math.floor(
+        user.checkIns.length / CHECKIN_MILESTONE,
+      );
+
+      const updated = {
+        ...user,
+        points: user.points + 10,
+        checkIns: newCheckIns,
+      };
+
+      // ✅ Write ONLY the two fields that changed — not the entire user object.
+      // updateUser calls saveUser which does update(entire user), and on mobile
+      // writing large workouts/bookings/weights arrays on every check-in is what
+      // caused the button to hang. Direct field writes are instant.
+      await Promise.race([
+        Promise.all([
+          set(ref(db, `mk2_users/${user.uid}/checkIns`), newCheckIns),
+          set(ref(db, `mk2_users/${user.uid}/points`), updated.points),
+        ]),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Check-in timed out — please try again")),
+            8_000,
+          ),
+        ),
+      ]);
+      // ✅ Sync local state directly — skips the heavy saveUser write entirely
+      setUser({ ...user, points: user.points + 10, checkIns: newCheckIns });
+
+      logEvent("gym_checkin", { points: updated.points });
+
+      if (newMilestones > oldMilestones) {
+        const code = generateCode();
+        const earnedAt = Date.now();
+        const expiresAt = earnedAt + REWARD_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+        await push(ref(db, `mk2_users/${user.uid}/rewards`), {
+          status: "pending",
+          earnedAt,
+          expiresAt,
+          redemptionCode: code,
+          checkInMilestone: newMilestones * CHECKIN_MILESTONE,
+          type: null,
+        });
+        toast(
+          `🎉 ${newTotal} check-ins! You've earned a reward — choose below!`,
+          "success",
+        );
+        setShowRewardModal(true);
+      } else {
+        toast(
+          `Checked in! +10 points 💪 (${newTotal % CHECKIN_MILESTONE}/${CHECKIN_MILESTONE} to next reward)`,
+          "success",
+        );
+      }
+    } catch (err: any) {
+      // ✅ Surface the actual error so we know what's blocking check-in
+      console.error("doCheckIn error:", err);
+      toast(err?.message ?? "Check-in failed — please try again", "error");
+    } finally {
+      // ✅ Always unlocks — no more lingering button regardless of success/fail/timeout
+      setLoading(false);
+    }
   };
 
   // ── QR scan handler ───────────────────────────────────────────────────────
   const handleQRScan = async (data: string) => {
+    // ✅ Use ref as the real dedup lock — useState is async and stale on rapid
+    // re-fires from the scanner. The ref flips synchronously so the second call
+    // is blocked before React even re-renders.
+    if (qrScanningRef.current) return;
+    qrScanningRef.current = true;
+    setQrScanning(true);
     setShowQRScanner(false);
     setQrError(null);
 
-    if (data !== GYM_CHECKIN_QR_CODE) {
-      setQrError(
-        "Invalid QR code — please scan the gym check-in code at reception.",
-      );
-      return;
+    if (import.meta.env.DEV) {
+      console.log("QR scanned:", data);
     }
 
-    if (checkedToday) {
-      toast("Already checked in today!", "error");
-      return;
-    }
+    try {
+      if (data.trim() !== GYM_CHECKIN_QR_CODE) {
+        setQrError(
+          `Invalid QR code scanned. Expected the gym check-in code at reception. (Got: "${data.trim()}")`,
+        );
+        return;
+      }
 
-    if (!nearGym) {
-      toast("You must be at MK2R Ruimsig to check in (within 20m)", "error");
-      return;
-    }
+      if (checkedToday) {
+        toast("Already checked in today!", "error");
+        return;
+      }
 
-    await doCheckIn();
+      if (geoLoading) {
+        toast("Detecting your location… please wait", "info");
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+
+      if (!nearGym) {
+        toast(
+          distanceM !== null
+            ? `You're ${distanceM}m away — must be within 20m of MK2R Ruimsig`
+            : "Enable location to check in at MK2R Ruimsig",
+          "error",
+        );
+        return;
+      }
+
+      await doCheckIn(true); // pass calledFromQR=true — skips duplicate guards
+    } finally {
+      // ✅ Always reset the scan lock — both ref (immediate) and state (UI)
+      qrScanningRef.current = false;
+      setQrScanning(false);
+      // Note: setLoading(false) is handled inside doCheckIn's own finally
+    }
   };
 
   // ── Redeem reward ─────────────────────────────────────────────────────────
@@ -197,7 +281,7 @@ export function CheckIn() {
         type: choice,
         redeemedAt: Date.now(),
       });
-      toast(`🎁 Reward redeemed! Show your code at reception.`, "success");
+      toast("🎁 Reward redeemed! Show your code at reception.", "success");
       setShowRewardModal(false);
       setRewardChoice((prev) => {
         const next = { ...prev };
@@ -212,8 +296,7 @@ export function CheckIn() {
 
   // ── Mark expired rewards ──────────────────────────────────────────────────
   useEffect(() => {
-    const ids = expiredRewards.map(([id]) => id).join(",");
-    if (!ids) return;
+    if (!expiredRewards.length) return;
     expiredRewards.forEach(async ([id, r]) => {
       await set(ref(db, `mk2_users/${user.uid}/rewards/${id}`), {
         ...r,
@@ -222,6 +305,7 @@ export function CheckIn() {
     });
   }, [expiredRewards.map(([id]) => id).join(",")]);
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div
       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
@@ -292,15 +376,15 @@ export function CheckIn() {
                 </span>
               ) : nearGym ? (
                 <span style={{ color: "hsl(142 72% 37%)" }}>
-                  ✓ You're at MK2R Ruimsig — ready!
+                  ✓ You're at MK2R Ruimsig — ready to check in!
                 </span>
               ) : distanceM !== null ? (
                 <span style={{ color: "hsl(20 100% 50%)" }}>
-                  {distanceM}m from gym — must be within 20m
+                  {distanceM}m from gym — must be within 20m to check in
                 </span>
               ) : (
                 <span className="text-muted-foreground">
-                  Tap Enable to detect location
+                  Tap Enable to detect your location
                 </span>
               )}
             </div>
@@ -315,7 +399,7 @@ export function CheckIn() {
             )}
           </div>
 
-          {/* QR scanner area */}
+          {/* QR scanner */}
           {showQRScanner && (
             <div
               className="mb-4 rounded-xl overflow-hidden"
@@ -358,6 +442,11 @@ export function CheckIn() {
               }}
             >
               ⚠ {qrError}
+              {import.meta.env.DEV && (
+                <div className="mt-1 font-mono opacity-60">
+                  Expected: "{GYM_CHECKIN_QR_CODE}"
+                </div>
+              )}
             </div>
           )}
 
@@ -386,7 +475,7 @@ export function CheckIn() {
               <div className="text-muted-foreground text-xs mb-4">
                 {checkedToday
                   ? "Come back tomorrow for more points"
-                  : "Must be at MK2R Ruimsig"}
+                  : "Scan the QR at reception or use the button below"}
               </div>
 
               {/* QR scan button */}
@@ -396,7 +485,7 @@ export function CheckIn() {
                     setShowQRScanner((v) => !v);
                     setQrError(null);
                   }}
-                  disabled={!nearGym}
+                  disabled={!nearGym && !geoLoading}
                   className="w-full mb-2 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all"
                   style={{
                     background: nearGym
@@ -407,9 +496,14 @@ export function CheckIn() {
                       : "hsl(var(--muted-foreground))",
                     border: `1px solid ${nearGym ? "hsl(20 100% 50% / 0.3)" : "hsl(var(--border))"}`,
                     cursor: nearGym ? "pointer" : "not-allowed",
+                    opacity: geoLoading ? 0.6 : 1,
                   }}
                 >
-                  {showQRScanner ? "✕ Close Scanner" : "📷 Scan QR Code"}
+                  {qrScanning
+                    ? "Processing…"
+                    : showQRScanner
+                      ? "✕ Close Scanner"
+                      : "📷 Scan QR Code"}
                 </button>
               )}
 
@@ -417,16 +511,18 @@ export function CheckIn() {
                 variant={checkedToday || !nearGym ? "subtle" : "primary"}
                 size="lg"
                 onClick={doCheckIn}
-                disabled={checkedToday || loading || !nearGym}
+                disabled={checkedToday || loading || (!nearGym && !geoLoading)}
                 full
               >
                 {loading
                   ? "Checking in…"
                   : checkedToday
                     ? "✓ Checked In Today"
-                    : !nearGym
-                      ? "📍 Not at gym yet"
-                      : "⚡ Check In Now (+10 pts)"}
+                    : geoLoading
+                      ? "📍 Detecting location…"
+                      : !nearGym
+                        ? "📍 Not at gym yet"
+                        : "⚡ Check In Now (+10 pts)"}
               </Btn>
             </motion.div>
 
@@ -440,7 +536,6 @@ export function CheckIn() {
                 Every {CHECKIN_MILESTONE} check-ins earns a reward
               </div>
 
-              {/* Progress bar */}
               <div className="h-3 bg-secondary rounded-full overflow-hidden mb-2">
                 <motion.div
                   className="h-full rounded-full"
@@ -459,7 +554,6 @@ export function CheckIn() {
                 </span>
               </div>
 
-              {/* Stats */}
               <div className="grid grid-cols-3 gap-2 mb-4">
                 {[
                   { label: "Total", value: rewardStatus.total },
@@ -480,7 +574,6 @@ export function CheckIn() {
                 ))}
               </div>
 
-              {/* Pending reward alert */}
               {pendingRewards.length > 0 && (
                 <button
                   onClick={() => setActiveTab("history")}
@@ -492,7 +585,6 @@ export function CheckIn() {
                 </button>
               )}
 
-              {/* Recent check-ins */}
               {user.checkIns.length > 0 && (
                 <div className="mt-3 flex flex-col gap-1 max-h-[100px] overflow-y-auto">
                   {user.checkIns
@@ -570,7 +662,6 @@ export function CheckIn() {
       {/* ══════════════════════════════════════════════════════════════════ */}
       {activeTab === "history" && (
         <div>
-          {/* Pending rewards */}
           {pendingRewards.length > 0 && (
             <div className="mb-5">
               <div className="font-bold text-sm mb-3 flex items-center gap-2">
@@ -614,14 +705,12 @@ export function CheckIn() {
                         </div>
                       </div>
 
-                      {/* Redemption code — show if type already chosen */}
                       {r.type && (
                         <div className="mb-3">
                           <RedemptionCode code={r.redemptionCode} />
                         </div>
                       )}
 
-                      {/* Choose reward type */}
                       <div className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">
                         Choose Your Reward
                       </div>
@@ -695,7 +784,6 @@ export function CheckIn() {
             </div>
           )}
 
-          {/* Redeemed rewards */}
           {redeemedRewards.length > 0 && (
             <div className="mb-5">
               <div className="font-bold text-sm mb-3 flex items-center gap-2">
@@ -743,7 +831,6 @@ export function CheckIn() {
             </div>
           )}
 
-          {/* Expired rewards */}
           {Object.entries(rewards).filter(([, r]) => r.status === "expired")
             .length > 0 && (
             <div className="mb-5">
@@ -774,7 +861,6 @@ export function CheckIn() {
             </div>
           )}
 
-          {/* Empty state */}
           {Object.keys(rewards).length === 0 && (
             <div className="mk2-card text-center py-12">
               <div className="text-4xl mb-3">🎯</div>
@@ -791,7 +877,7 @@ export function CheckIn() {
         </div>
       )}
 
-      {/* ── Reward modal — shown right after milestone hit ──────────────── */}
+      {/* ── Reward modal ──────────────────────────────────────────────────── */}
       <AnimatePresence>
         {showRewardModal && pendingRewards.length > 0 && (
           <motion.div
@@ -856,17 +942,23 @@ export function CheckIn() {
 // import { useGeolocation } from "@/hooks/useGeolocation";
 // import { ref, push, set, onValue } from "firebase/database";
 // import { getRewardStatus } from "./Dashboard";
+// import { QRScanner } from "@/components/shared/QRScanner";
 
 // // ── Constants ─────────────────────────────────────────────────────────────────
 // const CHECKIN_MILESTONE = 40;
-// const REWARD_EXPIRY_DAYS = 7;
+// const REWARD_EXPIRY_DAYS = 60;
+
+// // ✅ This must exactly match what your QR code encodes.
+// // Scan the QR with Google Lens / phone camera to confirm the raw text,
+// // then update this value if it differs.
+// const GYM_CHECKIN_QR_CODE = "MK2R_CHECKIN_RUIMSIG";
 
 // // ── Unique code generator ─────────────────────────────────────────────────────
 // function generateCode(): string {
 //   return `MK2R-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
 // }
 
-// // ── Simple QR-like code display (text based) ──────────────────────────────────
+// // ── Redemption code display ───────────────────────────────────────────────────
 // function RedemptionCode({ code }: { code: string }) {
 //   const [copied, setCopied] = useState(false);
 //   return (
@@ -905,14 +997,18 @@ export function CheckIn() {
 // export function CheckIn() {
 //   const { user, updateUser, toast } = useAuth();
 //   const { isMobile } = useBreakpoint();
+
 //   const [loading, setLoading] = useState(false);
-//   const [rewardChoice, setRewardChoice] = useState<"inbody" | "buddy" | null>(
-//     null,
-//   );
+//   const [rewardChoice, setRewardChoice] = useState<
+//     Record<string, "inbody" | "buddy">
+//   >({});
 //   const [showRewardModal, setShowRewardModal] = useState(false);
 //   const [redeeming, setRedeeming] = useState(false);
 //   const [rewards, setRewards] = useState<Record<string, any>>({});
 //   const [activeTab, setActiveTab] = useState<"checkin" | "history">("checkin");
+//   const [showQRScanner, setShowQRScanner] = useState(false);
+//   const [qrError, setQrError] = useState<string | null>(null);
+//   const [qrScanning, setQrScanning] = useState(false);
 
 //   const {
 //     nearGym,
@@ -944,14 +1040,26 @@ export function CheckIn() {
 //     ([, r]) => r.status === "redeemed",
 //   );
 
-//   // ── Check in ──────────────────────────────────────────────────────────────
+//   // ── Core check-in logic ───────────────────────────────────────────────────
 //   const doCheckIn = async () => {
-//     if (checkedToday) return toast("Already checked in today!", "error");
-//     if (!nearGym)
-//       return toast(
-//         "You must be at MK2R Ruimsig to check in (within 20m)",
+//     if (checkedToday) {
+//       toast("Already checked in today!", "error");
+//       return;
+//     }
+//     // ✅ GPS guard — wait for location before blocking
+//     if (geoLoading) {
+//       toast("Still detecting your location — try again in a moment", "error");
+//       return;
+//     }
+//     if (!nearGym) {
+//       toast(
+//         distanceM !== null
+//           ? `You're ${distanceM}m away — must be within 20m of MK2R Ruimsig`
+//           : "Enable location to check in at MK2R Ruimsig",
 //         "error",
 //       );
+//       return;
+//     }
 
 //     setLoading(true);
 //     const newCheckIns = [
@@ -977,7 +1085,6 @@ export function CheckIn() {
 //     await updateUser(updated);
 //     logEvent("gym_checkin", { points: updated.points });
 
-//     // If new milestone reached, create a reward
 //     if (newMilestones > oldMilestones) {
 //       const code = generateCode();
 //       const earnedAt = Date.now();
@@ -988,7 +1095,7 @@ export function CheckIn() {
 //         expiresAt,
 //         redemptionCode: code,
 //         checkInMilestone: newMilestones * CHECKIN_MILESTONE,
-//         type: null, // chosen at redemption
+//         type: null,
 //       });
 //       toast(
 //         `🎉 ${newTotal} check-ins! You've earned a reward — choose below!`,
@@ -1005,20 +1112,73 @@ export function CheckIn() {
 //     setLoading(false);
 //   };
 
+//   // ── QR scan handler ───────────────────────────────────────────────────────
+//   const handleQRScan = async (data: string) => {
+//     // Prevent double-fires from the scanner
+//     if (qrScanning) return;
+//     setQrScanning(true);
+//     setShowQRScanner(false);
+//     setQrError(null);
+
+//     if (import.meta.env.DEV) {
+//       console.log("QR scanned:", data);
+//     }
+
+//     // ✅ Trim whitespace and compare — common cause of silent mismatches
+//     if (data.trim() !== GYM_CHECKIN_QR_CODE) {
+//       setQrError(
+//         `Invalid QR code scanned. Expected the gym check-in code at reception. (Got: "${data.trim()}")`,
+//       );
+//       setQrScanning(false);
+//       return;
+//     }
+
+//     if (checkedToday) {
+//       toast("Already checked in today!", "error");
+//       setQrScanning(false);
+//       return;
+//     }
+
+//     // ✅ GPS race condition fix — if still loading, wait up to 3s
+//     if (geoLoading) {
+//       toast("Detecting your location… please wait", "info");
+//       await new Promise((resolve) => setTimeout(resolve, 3000));
+//     }
+
+//     if (!nearGym) {
+//       toast(
+//         distanceM !== null
+//           ? `You're ${distanceM}m away — must be within 20m of MK2R Ruimsig`
+//           : "Enable location to check in at MK2R Ruimsig",
+//         "error",
+//       );
+//       setQrScanning(false);
+//       return;
+//     }
+
+//     await doCheckIn();
+//     setQrScanning(false);
+//   };
+
 //   // ── Redeem reward ─────────────────────────────────────────────────────────
 //   const redeemReward = async (rewardId: string) => {
-//     if (!rewardChoice) return toast("Choose your reward first", "error");
+//     const choice = rewardChoice[rewardId];
+//     if (!choice) return toast("Choose your reward first", "error");
 //     setRedeeming(true);
 //     try {
 //       await set(ref(db, `mk2_users/${user.uid}/rewards/${rewardId}`), {
 //         ...rewards[rewardId],
 //         status: "redeemed",
-//         type: rewardChoice,
+//         type: choice,
 //         redeemedAt: Date.now(),
 //       });
-//       toast(`🎁 Reward redeemed! Show your code at reception.`, "success");
+//       toast("🎁 Reward redeemed! Show your code at reception.", "success");
 //       setShowRewardModal(false);
-//       setRewardChoice(null);
+//       setRewardChoice((prev) => {
+//         const next = { ...prev };
+//         delete next[rewardId];
+//         return next;
+//       });
 //     } catch {
 //       toast("Redemption failed — try again", "error");
 //     }
@@ -1027,14 +1187,16 @@ export function CheckIn() {
 
 //   // ── Mark expired rewards ──────────────────────────────────────────────────
 //   useEffect(() => {
+//     if (!expiredRewards.length) return;
 //     expiredRewards.forEach(async ([id, r]) => {
 //       await set(ref(db, `mk2_users/${user.uid}/rewards/${id}`), {
 //         ...r,
 //         status: "expired",
 //       });
 //     });
-//   }, [expiredRewards.length]);
+//   }, [expiredRewards.map(([id]) => id).join(",")]);
 
+//   // ── Render ────────────────────────────────────────────────────────────────
 //   return (
 //     <div
 //       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
@@ -1105,15 +1267,15 @@ export function CheckIn() {
 //                 </span>
 //               ) : nearGym ? (
 //                 <span style={{ color: "hsl(142 72% 37%)" }}>
-//                   ✓ You're at MK2R Ruimsig — ready!
+//                   ✓ You're at MK2R Ruimsig — ready to check in!
 //                 </span>
 //               ) : distanceM !== null ? (
 //                 <span style={{ color: "hsl(20 100% 50%)" }}>
-//                   {distanceM}m from gym — must be within 20m
+//                   {distanceM}m from gym — must be within 20m to check in
 //                 </span>
 //               ) : (
 //                 <span className="text-muted-foreground">
-//                   Tap Enable to detect location
+//                   Tap Enable to detect your location
 //                 </span>
 //               )}
 //             </div>
@@ -1127,6 +1289,57 @@ export function CheckIn() {
 //               </button>
 //             )}
 //           </div>
+
+//           {/* QR scanner */}
+//           {showQRScanner && (
+//             <div
+//               className="mb-4 rounded-xl overflow-hidden"
+//               style={{ border: "1px solid hsl(20 100% 50% / 0.3)" }}
+//             >
+//               <div
+//                 className="px-4 py-2 flex justify-between items-center"
+//                 style={{ background: "hsl(20 100% 50% / 0.08)" }}
+//               >
+//                 <span
+//                   className="text-xs font-bold"
+//                   style={{ color: "hsl(20 100% 50%)" }}
+//                 >
+//                   Scan the gym QR code at reception
+//                 </span>
+//                 <button
+//                   onClick={() => {
+//                     setShowQRScanner(false);
+//                     setQrError(null);
+//                   }}
+//                   className="text-xs border-none bg-transparent cursor-pointer text-muted-foreground"
+//                 >
+//                   ✕ Cancel
+//                 </button>
+//               </div>
+//               <div style={{ minHeight: 300 }}>
+//                 <QRScanner onScan={handleQRScan} />
+//               </div>
+//             </div>
+//           )}
+
+//           {/* QR error */}
+//           {qrError && (
+//             <div
+//               className="mb-4 rounded-xl px-4 py-3 text-xs"
+//               style={{
+//                 background: "hsl(0 84% 51% / 0.08)",
+//                 border: "1px solid hsl(0 84% 51% / 0.2)",
+//                 color: "hsl(0 84% 51%)",
+//               }}
+//             >
+//               ⚠ {qrError}
+//               {import.meta.env.DEV && (
+//                 <div className="mt-1 font-mono opacity-60">
+//                   Expected: "{GYM_CHECKIN_QR_CODE}"
+//                 </div>
+//               )}
+//             </div>
+//           )}
 
 //           <div
 //             className={`grid gap-4 mb-5 ${isMobile ? "grid-cols-1" : "grid-cols-2"}`}
@@ -1153,22 +1366,54 @@ export function CheckIn() {
 //               <div className="text-muted-foreground text-xs mb-4">
 //                 {checkedToday
 //                   ? "Come back tomorrow for more points"
-//                   : "Must be at MK2R Ruimsig"}
+//                   : "Scan the QR at reception or use the button below"}
 //               </div>
+
+//               {/* QR scan button */}
+//               {!checkedToday && (
+//                 <button
+//                   onClick={() => {
+//                     setShowQRScanner((v) => !v);
+//                     setQrError(null);
+//                   }}
+//                   disabled={!nearGym && !geoLoading}
+//                   className="w-full mb-2 py-2.5 rounded-xl font-bold text-sm border-none cursor-pointer transition-all"
+//                   style={{
+//                     background: nearGym
+//                       ? "hsl(20 100% 50% / 0.12)"
+//                       : "hsl(var(--secondary))",
+//                     color: nearGym
+//                       ? "hsl(20 100% 50%)"
+//                       : "hsl(var(--muted-foreground))",
+//                     border: `1px solid ${nearGym ? "hsl(20 100% 50% / 0.3)" : "hsl(var(--border))"}`,
+//                     cursor: nearGym ? "pointer" : "not-allowed",
+//                     opacity: geoLoading ? 0.6 : 1,
+//                   }}
+//                 >
+//                   {qrScanning
+//                     ? "Processing…"
+//                     : showQRScanner
+//                       ? "✕ Close Scanner"
+//                       : "📷 Scan QR Code"}
+//                 </button>
+//               )}
+
 //               <Btn
 //                 variant={checkedToday || !nearGym ? "subtle" : "primary"}
 //                 size="lg"
 //                 onClick={doCheckIn}
-//                 disabled={checkedToday || loading || !nearGym}
+//                 disabled={checkedToday || loading || (!nearGym && !geoLoading)}
 //                 full
 //               >
 //                 {loading
 //                   ? "Checking in…"
 //                   : checkedToday
 //                     ? "✓ Checked In Today"
-//                     : !nearGym
-//                       ? "📍 Not at gym yet"
-//                       : "⚡ Check In Now (+10 pts)"}
+//                     : geoLoading
+//                       ? "📍 Detecting location…"
+//                       : !nearGym
+//                         ? "📍 Not at gym yet"
+//                         : "⚡ Check In Now (+10 pts)"}
 //               </Btn>
 //             </motion.div>
 
@@ -1182,7 +1427,6 @@ export function CheckIn() {
 //                 Every {CHECKIN_MILESTONE} check-ins earns a reward
 //               </div>
 
-//               {/* Progress bar */}
 //               <div className="h-3 bg-secondary rounded-full overflow-hidden mb-2">
 //                 <motion.div
 //                   className="h-full rounded-full"
@@ -1201,7 +1445,6 @@ export function CheckIn() {
 //                 </span>
 //               </div>
 
-//               {/* Stats */}
 //               <div className="grid grid-cols-3 gap-2 mb-4">
 //                 {[
 //                   { label: "Total", value: rewardStatus.total },
@@ -1222,7 +1465,6 @@ export function CheckIn() {
 //                 ))}
 //               </div>
 
-//               {/* Pending reward alert */}
 //               {pendingRewards.length > 0 && (
 //                 <button
 //                   onClick={() => setActiveTab("history")}
@@ -1234,7 +1476,6 @@ export function CheckIn() {
 //                 </button>
 //               )}
 
-//               {/* Recent check-ins */}
 //               {user.checkIns.length > 0 && (
 //                 <div className="mt-3 flex flex-col gap-1 max-h-[100px] overflow-y-auto">
 //                   {user.checkIns
@@ -1312,7 +1553,6 @@ export function CheckIn() {
 //       {/* ══════════════════════════════════════════════════════════════════ */}
 //       {activeTab === "history" && (
 //         <div>
-//           {/* Pending rewards */}
 //           {pendingRewards.length > 0 && (
 //             <div className="mb-5">
 //               <div className="font-bold text-sm mb-3 flex items-center gap-2">
@@ -1344,7 +1584,7 @@ export function CheckIn() {
 //                             <span
 //                               style={{
 //                                 color:
-//                                   daysLeft <= 2
+//                                   daysLeft <= 7
 //                                     ? "hsl(0 84% 51%)"
 //                                     : "hsl(38 92% 44%)",
 //                               }}
@@ -1356,7 +1596,12 @@ export function CheckIn() {
 //                         </div>
 //                       </div>
 
-//                       {/* Choose reward type */}
+//                       {r.type && (
+//                         <div className="mb-3">
+//                           <RedemptionCode code={r.redemptionCode} />
+//                         </div>
+//                       )}
+
 //                       <div className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">
 //                         Choose Your Reward
 //                       </div>
@@ -1375,19 +1620,24 @@ export function CheckIn() {
 //                         ].map((choice) => (
 //                           <button
 //                             key={choice.val}
-//                             onClick={() => setRewardChoice(choice.val)}
+//                             onClick={() =>
+//                               setRewardChoice((prev) => ({
+//                                 ...prev,
+//                                 [id]: choice.val,
+//                               }))
+//                             }
 //                             className="py-3 rounded-xl font-bold text-xs border-none cursor-pointer transition-all text-center"
 //                             style={{
 //                               background:
-//                                 rewardChoice === choice.val
+//                                 rewardChoice[id] === choice.val
 //                                   ? "hsl(20 100% 50%)"
 //                                   : "hsl(var(--secondary))",
 //                               color:
-//                                 rewardChoice === choice.val
+//                                 rewardChoice[id] === choice.val
 //                                   ? "#000"
 //                                   : "hsl(var(--foreground))",
 //                               border:
-//                                 rewardChoice === choice.val
+//                                 rewardChoice[id] === choice.val
 //                                   ? "none"
 //                                   : "1px solid hsl(var(--border))",
 //                             }}
@@ -1400,21 +1650,21 @@ export function CheckIn() {
 
 //                       <button
 //                         onClick={() => redeemReward(id)}
-//                         disabled={!rewardChoice || redeeming}
+//                         disabled={!rewardChoice[id] || redeeming}
 //                         className="w-full py-3 rounded-xl font-bold text-sm border-none cursor-pointer transition-all"
 //                         style={{
-//                           background: rewardChoice
+//                           background: rewardChoice[id]
 //                             ? "hsl(20 100% 50%)"
 //                             : "hsl(var(--secondary))",
-//                           color: rewardChoice
+//                           color: rewardChoice[id]
 //                             ? "#000"
 //                             : "hsl(var(--muted-foreground))",
-//                           cursor: rewardChoice ? "pointer" : "not-allowed",
+//                           cursor: rewardChoice[id] ? "pointer" : "not-allowed",
 //                         }}
 //                       >
 //                         {redeeming
 //                           ? "Redeeming…"
-//                           : rewardChoice
+//                           : rewardChoice[id]
 //                             ? "Redeem & Get Code →"
 //                             : "Select a reward above"}
 //                       </button>
@@ -1425,7 +1675,6 @@ export function CheckIn() {
 //             </div>
 //           )}
 
-//           {/* Redeemed rewards */}
 //           {redeemedRewards.length > 0 && (
 //             <div className="mb-5">
 //               <div className="font-bold text-sm mb-3 flex items-center gap-2">
@@ -1473,7 +1722,6 @@ export function CheckIn() {
 //             </div>
 //           )}
 
-//           {/* Expired rewards */}
 //           {Object.entries(rewards).filter(([, r]) => r.status === "expired")
 //             .length > 0 && (
 //             <div className="mb-5">
@@ -1504,7 +1752,6 @@ export function CheckIn() {
 //             </div>
 //           )}
 
-//           {/* Empty state */}
 //           {Object.keys(rewards).length === 0 && (
 //             <div className="mk2-card text-center py-12">
 //               <div className="text-4xl mb-3">🎯</div>
@@ -1521,7 +1768,7 @@ export function CheckIn() {
 //         </div>
 //       )}
 
-//       {/* ── Reward modal — shown right after milestone hit ──────────────── */}
+//       {/* ── Reward modal ──────────────────────────────────────────────────── */}
 //       <AnimatePresence>
 //         {showRewardModal && pendingRewards.length > 0 && (
 //           <motion.div

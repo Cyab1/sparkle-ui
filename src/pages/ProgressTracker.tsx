@@ -16,21 +16,23 @@ import {
 
 // ── Date filter options ───────────────────────────────────────────────────────
 const FILTERS = [
-  { label: "30d", days: 30 },
-  { label: "90d", days: 90 },
-  { label: "6m", days: 180 },
+  { label: "30d", days: 30  },
+  { label: "90d", days: 90  },
+  { label: "6m",  days: 180 },
   { label: "1yr", days: 365 },
-  { label: "All", days: 0 },
+  { label: "All", days: 0   },
 ] as const;
 
 // ── Metric config ─────────────────────────────────────────────────────────────
+// higherIsBetter: true  → gain is green ▲, loss is red ▼   (e.g. muscle, water)
+// higherIsBetter: false → gain is red   ▲, loss is green ▼ (e.g. weight, fat)
 const METRICS = [
-  { key: "weight", label: "Weight (kg)", color: "hsl(20 100% 50%)" },
-  { key: "bodyFat", label: "Body Fat (%)", color: "hsl(0 84% 51%)" },
-  { key: "muscleMass", label: "Muscle Mass (kg)", color: "hsl(142 72% 37%)" },
-  { key: "fatMass", label: "Fat Mass (kg)", color: "hsl(38 92% 44%)" },
-  { key: "visceralFat", label: "Visceral Fat", color: "hsl(263 85% 58%)" },
-  { key: "totalBodyWater", label: "Body Water (L)", color: "hsl(187 85% 40%)" },
+  { key: "weight",         label: "Weight (kg)",    color: "hsl(20 100% 50%)",  higherIsBetter: false },
+  { key: "bodyFat",        label: "Body Fat (%)",   color: "hsl(0 84% 51%)",    higherIsBetter: false },
+  { key: "muscleMass",     label: "Muscle Mass (kg)", color: "hsl(142 72% 37%)", higherIsBetter: true  },
+  { key: "fatMass",        label: "Fat Mass (kg)",  color: "hsl(38 92% 44%)",   higherIsBetter: false },
+  { key: "visceralFat",    label: "Visceral Fat",   color: "hsl(263 85% 58%)",  higherIsBetter: false },
+  { key: "totalBodyWater", label: "Body Water (L)", color: "hsl(187 85% 40%)",  higherIsBetter: true  },
 ] as const;
 
 type MetricKey = (typeof METRICS)[number]["key"];
@@ -43,11 +45,9 @@ export function ProgressReport({ setPage }: Props) {
   const { user } = useAuth();
   const { isMobile } = useBreakpoint();
 
-  const [filterDays, setFilterDays] = useState<number>(90);
+  const [filterDays, setFilterDays]     = useState<number>(90);
   const [activeMetrics, setActiveMetrics] = useState<MetricKey[]>([
-    "weight",
-    "muscleMass",
-    "fatMass",
+    "weight", "muscleMass", "fatMass",
   ]);
 
   if (!user) return null;
@@ -64,47 +64,49 @@ export function ProgressReport({ setPage }: Props) {
       .map((e) => ({
         ...e,
         dateLabel: new Date(e.date).toLocaleDateString("en-ZA", {
-          day: "numeric",
-          month: "short",
+          day: "numeric", month: "short",
         }),
       }));
   }, [inbodyHistory, filterDays]);
 
-  // ── Toggle metric ─────────────────────────────────────────────────────────
+  // ── Toggle metric (always keep at least one active) ───────────────────────
   const toggleMetric = (key: MetricKey) => {
     setActiveMetrics((prev) =>
       prev.includes(key)
-        ? prev.length > 1
-          ? prev.filter((k) => k !== key)
-          : prev
+        ? prev.length > 1 ? prev.filter((k) => k !== key) : prev
         : [...prev, key],
     );
   };
 
-  // ── Delta vs previous entry ───────────────────────────────────────────────
   const latest = filtered.at(-1);
-  const prev = filtered.at(-2);
+  const prev   = filtered.at(-2);
 
+  // ── Delta with correct colour logic per metric ────────────────────────────
   const delta = (key: MetricKey) => {
-    if (!latest || !prev || !latest[key] || !prev[key]) return null;
-    const d = (latest[key] - prev[key]).toFixed(1);
-    return { val: d, positive: Number(d) > 0 };
+    if (!latest || !prev || latest[key] == null || prev[key] == null) return null;
+    const diff = parseFloat((latest[key] - prev[key]).toFixed(1));
+    if (diff === 0) return null;
+
+    const metric         = METRICS.find((m) => m.key === key)!;
+    const isPositiveDiff = diff > 0;
+    // Green when the change is in the desired direction
+    const isGood = metric.higherIsBetter ? isPositiveDiff : !isPositiveDiff;
+
+    return { val: diff, isGood };
   };
 
   // ── Unit suffix per metric ────────────────────────────────────────────────
   const suffix = (key: MetricKey) => {
-    if (key === "bodyFat") return "%";
-    if (key === "visceralFat") return "";
+    if (key === "bodyFat")        return "%";
+    if (key === "visceralFat")    return "";
     if (key === "totalBodyWater") return "L";
     return "kg";
   };
 
-  // ── Empty state ───────────────────────────────────────────────────────────
+  // ── Empty state — no history at all ──────────────────────────────────────
   if (inbodyHistory.length === 0) {
     return (
-      <div
-        className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
-      >
+      <div className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}>
         <PageTitle sub="Track your body composition over time">
           Progress <span className="text-primary">Report</span>
         </PageTitle>
@@ -123,9 +125,7 @@ export function ProgressReport({ setPage }: Props) {
   }
 
   return (
-    <div
-      className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
-    >
+    <div className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}>
       <PageTitle sub="Your body composition trends from InBody assessments">
         Progress <span className="text-primary">Report</span>
       </PageTitle>
@@ -154,9 +154,7 @@ export function ProgressReport({ setPage }: Props) {
 
       {/* ── Summary cards ─────────────────────────────────────────────────── */}
       {latest && (
-        <div
-          className={`grid gap-3 mb-5 ${isMobile ? "grid-cols-2" : "grid-cols-3 lg:grid-cols-6"}`}
-        >
+        <div className={`grid gap-3 mb-5 ${isMobile ? "grid-cols-2" : "grid-cols-3 lg:grid-cols-6"}`}>
           {METRICS.map((m) => {
             const d = delta(m.key);
             return (
@@ -168,14 +166,13 @@ export function ProgressReport({ setPage }: Props) {
                   className="font-display text-xl leading-none mb-1"
                   style={{ color: m.color }}
                 >
-                  {latest[m.key] ? `${latest[m.key]}${suffix(m.key)}` : "—"}
+                  {latest[m.key] != null && latest[m.key] !== 0
+                    ? `${latest[m.key]}${suffix(m.key)}`
+                    : "—"}
                 </div>
                 {d && (
-                  <div
-                    className={`text-[10px] font-semibold ${d.positive ? "text-red-400" : "text-green-500"}`}
-                  >
-                    {d.positive ? "▲" : "▼"} {Math.abs(Number(d.val))}
-                    {suffix(m.key)}
+                  <div className={`text-[10px] font-semibold ${d.isGood ? "text-green-500" : "text-red-400"}`}>
+                    {d.val > 0 ? "▲" : "▼"} {Math.abs(d.val)}{suffix(m.key)}
                   </div>
                 )}
               </div>
@@ -193,11 +190,9 @@ export function ProgressReport({ setPage }: Props) {
             className="px-3 py-1.5 rounded-full text-xs font-semibold border transition-all"
             style={{
               borderColor: m.color,
-              color: activeMetrics.includes(m.key) ? m.color : "inherit",
-              background: activeMetrics.includes(m.key)
-                ? `${m.color}15`
-                : "transparent",
-              opacity: activeMetrics.includes(m.key) ? 1 : 0.35,
+              color:       activeMetrics.includes(m.key) ? m.color : "inherit",
+              background:  activeMetrics.includes(m.key) ? `${m.color}15` : "transparent",
+              opacity:     activeMetrics.includes(m.key) ? 1 : 0.35,
             }}
           >
             {m.label}
@@ -205,32 +200,42 @@ export function ProgressReport({ setPage }: Props) {
         ))}
       </div>
 
-      {/* ── Main combined chart ───────────────────────────────────────────── */}
-      {filtered.length < 2 ? (
-        <div className="mk2-card flex flex-col items-center justify-center py-12 gap-2 text-center">
+      {/* ── No data in selected range ─────────────────────────────────────── */}
+      {filtered.length === 0 && (
+        <div className="mk2-card flex flex-col items-center justify-center py-12 gap-2 text-center mb-5">
+          <span className="text-3xl">🗓️</span>
+          <p className="text-sm text-muted-foreground">
+            No assessments in this time range.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Try a wider date range or add a new assessment.
+          </p>
+          <Btn variant="ghost" size="sm" onClick={() => setFilterDays(0)}>
+            Show All
+          </Btn>
+        </div>
+      )}
+
+      {/* ── Need more data ────────────────────────────────────────────────── */}
+      {filtered.length === 1 && (
+        <div className="mk2-card flex flex-col items-center justify-center py-12 gap-2 text-center mb-5">
           <span className="text-3xl">📈</span>
           <p className="text-sm text-muted-foreground">
-            Need at least 2 assessments in this period to show a graph.
+            Only 1 assessment in this period — need at least 2 to draw a graph.
           </p>
           <p className="text-xs text-muted-foreground">
             Try a wider date range or add another assessment.
           </p>
         </div>
-      ) : (
+      )}
+
+      {/* ── Main combined chart ───────────────────────────────────────────── */}
+      {filtered.length >= 2 && (
         <div className="mk2-card mb-5">
-          <div className="font-bold text-sm mb-4">
-            Body Composition Over Time
-          </div>
+          <div className="font-bold text-sm mb-4">Body Composition Over Time</div>
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart
-              data={filtered}
-              margin={{ top: 4, right: 12, left: -10, bottom: 0 }}
-            >
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="hsl(var(--border))"
-                opacity={0.3}
-              />
+            <LineChart data={filtered} margin={{ top: 4, right: 12, left: -10, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
               <XAxis
                 dataKey="dateLabel"
                 tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
@@ -243,10 +248,10 @@ export function ProgressReport({ setPage }: Props) {
               />
               <Tooltip
                 contentStyle={{
-                  background: "hsl(var(--background))",
-                  border: "1px solid hsl(var(--border))",
+                  background:   "hsl(var(--background))",
+                  border:       "1px solid hsl(var(--border))",
                   borderRadius: "8px",
-                  fontSize: 12,
+                  fontSize:     12,
                 }}
               />
               <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} />
@@ -270,50 +275,32 @@ export function ProgressReport({ setPage }: Props) {
 
       {/* ── Individual charts per metric ──────────────────────────────────── */}
       {filtered.length >= 2 && (
-        <div
-          className={`grid gap-4 mb-5 ${isMobile ? "grid-cols-1" : "grid-cols-2"}`}
-        >
+        <div className={`grid gap-4 mb-5 ${isMobile ? "grid-cols-1" : "grid-cols-2"}`}>
           {METRICS.filter((m) => activeMetrics.includes(m.key)).map((m) => (
             <div key={m.key} className="mk2-card">
-              <div
-                className="font-bold text-xs mb-3"
-                style={{ color: m.color }}
-              >
+              <div className="font-bold text-xs mb-3" style={{ color: m.color }}>
                 {m.label}
               </div>
               <ResponsiveContainer width="100%" height={160}>
-                <LineChart
-                  data={filtered}
-                  margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--border))"
-                    opacity={0.2}
-                  />
+                <LineChart data={filtered} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.2} />
                   <XAxis
                     dataKey="dateLabel"
-                    tick={{
-                      fontSize: 10,
-                      fill: "hsl(var(--muted-foreground))",
-                    }}
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                     tickLine={false}
                   />
                   <YAxis
-                    tick={{
-                      fontSize: 10,
-                      fill: "hsl(var(--muted-foreground))",
-                    }}
+                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
                     tickLine={false}
                     axisLine={false}
                     domain={["auto", "auto"]}
                   />
                   <Tooltip
                     contentStyle={{
-                      background: "hsl(var(--background))",
-                      border: "1px solid hsl(var(--border))",
+                      background:   "hsl(var(--background))",
+                      border:       "1px solid hsl(var(--border))",
                       borderRadius: "8px",
-                      fontSize: 11,
+                      fontSize:     11,
                     }}
                   />
                   <Line
@@ -333,65 +320,42 @@ export function ProgressReport({ setPage }: Props) {
       )}
 
       {/* ── Assessment log ────────────────────────────────────────────────── */}
-      <div className="mk2-card">
-        <div className="font-bold text-sm mb-3">
-          Assessment Log ({filtered.length} in range)
-        </div>
-        <div className="flex flex-col gap-2">
-          {filtered
-            .slice()
-            .reverse()
-            .map((e) => (
-              <div
-                key={e.date}
-                className="flex items-center justify-between flex-wrap gap-2 bg-secondary rounded-lg px-3 py-2 text-xs"
-              >
-                <span className="font-bold">
-                  {new Date(e.date).toLocaleDateString("en-ZA", {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  })}
-                </span>
-                <div className="flex gap-3 flex-wrap text-muted-foreground">
-                  <span>
-                    <span className="text-foreground font-semibold">
-                      {e.weight}kg
-                    </span>{" "}
-                    weight
+      {filtered.length > 0 && (
+        <div className="mk2-card">
+          <div className="font-bold text-sm mb-3">
+            Assessment Log ({filtered.length} in range)
+          </div>
+          <div className="flex flex-col gap-2">
+            {filtered
+              .slice()
+              .reverse()
+              .map((e) => (
+                <div
+                  key={e.date}
+                  className="flex items-center justify-between flex-wrap gap-2 bg-secondary rounded-lg px-3 py-2 text-xs"
+                >
+                  <span className="font-bold">
+                    {new Date(e.date).toLocaleDateString("en-ZA", {
+                      day: "numeric", month: "long", year: "numeric",
+                    })}
                   </span>
-                  <span>
-                    <span className="text-foreground font-semibold">
-                      {e.bodyFat}%
-                    </span>{" "}
-                    fat
-                  </span>
-                  <span>
-                    <span className="text-foreground font-semibold">
-                      {e.muscleMass}kg
-                    </span>{" "}
-                    muscle
-                  </span>
-                  {e.fatMass > 0 && (
-                    <span>
-                      <span className="text-foreground font-semibold">
-                        {e.fatMass}kg
-                      </span>{" "}
-                      fat mass
-                    </span>
+                  <div className="flex gap-3 flex-wrap text-muted-foreground">
+                    <span><span className="text-foreground font-semibold">{e.weight}kg</span> weight</span>
+                    <span><span className="text-foreground font-semibold">{e.bodyFat}%</span> fat</span>
+                    <span><span className="text-foreground font-semibold">{e.muscleMass}kg</span> muscle</span>
+                    {e.fatMass > 0 && (
+                      <span><span className="text-foreground font-semibold">{e.fatMass}kg</span> fat mass</span>
+                    )}
+                  </div>
+                  {e.notes && (
+                    <span className="text-muted-foreground italic">{e.notes}</span>
                   )}
                 </div>
-                {e.notes && (
-                  <span className="text-muted-foreground italic">
-                    {e.notes}
-                  </span>
-                )}
-              </div>
-            ))}
+              ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
-
 

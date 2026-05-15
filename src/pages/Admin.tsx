@@ -526,8 +526,10 @@ function CategoryManager({ toast }: any) {
 }
 
 // ── Classes Manager ───────────────────────────────────────────────────────────
+// UPDATED: Adds waitlist display, Cancel Class button, and cancelEntireClass logic.
+// Drop this function into Admin.tsx in place of the existing ClassesManager.
+
 function ClassesManager({ toast }: any) {
-  // FIX: cats state moved to top of component, before blank uses it
   const [cats, setCats] = useState<string[]>([
     "Crossfit",
     "Gymnastics",
@@ -554,10 +556,17 @@ function ClassesManager({ toast }: any) {
     return d;
   });
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
-  // FIX: corrected generic type syntax
+
+  // --- CHANGE 1a: allBookings state (unchanged) ---
   const [allBookings, setAllBookings] = useState<
     Record<string, Record<string, any>>
   >({});
+
+  // --- CHANGE 1b: allWaitlists state (NEW) ---
+  const [allWaitlists, setAllWaitlists] = useState<
+    Record<string, Record<string, any>>
+  >({});
+
   const [expandedBookings, setExpandedBookings] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
 
@@ -591,9 +600,17 @@ function ClassesManager({ toast }: any) {
     load();
   }, []);
 
+  // allBookings listener (unchanged)
   useEffect(() => {
     return onValue(ref(db, "class_bookings"), (snap) =>
       setAllBookings(snap.val() ?? {}),
+    );
+  }, []);
+
+  // --- CHANGE 1c: allWaitlists listener (NEW) ---
+  useEffect(() => {
+    return onValue(ref(db, "class_waitlist"), (snap) =>
+      setAllWaitlists(snap.val() ?? {}),
     );
   }, []);
 
@@ -773,6 +790,64 @@ function ClassesManager({ toast }: any) {
     setCancelling(null);
   };
 
+  // --- CHANGE 4: cancelEntireClass function (NEW) ---
+  const cancelEntireClass = async (cls: any) => {
+    const currentBookings = getClassBookings(cls);
+    const count = currentBookings.length;
+    if (
+      !confirm(
+        `Cancel ${cls.name} on ${selectedDateKey}? This will remove all ${count} booking(s) and notify members.`,
+      )
+    )
+      return;
+
+    const bk = buildBookingKey(cls.name, selectedDateKey);
+
+    // Get all booked members from Firebase directly
+    const bookingsSnap = await get(ref(db, `class_bookings/${bk}`));
+    const booked = bookingsSnap.exists()
+      ? Object.entries(bookingsSnap.val())
+      : [];
+
+    // Notify each booked member and remove their booking entry
+    for (const [uid] of booked) {
+      await push(ref(db, `users/${uid}/notifications`), {
+        title: "Class Cancelled",
+        body: `${cls.name} on ${selectedDateKey} at ${cls.time} has been cancelled by the gym. Sorry for the inconvenience.`,
+        type: "class_cancelled",
+        read: false,
+        createdAt: Date.now(),
+      });
+      const userSnap = await get(ref(db, `mk2_users/${uid}/bookings`));
+      if (userSnap.exists()) {
+        const userBookings = Array.isArray(userSnap.val())
+          ? userSnap.val()
+          : [];
+        await set(
+          ref(db, `mk2_users/${uid}/bookings`),
+          userBookings.filter(
+            (b: any) => !(b.name === cls.name && b.dateKey === selectedDateKey),
+          ),
+        );
+      }
+    }
+
+    // Remove all bookings and waitlist for this class+date slot
+    await remove(ref(db, `class_bookings/${bk}`));
+    await remove(ref(db, `class_waitlist/${bk}`));
+
+    // If it's a once-off class, delete it from admin_classes entirely
+    if (cls.scheduleType === "date") {
+      await deleteFromCollection("admin_classes", cls.id);
+      load();
+    }
+
+    toast(
+      `${cls.name} cancelled · ${booked.length} member(s) notified`,
+      "success",
+    );
+  };
+
   const getClassBookings = (
     cls: any,
   ): Array<{ uid: string; name: string; email: string }> => {
@@ -785,7 +860,31 @@ function ClassesManager({ toast }: any) {
     }));
   };
 
-  const ClassActions = ({ cls, bookings }: { cls: any; bookings?: any[] }) => (
+  // --- CHANGE 2: getClassWaitlist helper (NEW) ---
+  const getClassWaitlist = (
+    cls: any,
+  ): Array<{ uid: string; name: string; joinedAt: number }> => {
+    const bk = buildBookingKey(cls.name, selectedDateKey);
+    const raw = allWaitlists[bk] ?? {};
+    return Object.entries(raw)
+      .map(([uid, val]: [string, any]) => ({
+        uid,
+        name: val.name || "Unknown",
+        joinedAt: val.joinedAt ?? 0,
+      }))
+      .sort((a, b) => a.joinedAt - b.joinedAt);
+  };
+
+  // --- CHANGE 3: ClassActions now accepts waitlist prop and shows Cancel Class ---
+  const ClassActions = ({
+    cls,
+    bookings,
+    waitlist,
+  }: {
+    cls: any;
+    bookings?: any[];
+    waitlist?: any[];
+  }) => (
     <div
       style={{
         display: "flex",
@@ -816,7 +915,10 @@ function ClassesManager({ toast }: any) {
             border: `1px solid ${bookings.length > 0 ? "hsl(20 100% 50% / 0.3)" : "hsl(var(--border))"}`,
           }}
         >
-          👥 {bookings.length}/{cls.spots}{" "}
+          👥 {bookings.length}/{cls.spots}
+          {waitlist && waitlist.length > 0
+            ? ` · ⏳${waitlist.length}`
+            : ""}{" "}
           {expandedBookings === cls.id ? "▲" : "▼"}
         </button>
       )}
@@ -825,6 +927,10 @@ function ClassesManager({ toast }: any) {
       </Btn>
       <Btn variant="subtle" size="sm" onClick={() => startEdit(cls)}>
         Edit
+      </Btn>
+      {/* CHANGE 3b: Cancel Class button (NEW) */}
+      <Btn variant="danger" size="sm" onClick={() => cancelEntireClass(cls)}>
+        🚫 Cancel Class
       </Btn>
       <Btn variant="danger" size="sm" onClick={() => del(cls.id)}>
         Delete
@@ -1306,7 +1412,6 @@ function ClassesManager({ toast }: any) {
                     ⚡ Workout
                   </div>
 
-                  {/* Exercise rows */}
                   {(form.exercises || []).map((ex: any, i: number) => (
                     <div
                       key={i}
@@ -1420,7 +1525,6 @@ function ClassesManager({ toast }: any) {
                     + Add Exercise
                   </button>
 
-                  {/* WOD notes */}
                   <div style={{ marginTop: 14 }}>
                     <label style={lbl}>Additional WOD Notes</label>
                     <textarea
@@ -1508,6 +1612,8 @@ function ClassesManager({ toast }: any) {
               >
                 {classesOnDate.map((cls) => {
                   const bookings = getClassBookings(cls);
+                  // CHANGE 6: also get waitlist
+                  const waitlist = getClassWaitlist(cls);
                   const isExpanded = expandedBookings === cls.id;
                   return (
                     <div
@@ -1588,7 +1694,12 @@ function ClassesManager({ toast }: any) {
                             {cls.category}
                           </div>
                         </div>
-                        <ClassActions cls={cls} bookings={bookings} />
+                        {/* CHANGE 6: pass waitlist to ClassActions */}
+                        <ClassActions
+                          cls={cls}
+                          bookings={bookings}
+                          waitlist={waitlist}
+                        />
                       </div>
 
                       <AnimatePresence>
@@ -1708,6 +1819,83 @@ function ClassesManager({ toast }: any) {
                                 ))}
                               </div>
                             )}
+
+                            {/* CHANGE 5: Waitlist section below bookings */}
+                            {(() => {
+                              const wl = getClassWaitlist(cls);
+                              return wl.length > 0 ? (
+                                <div
+                                  style={{
+                                    marginTop: 12,
+                                    paddingTop: 12,
+                                    borderTop: "1px solid hsl(var(--border))",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      color: "hsl(38 92% 44%)",
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.1em",
+                                      marginBottom: 8,
+                                    }}
+                                  >
+                                    Waitlist ({wl.length})
+                                  </div>
+                                  {wl.map((w, wi) => (
+                                    <div
+                                      key={w.uid}
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 10,
+                                        padding: "6px 10px",
+                                        borderRadius: 8,
+                                        background: "hsl(var(--secondary))",
+                                        marginBottom: 4,
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          fontSize: 11,
+                                          color: "hsl(var(--muted-foreground))",
+                                          fontWeight: 700,
+                                          width: 16,
+                                        }}
+                                      >
+                                        {wi + 1}.
+                                      </span>
+                                      <div
+                                        style={{
+                                          width: 26,
+                                          height: 26,
+                                          borderRadius: "50%",
+                                          background: "hsl(38 92% 44%)",
+                                          display: "flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          fontWeight: 700,
+                                          fontSize: 12,
+                                          color: "#000",
+                                          flexShrink: 0,
+                                        }}
+                                      >
+                                        {w.name[0]}
+                                      </div>
+                                      <span
+                                        style={{
+                                          fontWeight: 700,
+                                          fontSize: 13,
+                                        }}
+                                      >
+                                        {w.name}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null;
+                            })()}
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -1720,7 +1908,7 @@ function ClassesManager({ toast }: any) {
         </>
       )}
 
-      {/* List View */}
+      {/* List View — ClassActions here doesn't show waitlist count (no date context) */}
       {viewMode === "list" &&
         (loading ? (
           <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
@@ -1813,6 +2001,7 @@ function ClassesManager({ toast }: any) {
                     · {cls.time} · {cls.trainer} · {cls.spots} spots
                   </div>
                 </div>
+                {/* List view: no bookings/waitlist props — no date context */}
                 <ClassActions cls={cls} />
               </div>
             ))}
@@ -7000,4 +7189,3 @@ export function Admin() {
     </div>
   );
 }
-
