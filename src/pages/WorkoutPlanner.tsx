@@ -3,6 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { logEvent } from "@/lib/firebase";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { getDatabase, ref, set } from "firebase/database";
 import { Btn } from "@/components/shared/Btn";
 import { Tag } from "@/components/shared/Tag";
 import { PageTitle } from "@/components/shared/PageTitle";
@@ -13,6 +14,8 @@ const aiChatFn = httpsCallable(
   "aiChat",
   { timeout: 60_000 },
 );
+
+const db = getDatabase();
 
 const FOCUS_OPTIONS = [
   "Full Body",
@@ -38,7 +41,7 @@ const EQUIPMENT_OPTIONS = [
 const DAYS_OPTIONS = [1, 2, 3, 4, 5, 6, 7];
 
 export function WorkoutPlanner() {
-  const { user, updateUser, toast } = useAuth();
+  const { user, setUser, toast } = useAuth();
   const { isMobile } = useBreakpoint();
 
   const [selectedFocus, setSelectedFocus] = useState<string[]>(["Full Body"]);
@@ -156,6 +159,7 @@ export function WorkoutPlanner() {
     }
   };
 
+  // ── Log Workout ───────────────────────────────────────────────────────────
   const logIt = async () => {
     const entry = {
       type: selectedFocus.join(", "),
@@ -163,10 +167,18 @@ export function WorkoutPlanner() {
       days,
       date: Date.now(),
     };
-    await updateUser({ ...user, workouts: [...user.workouts, entry] });
-    toast("Workout logged! 💪", "success");
+    const newWorkouts = [...user.workouts, entry];
+    try {
+      await set(ref(db, `mk2_users/${user.uid}/workouts`), newWorkouts);
+      setUser({ ...user, workouts: newWorkouts });
+      toast("Workout logged! 💪", "success");
+    } catch (err) {
+      console.error("logIt error:", err);
+      toast("Failed to log workout", "error");
+    }
   };
 
+  // ── Save Plan ─────────────────────────────────────────────────────────────
   const savePlan = async () => {
     if (!result) return;
     const plan = {
@@ -178,11 +190,15 @@ export function WorkoutPlanner() {
       savedAt: Date.now(),
     };
     const existing = (user as any).savedWorkoutPlans || [];
-    await updateUser({
-      ...user,
-      savedWorkoutPlans: [plan, ...existing],
-    } as any);
-    toast("Plan saved to your profile ✓", "success");
+    const newPlans = [plan, ...existing];
+    try {
+      await set(ref(db, `mk2_users/${user.uid}/savedWorkoutPlans`), newPlans);
+      setUser({ ...user, savedWorkoutPlans: newPlans } as any);
+      toast("Plan saved to your profile ✓", "success");
+    } catch (err) {
+      console.error("savePlan error:", err);
+      toast("Failed to save plan", "error");
+    }
   };
 
   return (
@@ -413,7 +429,11 @@ export function WorkoutPlanner() {
 // import { PageTitle } from "@/components/shared/PageTitle";
 
 // // ── Cloud Function ────────────────────────────────────────────────────────────
-// const aiChatFn = httpsCallable(getFunctions(), "aiChat");
+// const aiChatFn = httpsCallable(
+//   getFunctions(undefined, "europe-west1"),
+//   "aiChat",
+//   { timeout: 60_000 },
+// );
 
 // const FOCUS_OPTIONS = [
 //   "Full Body",
@@ -457,8 +477,9 @@ export function WorkoutPlanner() {
 //   const isActiveMember = membership === "silver" || membership === "gold";
 //   const aiQuota = (user as any).aiQuota ?? null;
 
+//   // ✅ Quota totals must match index.ts: gold=100, silver=20
 //   const quotaTotal =
-//     membership === "gold" ? 200 : membership === "silver" ? 50 : 0;
+//     membership === "gold" ? 100 : membership === "silver" ? 20 : 0;
 //   const used = aiQuota?.used ?? 0;
 //   const remaining =
 //     quotaRemaining !== null ? quotaRemaining : Math.max(0, quotaTotal - used);
@@ -527,11 +548,16 @@ export function WorkoutPlanner() {
 //           "You are an expert personal trainer at MK2 Rivers Fitness. Create detailed structured workout plans.\nFormat per session:\nWARM-UP (5 min):\n• [3 exercises]\n\nMAIN WORKOUT:\n1. [Exercise] — [sets]×[reps] | Rest: [time]\n\nCOOL-DOWN:\n• [3 stretches]\n\nTRAINER NOTES:\n• [2 tips]",
 //         mode: "workout",
 //       });
+
 //       const data = res.data as { response: string; quotaRemaining: number };
+//       if (!data?.response) throw new Error("EMPTY_RESPONSE");
+
 //       setResult(data.response);
-//       setQuotaRemaining(data.quotaRemaining);
+//       setQuotaRemaining(data.quotaRemaining ?? null);
 //     } catch (err: any) {
 //       const msg: string = err?.message ?? "";
+//       if (import.meta.env.DEV) console.error("aiChat workout error:", err);
+
 //       if (msg.includes("QUOTA_EXCEEDED")) {
 //         setAiError(
 //           "You've used all your AI calls for this month. Your quota resets on the 1st.",
@@ -539,6 +565,9 @@ export function WorkoutPlanner() {
 //         setQuotaRemaining(0);
 //       } else if (msg.includes("JOIN_GYM")) {
 //         setAiError("An active membership is required to use AI features.");
+//       } else if (msg.includes("EMPTY_RESPONSE")) {
+//         setAiError("The AI returned an empty response. Please try again.");
+//         toast("Empty response from AI", "error");
 //       } else {
 //         setAiError("AI is temporarily unavailable. Please try again.");
 //         toast("Generation failed", "error");
@@ -586,7 +615,7 @@ export function WorkoutPlanner() {
 //       </PageTitle>
 
 //       <div className="mk2-card">
-//         {/* ── AI quota counter ───────────────────────────────────────────── */}
+//         {/* ── AI quota counter ─────────────────────────────────────────── */}
 //         <div
 //           className={`flex items-center justify-between mb-4 px-3 py-2 rounded-lg ${
 //             outOfCredits
@@ -611,7 +640,7 @@ export function WorkoutPlanner() {
 //           </div>
 //         </div>
 
-//         {/* ── Multi-select focus ─────────────────────────────────────────── */}
+//         {/* ── Multi-select focus ────────────────────────────────────────── */}
 //         <div className="mb-4">
 //           <label className="mk2-label">
 //             Focus Areas (select all that apply)
@@ -633,7 +662,7 @@ export function WorkoutPlanner() {
 //           </div>
 //         </div>
 
-//         {/* ── Days, duration, equipment ──────────────────────────────────── */}
+//         {/* ── Days / duration / equipment ───────────────────────────────── */}
 //         <div
 //           className={`grid gap-3 mb-4 ${isMobile ? "grid-cols-1" : "grid-cols-3"}`}
 //         >
@@ -709,7 +738,7 @@ export function WorkoutPlanner() {
 
 //         {result && (
 //           <>
-//             <div className="mk2-ai-box mt-4">{result}</div>
+//             <div className="mk2-ai-box mt-4 whitespace-pre-wrap">{result}</div>
 //             <div className="mt-3 flex gap-2.5 flex-wrap">
 //               <Btn variant="ghost" size="sm" onClick={logIt}>
 //                 + Log Workout

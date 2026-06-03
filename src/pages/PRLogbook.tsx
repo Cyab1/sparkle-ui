@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ref, set, get, push } from "firebase/database";
+import { ref, set, get, push, remove } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
@@ -112,8 +112,11 @@ export function PRLogbook() {
   const [prs, setPrs] = useState<PR[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [editingPR, setEditingPR] = useState<PR | null>(null);
   const [category, setCategory] = useState<Category | "all">("all");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
 
   // Form state
   const [formCat, setFormCat] = useState<Category>("Weightlifting");
@@ -130,7 +133,6 @@ export function PRLogbook() {
     () => new Date().toISOString().split("T")[0],
   );
 
-  // Auto-set exercise from parent
   useEffect(() => {
     if (parentEx && formCat) {
       const variants = getVariants(formCat, parentEx);
@@ -150,18 +152,25 @@ export function PRLogbook() {
     loadPRs();
   }, []);
 
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!openMenuKey) return;
+    const close = () => setOpenMenuKey(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [openMenuKey]);
+
   const loadPRs = async () => {
     setLoading(true);
     try {
       const snap = await get(ref(db, PR_PATH));
       if (snap.exists()) {
         const list = Object.entries(snap.val()).map(
-          ([k, v]: [string, any]) => ({
-            firebaseKey: k,
-            ...v,
-          }),
+          ([k, v]: [string, any]) => ({ firebaseKey: k, ...v }),
         );
         setPrs(list);
+      } else {
+        setPrs([]);
       }
     } catch (e) {
       console.error(e);
@@ -180,6 +189,32 @@ export function PRLogbook() {
   const parsedSec = parseTimeInput(timeInput);
   const pacePreview =
     isRun && runDist && parsedSec != null ? calcPace(parsedSec, runDist) : null;
+
+  const startEdit = (pr: PR) => {
+    const ex = getExerciseById(pr.exercise_id);
+    if (!ex) return;
+
+    setEditingPR(pr);
+    setFormCat(pr.category as Category);
+
+    const parent = getParentName(pr.exercise);
+    setParentEx(parent);
+    setExerciseId(pr.exercise_id);
+    setLevel(pr.level);
+    setNotes(pr.notes || "");
+    setDateLogged(pr.date_logged);
+
+    if (ex.measurement_type === "time") {
+      setTimeInput(formatTime(pr.value));
+      setWeightVal("");
+    } else {
+      setWeightVal(String(pr.value));
+      setUnit(pr.unit);
+      setTimeInput("");
+    }
+
+    setShowModal(true);
+  };
 
   const savePR = async () => {
     if (!exerciseId || !user) return;
@@ -208,23 +243,24 @@ export function PRLogbook() {
     };
 
     try {
-      // Check if a PR already exists for this user + exercise + level
-      const existing = prs.find(
-        (p) =>
-          p.uid === user.uid &&
-          p.exercise_id === exerciseId &&
-          p.level === level,
-      );
-
-      if (existing) {
-        // Overwrite the existing record
-        await set(ref(db, `${PR_PATH}/${existing.firebaseKey}`), prData);
+      if (editingPR) {
+        await set(ref(db, `${PR_PATH}/${editingPR.firebaseKey}`), prData);
       } else {
-        // Create a new record
-        await push(ref(db, PR_PATH), prData);
+        const existing = prs.find(
+          (p) =>
+            p.uid === user.uid &&
+            p.exercise_id === exerciseId &&
+            p.level === level,
+        );
+        if (existing) {
+          await set(ref(db, `${PR_PATH}/${existing.firebaseKey}`), prData);
+        } else {
+          await push(ref(db, PR_PATH), prData);
+        }
       }
 
       setShowModal(false);
+      setEditingPR(null);
       resetForm();
       loadPRs();
     } catch (e) {
@@ -233,7 +269,25 @@ export function PRLogbook() {
     setSaving(false);
   };
 
+  const deletePR = async (pr: PR) => {
+    if (
+      !confirm(
+        `Delete your ${pr.exercise} (${pr.level}) PR of ${pr.displayValue}?`,
+      )
+    )
+      return;
+    setDeleting(pr.firebaseKey);
+    try {
+      await remove(ref(db, `${PR_PATH}/${pr.firebaseKey}`));
+      setPrs((prev) => prev.filter((p) => p.firebaseKey !== pr.firebaseKey));
+    } catch (e) {
+      console.error(e);
+    }
+    setDeleting(null);
+  };
+
   const resetForm = () => {
+    setEditingPR(null);
     setFormCat("Weightlifting");
     setTimeInput("");
     setWeightVal("");
@@ -243,7 +297,7 @@ export function PRLogbook() {
     setLevel("RX");
   };
 
-  // Filter PRs – always only the current user's
+  // Filter — only current user's PRs
   let filtered = prs.filter((p) => {
     if (p.uid !== user?.uid) return false;
     if (category !== "all" && p.category !== category) return false;
@@ -295,7 +349,7 @@ export function PRLogbook() {
         </button>
       </div>
 
-      {/* Filters – no checkbox, only category pills */}
+      {/* Category filter pills */}
       <div className="mk2-card mb-4 flex flex-wrap gap-3 items-center">
         <div className="flex flex-wrap gap-1.5">
           {[
@@ -335,7 +389,6 @@ export function PRLogbook() {
           </div>
         </div>
       ) : (
-        // Group by category
         CATEGORIES.filter((cat) => category === "all" || cat === category).map(
           (cat) => {
             const catPRs = displayPRs.filter((p) => p.category === cat);
@@ -363,10 +416,123 @@ export function PRLogbook() {
                     return (
                       <div
                         key={pr.firebaseKey}
-                        className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors"
+                        className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors relative"
                       >
+                        {/* ⋮ Three-dot menu */}
+                        <div className="absolute top-3 right-3">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuKey(
+                                openMenuKey === pr.firebaseKey
+                                  ? null
+                                  : pr.firebaseKey,
+                              );
+                            }}
+                            className="p-1.5 rounded-lg border-none bg-transparent cursor-pointer transition-all"
+                            style={{ color: "hsl(var(--muted-foreground))" }}
+                            onMouseEnter={(e) => {
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.background = "hsl(var(--secondary))";
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.color = "hsl(var(--foreground))";
+                            }}
+                            onMouseLeave={(e) => {
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.background = "transparent";
+                              (
+                                e.currentTarget as HTMLButtonElement
+                              ).style.color = "hsl(var(--muted-foreground))";
+                            }}
+                            aria-label="Options"
+                          >
+                            {/* Vertical dots SVG */}
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              aria-hidden="true"
+                            >
+                              <circle cx="12" cy="5" r="1.8" />
+                              <circle cx="12" cy="12" r="1.8" />
+                              <circle cx="12" cy="19" r="1.8" />
+                            </svg>
+                          </button>
+
+                          {/* Dropdown */}
+                          {openMenuKey === pr.firebaseKey && (
+                            <div
+                              className="absolute right-0 top-9 z-50 bg-card border border-border rounded-xl overflow-hidden"
+                              style={{
+                                minWidth: "130px",
+                                boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                onClick={() => {
+                                  setOpenMenuKey(null);
+                                  startEdit(pr);
+                                }}
+                                className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm font-body border-none bg-transparent cursor-pointer transition-colors text-foreground"
+                                onMouseEnter={(e) =>
+                                  ((
+                                    e.currentTarget as HTMLButtonElement
+                                  ).style.background = "hsl(var(--secondary))")
+                                }
+                                onMouseLeave={(e) =>
+                                  ((
+                                    e.currentTarget as HTMLButtonElement
+                                  ).style.background = "transparent")
+                                }
+                              >
+                                ✏️ Edit PR
+                              </button>
+                              <div className="h-px bg-border" />
+                              <button
+                                onClick={() => {
+                                  setOpenMenuKey(null);
+                                  deletePR(pr);
+                                }}
+                                disabled={deleting === pr.firebaseKey}
+                                className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm font-body border-none bg-transparent cursor-pointer transition-colors"
+                                style={{
+                                  color:
+                                    deleting === pr.firebaseKey
+                                      ? "hsl(var(--muted-foreground))"
+                                      : "hsl(0 84% 51%)",
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (deleting !== pr.firebaseKey)
+                                    (
+                                      e.currentTarget as HTMLButtonElement
+                                    ).style.background =
+                                      "hsl(0 84% 51% / 0.08)";
+                                }}
+                                onMouseLeave={(e) =>
+                                  ((
+                                    e.currentTarget as HTMLButtonElement
+                                  ).style.background = "transparent")
+                                }
+                              >
+                                {deleting === pr.firebaseKey
+                                  ? "Deleting…"
+                                  : "🗑 Delete"}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Card content */}
                         <div className="flex items-start justify-between mb-2">
-                          <div>
+                          <div
+                            className="flex-1 min-w-0"
+                            style={{ paddingRight: "32px" }}
+                          >
                             <div className="font-bold text-sm text-foreground">
                               {pr.exercise}
                             </div>
@@ -374,7 +540,7 @@ export function PRLogbook() {
                               {pr.level} · {pr.date_logged}
                             </div>
                           </div>
-                          <div className="text-right">
+                          <div className="text-right ml-3">
                             <div
                               className="font-display text-2xl leading-none"
                               style={{ color: "hsl(20 100% 50%)" }}
@@ -388,6 +554,7 @@ export function PRLogbook() {
                             )}
                           </div>
                         </div>
+
                         {pr.notes && (
                           <div className="text-[11px] text-muted-foreground italic mt-1.5">
                             📌 {pr.notes}
@@ -403,7 +570,7 @@ export function PRLogbook() {
         )
       )}
 
-      {/* ── Log PR Modal ─────────────────────────────────────────────── */}
+      {/* ── Log / Edit PR Modal ───────────────────────────────────────── */}
       <AnimatePresence>
         {showModal && (
           <motion.div
@@ -411,7 +578,10 @@ export function PRLogbook() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4"
-            onClick={() => setShowModal(false)}
+            onClick={() => {
+              setShowModal(false);
+              setEditingPR(null);
+            }}
           >
             <motion.div
               initial={{ y: 30, opacity: 0 }}
@@ -422,17 +592,20 @@ export function PRLogbook() {
             >
               <div className="flex items-center justify-between mb-5">
                 <div className="font-display text-xl tracking-wide">
-                  Log Personal Record
+                  {editingPR ? "Edit Personal Record" : "Log Personal Record"}
                 </div>
                 <button
-                  onClick={() => setShowModal(false)}
+                  onClick={() => {
+                    setShowModal(false);
+                    setEditingPR(null);
+                  }}
                   className="text-muted-foreground text-2xl bg-transparent border-none cursor-pointer"
                 >
                   ×
                 </button>
               </div>
 
-              {/* Athlete (auto-filled) */}
+              {/* Athlete */}
               <div className="mk2-card mb-4 bg-secondary/50">
                 <div className="text-xs text-muted-foreground mb-0.5">
                   Logging as
@@ -484,7 +657,7 @@ export function PRLogbook() {
                 </select>
               </div>
 
-              {/* Variants (distance/target) */}
+              {/* Variants */}
               {parentEx && hasVariants(formCat, parentEx) && (
                 <div className="mb-3">
                   <label className={lbl}>Distance / Target</label>
@@ -617,14 +790,16 @@ export function PRLogbook() {
               >
                 {saving
                   ? "Saving…"
-                  : prs.some(
-                        (p) =>
-                          p.uid === user?.uid &&
-                          p.exercise_id === exerciseId &&
-                          p.level === level,
-                      )
-                    ? "🔄 Update Personal Record"
-                    : "🏆 Save Personal Record"}
+                  : editingPR
+                    ? "💾 Save Changes"
+                    : prs.some(
+                          (p) =>
+                            p.uid === user?.uid &&
+                            p.exercise_id === exerciseId &&
+                            p.level === level,
+                        )
+                      ? "🔄 Update Personal Record"
+                      : "🏆 Save Personal Record"}
               </button>
             </motion.div>
           </motion.div>
@@ -635,7 +810,7 @@ export function PRLogbook() {
 }
 
 // import { useState, useEffect } from "react";
-// import { ref, set, get, push } from "firebase/database";
+// import { ref, set, get, push, remove } from "firebase/database";
 // import { db } from "@/lib/firebase";
 // import { useAuth } from "@/context/AuthContext";
 // import { motion, AnimatePresence } from "framer-motion";
@@ -748,9 +923,10 @@ export function PRLogbook() {
 //   const [prs, setPrs] = useState<PR[]>([]);
 //   const [loading, setLoading] = useState(true);
 //   const [showModal, setShowModal] = useState(false);
+//   const [editingPR, setEditingPR] = useState<PR | null>(null); // ✅ track which PR is being edited
 //   const [category, setCategory] = useState<Category | "all">("all");
-//   const [myPRsOnly, setMyPRsOnly] = useState(true);
 //   const [saving, setSaving] = useState(false);
+//   const [deleting, setDeleting] = useState<string | null>(null); // ✅ track which PR is being deleted
 
 //   // Form state
 //   const [formCat, setFormCat] = useState<Category>("Weightlifting");
@@ -767,7 +943,6 @@ export function PRLogbook() {
 //     () => new Date().toISOString().split("T")[0],
 //   );
 
-//   // Auto-set exercise from parent
 //   useEffect(() => {
 //     if (parentEx && formCat) {
 //       const variants = getVariants(formCat, parentEx);
@@ -793,12 +968,11 @@ export function PRLogbook() {
 //       const snap = await get(ref(db, PR_PATH));
 //       if (snap.exists()) {
 //         const list = Object.entries(snap.val()).map(
-//           ([k, v]: [string, any]) => ({
-//             firebaseKey: k,
-//             ...v,
-//           }),
+//           ([k, v]: [string, any]) => ({ firebaseKey: k, ...v }),
 //         );
 //         setPrs(list);
+//       } else {
+//         setPrs([]);
 //       }
 //     } catch (e) {
 //       console.error(e);
@@ -817,6 +991,34 @@ export function PRLogbook() {
 //   const parsedSec = parseTimeInput(timeInput);
 //   const pacePreview =
 //     isRun && runDist && parsedSec != null ? calcPace(parsedSec, runDist) : null;
+
+//   // ✅ Pre-populate form when editing an existing PR
+//   const startEdit = (pr: PR) => {
+//     const ex = getExerciseById(pr.exercise_id);
+//     if (!ex) return;
+
+//     setEditingPR(pr);
+//     setFormCat(pr.category as Category);
+
+//     // Set parent exercise from the exercise name
+//     const parent = getParentName(pr.exercise);
+//     setParentEx(parent);
+//     setExerciseId(pr.exercise_id);
+//     setLevel(pr.level);
+//     setNotes(pr.notes || "");
+//     setDateLogged(pr.date_logged);
+
+//     if (ex.measurement_type === "time") {
+//       setTimeInput(formatTime(pr.value));
+//       setWeightVal("");
+//     } else {
+//       setWeightVal(String(pr.value));
+//       setUnit(pr.unit);
+//       setTimeInput("");
+//     }
+
+//     setShowModal(true);
+//   };
 
 //   const savePR = async () => {
 //     if (!exerciseId || !user) return;
@@ -845,8 +1047,26 @@ export function PRLogbook() {
 //     };
 
 //     try {
-//       await push(ref(db, PR_PATH), prData);
+//       if (editingPR) {
+//         // ✅ Update the specific PR being edited (by its firebaseKey)
+//         await set(ref(db, `${PR_PATH}/${editingPR.firebaseKey}`), prData);
+//       } else {
+//         // Check if a PR already exists for this user + exercise + level
+//         const existing = prs.find(
+//           (p) =>
+//             p.uid === user.uid &&
+//             p.exercise_id === exerciseId &&
+//             p.level === level,
+//         );
+//         if (existing) {
+//           await set(ref(db, `${PR_PATH}/${existing.firebaseKey}`), prData);
+//         } else {
+//           await push(ref(db, PR_PATH), prData);
+//         }
+//       }
+
 //       setShowModal(false);
+//       setEditingPR(null);
 //       resetForm();
 //       loadPRs();
 //     } catch (e) {
@@ -855,7 +1075,26 @@ export function PRLogbook() {
 //     setSaving(false);
 //   };
 
+//   // ✅ Delete a PR by its firebaseKey
+//   const deletePR = async (pr: PR) => {
+//     if (
+//       !confirm(
+//         `Delete your ${pr.exercise} (${pr.level}) PR of ${pr.displayValue}?`,
+//       )
+//     )
+//       return;
+//     setDeleting(pr.firebaseKey);
+//     try {
+//       await remove(ref(db, `${PR_PATH}/${pr.firebaseKey}`));
+//       setPrs((prev) => prev.filter((p) => p.firebaseKey !== pr.firebaseKey));
+//     } catch (e) {
+//       console.error(e);
+//     }
+//     setDeleting(null);
+//   };
+
 //   const resetForm = () => {
+//     setEditingPR(null);
 //     setFormCat("Weightlifting");
 //     setTimeInput("");
 //     setWeightVal("");
@@ -865,9 +1104,9 @@ export function PRLogbook() {
 //     setLevel("RX");
 //   };
 
-//   // Filter PRs
+//   // Filter — only current user's PRs
 //   let filtered = prs.filter((p) => {
-//     if (myPRsOnly && p.uid !== user?.uid) return false;
+//     if (p.uid !== user?.uid) return false;
 //     if (category !== "all" && p.category !== category) return false;
 //     return true;
 //   });
@@ -890,7 +1129,6 @@ export function PRLogbook() {
 //       new Date(b.date_logged).getTime() - new Date(a.date_logged).getTime(),
 //   );
 
-//   const totalAthletes = new Set(prs.map((p) => p.uid)).size;
 //   const inp =
 //     "w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary/50 transition-colors font-body";
 //   const lbl =
@@ -902,7 +1140,7 @@ export function PRLogbook() {
 //     >
 //       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
 //         <PageTitle
-//           sub={`${prs.length} PRs logged · ${totalAthletes} athlete${totalAthletes !== 1 ? "s" : ""}`}
+//           sub={`${displayPRs.length} personal record${displayPRs.length !== 1 ? "s" : ""}`}
 //         >
 //           🏆 PR <span className="text-primary">Logbook</span>
 //         </PageTitle>
@@ -918,18 +1156,9 @@ export function PRLogbook() {
 //         </button>
 //       </div>
 
-//       {/* Filters */}
+//       {/* Category filter pills */}
 //       <div className="mk2-card mb-4 flex flex-wrap gap-3 items-center">
-//         <label className="flex items-center gap-2 cursor-pointer text-sm font-bold">
-//           <input
-//             type="checkbox"
-//             checked={myPRsOnly}
-//             onChange={(e) => setMyPRsOnly(e.target.checked)}
-//             className="w-4 h-4 accent-primary"
-//           />
-//           My PRs only
-//         </label>
-//         <div className="flex flex-wrap gap-1.5 ml-auto">
+//         <div className="flex flex-wrap gap-1.5">
 //           {[
 //             { id: "all", label: "All" },
 //             ...CATEGORIES.map((c) => ({ id: c, label: `${catEmoji[c]} ${c}` })),
@@ -967,7 +1196,6 @@ export function PRLogbook() {
 //           </div>
 //         </div>
 //       ) : (
-//         // Group by category
 //         CATEGORIES.filter((cat) => category === "all" || cat === category).map(
 //           (cat) => {
 //             const catPRs = displayPRs.filter((p) => p.category === cat);
@@ -998,7 +1226,7 @@ export function PRLogbook() {
 //                         className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors"
 //                       >
 //                         <div className="flex items-start justify-between mb-2">
-//                           <div>
+//                           <div className="flex-1 min-w-0">
 //                             <div className="font-bold text-sm text-foreground">
 //                               {pr.exercise}
 //                             </div>
@@ -1006,7 +1234,7 @@ export function PRLogbook() {
 //                               {pr.level} · {pr.date_logged}
 //                             </div>
 //                           </div>
-//                           <div className="text-right">
+//                           <div className="text-right ml-3">
 //                             <div
 //                               className="font-display text-2xl leading-none"
 //                               style={{ color: "hsl(20 100% 50%)" }}
@@ -1020,11 +1248,47 @@ export function PRLogbook() {
 //                             )}
 //                           </div>
 //                         </div>
+
 //                         {pr.notes && (
 //                           <div className="text-[11px] text-muted-foreground italic mt-1.5">
 //                             📌 {pr.notes}
 //                           </div>
 //                         )}
+
+//                         {/* ✅ Edit & Delete buttons */}
+//                         <div className="flex gap-2 mt-3 pt-3 border-t border-border">
+//                           <button
+//                             onClick={() => startEdit(pr)}
+//                             className="flex-1 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer transition-all font-body"
+//                             style={{
+//                               background: "transparent",
+//                               color: "hsl(20 100% 50%)",
+//                               borderColor: "hsl(20 100% 50% / 0.4)",
+//                             }}
+//                           >
+//                             ✏️ Edit
+//                           </button>
+//                           <button
+//                             onClick={() => deletePR(pr)}
+//                             disabled={deleting === pr.firebaseKey}
+//                             className="flex-1 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer transition-all font-body"
+//                             style={{
+//                               background: "transparent",
+//                               color:
+//                                 deleting === pr.firebaseKey
+//                                   ? "hsl(var(--muted-foreground))"
+//                                   : "hsl(0 84% 51%)",
+//                               borderColor:
+//                                 deleting === pr.firebaseKey
+//                                   ? "hsl(var(--border))"
+//                                   : "hsl(0 84% 51% / 0.4)",
+//                             }}
+//                           >
+//                             {deleting === pr.firebaseKey
+//                               ? "Deleting…"
+//                               : "🗑 Delete"}
+//                           </button>
+//                         </div>
 //                       </div>
 //                     );
 //                   })}
@@ -1035,7 +1299,7 @@ export function PRLogbook() {
 //         )
 //       )}
 
-//       {/* ── Log PR Modal ─────────────────────────────────────────────── */}
+//       {/* ── Log / Edit PR Modal ───────────────────────────────────────── */}
 //       <AnimatePresence>
 //         {showModal && (
 //           <motion.div
@@ -1043,7 +1307,10 @@ export function PRLogbook() {
 //             animate={{ opacity: 1 }}
 //             exit={{ opacity: 0 }}
 //             className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4"
-//             onClick={() => setShowModal(false)}
+//             onClick={() => {
+//               setShowModal(false);
+//               setEditingPR(null);
+//             }}
 //           >
 //             <motion.div
 //               initial={{ y: 30, opacity: 0 }}
@@ -1054,17 +1321,20 @@ export function PRLogbook() {
 //             >
 //               <div className="flex items-center justify-between mb-5">
 //                 <div className="font-display text-xl tracking-wide">
-//                   Log Personal Record
+//                   {editingPR ? "Edit Personal Record" : "Log Personal Record"}
 //                 </div>
 //                 <button
-//                   onClick={() => setShowModal(false)}
+//                   onClick={() => {
+//                     setShowModal(false);
+//                     setEditingPR(null);
+//                   }}
 //                   className="text-muted-foreground text-2xl bg-transparent border-none cursor-pointer"
 //                 >
 //                   ×
 //                 </button>
 //               </div>
 
-//               {/* Athlete (auto-filled) */}
+//               {/* Athlete */}
 //               <div className="mk2-card mb-4 bg-secondary/50">
 //                 <div className="text-xs text-muted-foreground mb-0.5">
 //                   Logging as
@@ -1116,7 +1386,7 @@ export function PRLogbook() {
 //                 </select>
 //               </div>
 
-//               {/* Variants (distance/target) */}
+//               {/* Variants */}
 //               {parentEx && hasVariants(formCat, parentEx) && (
 //                 <div className="mb-3">
 //                   <label className={lbl}>Distance / Target</label>
@@ -1247,7 +1517,18 @@ export function PRLogbook() {
 //                 className="w-full py-3.5 rounded-xl font-body font-bold text-sm text-black border-none cursor-pointer transition-all active:scale-95 disabled:opacity-50"
 //                 style={{ background: "hsl(20 100% 50%)" }}
 //               >
-//                 {saving ? "Saving…" : "🏆 Save Personal Record"}
+//                 {saving
+//                   ? "Saving…"
+//                   : editingPR
+//                     ? "💾 Save Changes"
+//                     : prs.some(
+//                           (p) =>
+//                             p.uid === user?.uid &&
+//                             p.exercise_id === exerciseId &&
+//                             p.level === level,
+//                         )
+//                       ? "🔄 Update Personal Record"
+//                       : "🏆 Save Personal Record"}
 //               </button>
 //             </motion.div>
 //           </motion.div>

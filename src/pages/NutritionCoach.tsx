@@ -3,6 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { logEvent } from "@/lib/firebase";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { getDatabase, ref, set } from "firebase/database";
 import { Btn } from "@/components/shared/Btn";
 import { PageTitle } from "@/components/shared/PageTitle";
 
@@ -15,6 +16,8 @@ const aiChatFn = httpsCallable(
   "aiChat",
   { timeout: 60_000 }, // 60 s — AI responses can be slow
 );
+
+const db = getDatabase();
 
 const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
@@ -59,7 +62,7 @@ function extractCaloriesFromBMR(text: string): string | null {
 }
 
 export function NutritionCoach() {
-  const { user, toast } = useAuth();
+  const { user, setUser, toast } = useAuth();
   const { isMobile } = useBreakpoint();
 
   const [bmrPaste, setBmrPaste] = useState("");
@@ -69,6 +72,8 @@ export function NutritionCoach() {
   const [plan, setPlan] = useState("Lose Weight");
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
   const [aiError, setAiError] = useState("");
   const [bmrApplied, setBmrApplied] = useState(false);
@@ -187,6 +192,66 @@ export function NutritionCoach() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ── Save Plan ─────────────────────────────────────────────────────────────
+  const saveMealPlan = async () => {
+    if (!result) return;
+    setSaving(true);
+    const newEntry = {
+      plan,
+      calories: cal,
+      blood,
+      diet,
+      result,
+      savedAt: Date.now(),
+    };
+    const existing = (user as any).savedMealPlans || [];
+    const newPlans = [newEntry, ...existing];
+    try {
+      await set(ref(db, `mk2_users/${user.uid}/savedMealPlans`), newPlans);
+      setUser({ ...user, savedMealPlans: newPlans } as any);
+      toast("Meal plan saved ✓", "success");
+    } catch (err) {
+      console.error("saveMealPlan error:", err);
+      toast("Failed to save meal plan", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Copy to clipboard ─────────────────────────────────────────────────────
+  const copyPlan = async () => {
+    if (!result) return;
+    setCopying(true);
+    try {
+      await navigator.clipboard.writeText(result);
+      toast("Copied to clipboard ✓", "success");
+    } catch {
+      toast("Copy failed — please select and copy manually", "error");
+    } finally {
+      setTimeout(() => setCopying(false), 1500);
+    }
+  };
+
+  // ── Share (Web Share API, falls back to copy) ─────────────────────────────
+  const sharePlan = async () => {
+    if (!result) return;
+    const shareData = {
+      title: `MK2 Rivers — ${plan} Meal Plan`,
+      text: result,
+    };
+    if (navigator.share && navigator.canShare?.(shareData)) {
+      try {
+        await navigator.share(shareData);
+      } catch {
+        // User cancelled share — do nothing
+      }
+    } else {
+      // Fallback: copy + toast
+      await copyPlan();
+      toast("Sharing not supported — plan copied instead", "info");
     }
   };
 
@@ -363,37 +428,133 @@ export function NutritionCoach() {
           </div>
         )}
 
-        {/* ── AI result ─────────────────────────────────────────────────── */}
+        {/* ── AI result + actions ───────────────────────────────────────── */}
         {result && (
-          <div className="mk2-ai-box mt-4 whitespace-pre-wrap">{result}</div>
+          <>
+            <div className="mk2-ai-box mt-4 whitespace-pre-wrap">{result}</div>
+            <div className="mt-3 flex gap-2.5 flex-wrap">
+              <Btn
+                variant="primary"
+                size="sm"
+                onClick={saveMealPlan}
+                disabled={saving}
+              >
+                {saving ? "Saving…" : "💾 Save Plan"}
+              </Btn>
+              <Btn
+                variant="ghost"
+                size="sm"
+                onClick={copyPlan}
+                disabled={copying}
+              >
+                {copying ? "✓ Copied!" : "📋 Copy"}
+              </Btn>
+              <Btn variant="ghost" size="sm" onClick={sharePlan}>
+                📤 Share
+              </Btn>
+              <Btn
+                variant="subtle"
+                size="sm"
+                onClick={() => {
+                  setResult("");
+                  generate();
+                }}
+              >
+                ↺ Regenerate
+              </Btn>
+            </div>
+          </>
         )}
       </div>
+
+      {/* ── Saved meal plans ──────────────────────────────────────────────── */}
+      {(user as any).savedMealPlans?.length > 0 && (
+        <div className="mk2-card mt-4">
+          <div className="font-bold text-sm mb-3">
+            Saved Meal Plans ({(user as any).savedMealPlans.length})
+          </div>
+          <div className="flex flex-col gap-2">
+            {(user as any).savedMealPlans.map((p: any, i: number) => (
+              <div key={i} className="bg-secondary rounded-xl p-3">
+                <div className="flex justify-between items-start flex-wrap gap-2 mb-2">
+                  <div>
+                    <div className="font-bold text-sm">{p.plan}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {p.calories} kcal · {p.diet} · Blood type {p.blood}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(p.result);
+                          toast("Copied ✓", "success");
+                        } catch {
+                          toast("Copy failed", "error");
+                        }
+                      }}
+                    >
+                      📋 Copy
+                    </button>
+                    <div className="text-[10px] text-muted-foreground">
+                      {new Date(p.savedAt).toLocaleDateString("en-ZA")}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto bg-background rounded-lg p-2">
+                  {p.result}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// import { useState } from "react";
+// import { useState, useCallback } from "react";
 // import { useAuth } from "@/context/AuthContext";
 // import { useBreakpoint } from "@/hooks/useBreakpoint";
 // import { logEvent } from "@/lib/firebase";
-// import {
-//   getFunctions,
-//   httpsCallable,
-//   connectFunctionsEmulator,
-// } from "firebase/functions";
+// import { getFunctions, httpsCallable } from "firebase/functions";
 // import { Btn } from "@/components/shared/Btn";
 // import { PageTitle } from "@/components/shared/PageTitle";
 
 // // ── Cloud Function ────────────────────────────────────────────────────────────
-// const functions = getFunctions(undefined, "europe-west1");
-
-// // if (window.location.hostname === "localhost") {
-// //   connectFunctionsEmulator(functions, "localhost", 5001);
-// // }
-
-// const aiChatFn = httpsCallable(functions, "aiChat");
+// // Explicitly set europe-west1 to match the deployed function region.
+// // Do NOT use getFunctions() without a region — it defaults to us-central1
+// // and the call will silently fail with a generic "internal" error.
+// const aiChatFn = httpsCallable(
+//   getFunctions(undefined, "europe-west1"),
+//   "aiChat",
+//   { timeout: 60_000 }, // 60 s — AI responses can be slow
+// );
 
 // const BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
+// const CAL_OPTIONS = [
+//   "1400",
+//   "1600",
+//   "1800",
+//   "2000",
+//   "2200",
+//   "2500",
+//   "3000",
+//   "3500",
+// ];
+
+// const DIET_OPTIONS = [
+//   "No restrictions",
+//   "Vegetarian",
+//   "Vegan",
+//   "Halal",
+//   "Kosher",
+//   "Gluten-free",
+//   "Dairy-free",
+//   "High Protein",
+// ];
 
 // // ── Parse calories from pasted BMR text ──────────────────────────────────────
 // function extractCaloriesFromBMR(text: string): string | null {
@@ -465,22 +626,27 @@ export function NutritionCoach() {
 //     );
 //   }
 
-//   const handleBmrPaste = (text: string) => {
-//     setBmrPaste(text);
-//     setBmrApplied(false);
-//     if (text.trim()) {
-//       const extracted = extractCaloriesFromBMR(text);
-//       if (extracted) {
-//         setCal(extracted);
-//         setBmrApplied(true);
-//         toast(
-//           `✓ Calories set to ${extracted} from your BMR results`,
-//           "success",
-//         );
+//   // ── BMR paste handler ─────────────────────────────────────────────────────
+//   const handleBmrPaste = useCallback(
+//     (text: string) => {
+//       setBmrPaste(text);
+//       setBmrApplied(false);
+//       if (text.trim()) {
+//         const extracted = extractCaloriesFromBMR(text);
+//         if (extracted) {
+//           setCal(extracted);
+//           setBmrApplied(true);
+//           toast(
+//             `✓ Calories set to ${extracted} from your BMR results`,
+//             "success",
+//           );
+//         }
 //       }
-//     }
-//   };
+//     },
+//     [toast],
+//   );
 
+//   // ── Generate ──────────────────────────────────────────────────────────────
 //   const generate = async () => {
 //     if (outOfCredits) {
 //       toast("Monthly AI limit reached. Resets on the 1st.", "error");
@@ -505,13 +671,21 @@ export function NutritionCoach() {
 //           "You are a certified sports nutritionist at MK2 Rivers Fitness, South Africa. Create practical meal plans with exact portions, SA food options, and macros per meal plus daily totals. Consider the user's blood type for optimal food choices when relevant.",
 //         mode: "nutrition",
 //       });
+
 //       const data = res.data as { response: string; quotaRemaining: number };
+
+//       // Guard: ensure the function returned what we expect
+//       if (!data?.response) throw new Error("EMPTY_RESPONSE");
+
 //       setResult(data.response);
-//       setQuotaRemaining(data.quotaRemaining);
+//       setQuotaRemaining(data.quotaRemaining ?? null);
 //     } catch (err: any) {
 //       const msg: string = err?.message ?? "";
-//       console.error("aiChat error:", err);
-//       console.error("aiChat error message:", msg);
+
+//       // Only log in dev to avoid leaking details in production
+//       if (import.meta.env.DEV) {
+//         console.error("aiChat error:", err);
+//       }
 
 //       if (msg.includes("QUOTA_EXCEEDED")) {
 //         setAiError(
@@ -520,6 +694,9 @@ export function NutritionCoach() {
 //         setQuotaRemaining(0);
 //       } else if (msg.includes("JOIN_GYM")) {
 //         setAiError("An active membership is required to use AI features.");
+//       } else if (msg.includes("EMPTY_RESPONSE")) {
+//         setAiError("The AI returned an empty response. Please try again.");
+//         toast("Empty response from AI", "error");
 //       } else {
 //         setAiError("Generation failed. Please try again.");
 //         toast("Generation failed", "error");
@@ -529,34 +706,9 @@ export function NutritionCoach() {
 //     }
 //   };
 
-//   const calOptions = [
-//     "1400",
-//     "1600",
-//     "1800",
-//     "2000",
-//     "2200",
-//     "2500",
-//     "3000",
-//     "3500",
-//   ];
-
 //   const fields = [
 //     { label: "Blood Type", val: blood, set: setBlood, opts: BLOOD_TYPES },
-//     {
-//       label: "Diet Preference",
-//       val: diet,
-//       set: setDiet,
-//       opts: [
-//         "No restrictions",
-//         "Vegetarian",
-//         "Vegan",
-//         "Halal",
-//         "Kosher",
-//         "Gluten-free",
-//         "Dairy-free",
-//         "High Protein",
-//       ],
-//     },
+//     { label: "Diet Preference", val: diet, set: setDiet, opts: DIET_OPTIONS },
 //     {
 //       label: "Plan Type",
 //       val: plan,
@@ -565,6 +717,7 @@ export function NutritionCoach() {
 //     },
 //   ];
 
+//   // ── Render ────────────────────────────────────────────────────────────────
 //   return (
 //     <div
 //       className={`max-w-[1060px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
@@ -574,7 +727,7 @@ export function NutritionCoach() {
 //       </PageTitle>
 
 //       <div className="mk2-card">
-//         {/* ── AI quota counter ───────────────────────────────────────────── */}
+//         {/* ── AI quota counter ─────────────────────────────────────────── */}
 //         <div
 //           className={`flex items-center justify-between mb-4 px-3 py-2 rounded-lg ${
 //             outOfCredits
@@ -599,7 +752,7 @@ export function NutritionCoach() {
 //           </div>
 //         </div>
 
-//         {/* ── BMR paste field ────────────────────────────────────────────── */}
+//         {/* ── BMR paste field ──────────────────────────────────────────── */}
 //         <div
 //           className="mb-4 rounded-xl p-4"
 //           style={{
@@ -631,9 +784,7 @@ export function NutritionCoach() {
 //               color: "hsl(var(--foreground))",
 //               minHeight: 80,
 //             }}
-//             placeholder="Paste your BMR calculator results here — your calorie target will be filled in automatically.
-
-// e.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal"
+//             placeholder={`Paste your BMR calculator results here — your calorie target will be filled in automatically.\n\ne.g. BMR: 1,820 kcal · TDEE: 2,450 kcal · Goal: 2,200 kcal`}
 //             value={bmrPaste}
 //             onChange={(e) => handleBmrPaste(e.target.value)}
 //           />
@@ -643,7 +794,7 @@ export function NutritionCoach() {
 //           </p>
 //         </div>
 
-//         {/* ── Calories field (standalone, prominent) ────────────────────── */}
+//         {/* ── Calories selector ────────────────────────────────────────── */}
 //         <div className="mb-4">
 //           <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1.5">
 //             Calories / day
@@ -657,14 +808,14 @@ export function NutritionCoach() {
 //             )}
 //           </label>
 //           <div className="flex gap-2 flex-wrap">
-//             {calOptions.map((c) => (
+//             {CAL_OPTIONS.map((c) => (
 //               <button
 //                 key={c}
 //                 onClick={() => {
 //                   setCal(c);
 //                   setBmrApplied(false);
 //                 }}
-//                 className="px-3 py-2 rounded-lg font-bold text-xs border-none cursor-pointer transition-all"
+//                 className="px-3 py-2 rounded-lg font-bold text-xs cursor-pointer transition-all"
 //                 style={{
 //                   background:
 //                     cal === c ? "hsl(20 100% 50%)" : "hsl(var(--secondary))",
@@ -675,13 +826,11 @@ export function NutritionCoach() {
 //                 {c}
 //               </button>
 //             ))}
-//             {!calOptions.includes(cal) && (
+//             {/* Show custom value pill when BMR auto-filled a non-preset number */}
+//             {!CAL_OPTIONS.includes(cal) && (
 //               <button
-//                 className="px-3 py-2 rounded-lg font-bold text-xs border-none cursor-pointer"
-//                 style={{
-//                   background: "hsl(20 100% 50%)",
-//                   color: "#000",
-//                 }}
+//                 className="px-3 py-2 rounded-lg font-bold text-xs cursor-pointer"
+//                 style={{ background: "hsl(20 100% 50%)", color: "#000" }}
 //               >
 //                 {cal} ✓
 //               </button>
@@ -689,6 +838,7 @@ export function NutritionCoach() {
 //           </div>
 //         </div>
 
+//         {/* ── Blood type / Diet / Plan dropdowns ───────────────────────── */}
 //         <div
 //           className={`grid gap-3 mb-4 ${isMobile ? "grid-cols-1" : "grid-cols-3"}`}
 //         >
@@ -708,6 +858,7 @@ export function NutritionCoach() {
 //           ))}
 //         </div>
 
+//         {/* ── Generate button ───────────────────────────────────────────── */}
 //         <Btn
 //           variant="primary"
 //           onClick={generate}
@@ -721,13 +872,17 @@ export function NutritionCoach() {
 //               : "Generate Meal Plan"}
 //         </Btn>
 
+//         {/* ── Error message ─────────────────────────────────────────────── */}
 //         {aiError && (
 //           <div className="mt-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400">
 //             {aiError}
 //           </div>
 //         )}
 
-//         {result && <div className="mk2-ai-box mt-4">{result}</div>}
+//         {/* ── AI result ─────────────────────────────────────────────────── */}
+//         {result && (
+//           <div className="mk2-ai-box mt-4 whitespace-pre-wrap">{result}</div>
+//         )}
 //       </div>
 //     </div>
 //   );

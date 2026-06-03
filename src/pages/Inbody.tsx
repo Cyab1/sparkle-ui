@@ -2,12 +2,13 @@ import { useState, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { ref, set } from "firebase/database";
+import { db } from "@/lib/firebase";
 import { Btn } from "@/components/shared/Btn";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { motion } from "framer-motion";
 
 // ── Cloud Function ────────────────────────────────────────────────────────────
-// Both callables go through the same aiChat function — region must match deployment.
 const functions = getFunctions(undefined, "europe-west1");
 const aiChatFn = httpsCallable(functions, "aiChat", { timeout: 60_000 });
 const aiExtractFn = httpsCallable(functions, "aiChat", { timeout: 60_000 });
@@ -28,8 +29,15 @@ interface Props {
   setPage: (page: string) => void;
 }
 
+// ── Helper: normalise European decimal commas → dots ─────────────────────────
+const parseInBodyNum = (val: any): number | null => {
+  if (val == null) return null;
+  const n = parseFloat(String(val).replace(",", "."));
+  return isNaN(n) ? null : n;
+};
+
 export function InBody({ setPage }: Props) {
-  const { user, updateUser, toast } = useAuth();
+  const { user, setUser, toast } = useAuth();
   const { isMobile } = useBreakpoint();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -42,10 +50,13 @@ export function InBody({ setPage }: Props) {
   const [notes, setNotes] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileProcessing, setFileProcessing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [analysis, setAnalysis] = useState("");
   const [analysing, setAnalysing] = useState(false);
   const [activeEntry, setActiveEntry] = useState<InBodyEntry | null>(null);
   const [aiError, setAiError] = useState("");
+  // ✅ NEW — tracks whether values were auto-extracted and need user confirmation
+  const [extractedPending, setExtractedPending] = useState(false);
 
   if (!user) return null;
 
@@ -54,23 +65,28 @@ export function InBody({ setPage }: Props) {
   const aiQuota = (user as any).aiQuota ?? null;
   const inbodyHistory: InBodyEntry[] = (user as any).inbodyHistory || [];
 
-  // Quota calculation (mirrors NutritionCoach)
   const quotaTotal =
     membership === "gold" ? 100 : membership === "silver" ? 20 : 0;
   const used = aiQuota?.used ?? 0;
   const remaining = Math.max(0, quotaTotal - used);
   const outOfCredits = remaining <= 0;
 
-  // ── File upload — extraction via aiChat function (NOT direct API call) ────
+  // ── Targeted Firebase write ───────────────────────────────────────────────
+  const saveInbodyHistory = async (newHistory: InBodyEntry[]) => {
+    await set(ref(db, `mk2_users/${user.uid}/inbodyHistory`), newHistory);
+    setUser({ ...(user as any), inbodyHistory: newHistory });
+  };
+
+  // ── File upload ───────────────────────────────────────────────────────────
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setFileName(file.name);
     setFileProcessing(true);
+    setExtractedPending(false);
 
     try {
-      // Convert file to base64
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve((reader.result as string).split(",")[1]);
@@ -81,90 +97,89 @@ export function InBody({ setPage }: Props) {
       const isPDF = file.type === "application/pdf";
       const mediaType = isPDF ? "application/pdf" : file.type || "image/jpeg";
 
-      // ✅ Send through Firebase function — keeps Anthropic API key server-side
       const res = await aiExtractFn({
         mode: "inbody_extract",
         fileData: base64,
         mediaType,
         isPDF,
-        prompt: `This is an InBody body composition report. Extract ONLY these values as a JSON object with these exact keys (use null if not found):
+        prompt: `This is an InBody body composition report. Extract ONLY these specific values and return them as a JSON object.
+
+IMPORTANT NOTES:
+- Numbers may use European format with commas as decimal separators (e.g. "62,5" means 62.5) — always return as numbers with decimal points
+- "Weight" is the total body weight in kg (found in Body Composition Analysis section, NOT target weight)
+- "bodyFat" is PBF (Percent Body Fat) shown as a percentage (e.g. 20.8, NOT 0.208)
+- "muscleMass" is SMM (Skeletal Muscle Mass) in kg
+- "fatMass" is Body Fat Mass in kg
+- "visceralFat" is Visceral Fat Level (a number, typically 1–20)
+- "totalBodyWater" is Total Body Water in litres (L)
+
+Return ONLY this JSON object, no explanation or markdown:
 {
-  "weight": number (kg),
-  "bodyFat": number (percentage e.g. 18.2 not 0.182),
-  "muscleMass": number (kg skeletal muscle mass),
-  "fatMass": number (kg body fat mass),
-  "visceralFat": number (visceral fat level/score),
-  "totalBodyWater": number (litres)
+  "weight": <number in kg>,
+  "bodyFat": <PBF percentage e.g. 20.8>,
+  "muscleMass": <SMM in kg>,
+  "fatMass": <Body Fat Mass in kg>,
+  "visceralFat": <Visceral Fat Level number>,
+  "totalBodyWater": <Total Body Water in L>
 }
-Respond ONLY with the JSON object, no other text.`,
+
+If a value cannot be found, use null for that key.`,
         systemPrompt:
-          "You are a precise data extraction assistant. Extract InBody body composition values from the provided report image or PDF. Return only valid JSON, nothing else.",
+          "You are a precise data extraction assistant. Extract InBody body composition values exactly as labeled in the report. Return only valid JSON with decimal points (not commas) for numbers. Never guess — use null if a value is not clearly visible.",
       });
 
       const data = res.data as { response: string };
-      const cleaned = data.response.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
+      const cleaned = data.response
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .trim();
 
-      // Count successfully extracted fields
-      const fields: Array<keyof typeof parsed> = [
-        "weight",
-        "bodyFat",
-        "muscleMass",
-        "fatMass",
-        "visceralFat",
-        "totalBodyWater",
-      ];
-      const filled = fields.filter((k) => parsed[k] != null).length;
+      let parsed: any;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        throw new Error("AI returned invalid JSON — please enter manually");
+      }
 
-      if (filled > 0) {
-        // Pre-fill form fields
-        if (parsed.weight != null) setWeight(String(parsed.weight));
-        if (parsed.bodyFat != null) setBodyFat(String(parsed.bodyFat));
-        if (parsed.muscleMass != null) setMuscleMass(String(parsed.muscleMass));
-        if (parsed.fatMass != null) setFatMass(String(parsed.fatMass));
-        if (parsed.visceralFat != null)
-          setVisceralFat(String(parsed.visceralFat));
-        if (parsed.totalBodyWater != null)
-          setTotalBodyWater(String(parsed.totalBodyWater));
+      const w = parseInBodyNum(parsed.weight);
+      const bf = parseInBodyNum(parsed.bodyFat);
+      const mm = parseInBodyNum(parsed.muscleMass);
+      const fm = parseInBodyNum(parsed.fatMass);
+      const vf = parseInBodyNum(parsed.visceralFat);
+      const tbw = parseInBodyNum(parsed.totalBodyWater);
 
-        // Auto-save the entry
-        const entry: InBodyEntry = {
-          date: Date.now(),
-          weight: parsed.weight ?? 0,
-          bodyFat: parsed.bodyFat ?? 0,
-          muscleMass: parsed.muscleMass ?? 0,
-          fatMass: parsed.fatMass ?? 0,
-          visceralFat: parsed.visceralFat ?? 0,
-          totalBodyWater: parsed.totalBodyWater ?? 0,
-          notes: "",
-          hasFile: true,
-        };
+      const fields = [w, bf, mm, fm, vf, tbw];
+      const filled = fields.filter((v) => v != null).length;
 
-        try {
-          await updateUser({
-            ...user,
-            inbodyHistory: [entry, ...inbodyHistory],
-          } as any);
-          toast(
-            `✅ Extracted ${filled} values and saved your assessment!`,
-            "success",
-          );
-        } catch {
-          toast(
-            "⚠️ Values extracted but failed to save — press Save Assessment manually",
-            "error",
-          );
-        }
-      } else {
+      if (filled === 0) {
         toast(
           "⚠️ Could not extract values — please enter them manually",
           "error",
         );
+        return;
       }
-    } catch (err: any) {
-      if (import.meta.env.DEV) console.error("File extraction error:", err);
+
+      // Pre-fill form fields
+      if (w != null) setWeight(String(w));
+      if (bf != null) setBodyFat(String(bf));
+      if (mm != null) setMuscleMass(String(mm));
+      if (fm != null) setFatMass(String(fm));
+      if (vf != null) setVisceralFat(String(vf));
+      if (tbw != null) setTotalBodyWater(String(tbw));
+
+      // ✅ Mark as pending confirmation — don't auto-save anymore.
+      //    User must review the pre-filled fields and click Save Assessment.
+      setExtractedPending(true);
       toast(
-        "⚠️ Could not read file automatically — please enter values manually",
+        `✅ ${filled}/6 values extracted — please check and save below`,
+        "success",
+      );
+    } catch (err: any) {
+      if (import.meta.env.DEV) console.error("InBody extraction error:", err);
+      toast(
+        err?.message?.includes("invalid JSON")
+          ? "⚠️ AI could not parse the report — please enter values manually"
+          : "⚠️ Could not read file automatically — please enter values manually",
         "error",
       );
     } finally {
@@ -188,12 +203,11 @@ Respond ONLY with the JSON object, no other text.`,
       hasFile: !!fileName,
     };
 
+    setSaving(true);
     try {
-      await updateUser({
-        ...user,
-        inbodyHistory: [entry, ...inbodyHistory],
-      } as any);
+      await saveInbodyHistory([entry, ...inbodyHistory]);
       toast("✅ InBody assessment saved!", "success");
+      // Reset form
       setWeight("");
       setBodyFat("");
       setMuscleMass("");
@@ -202,8 +216,11 @@ Respond ONLY with the JSON object, no other text.`,
       setTotalBodyWater("");
       setNotes("");
       setFileName(null);
+      setExtractedPending(false);
     } catch {
       toast("❌ Failed to save — please try again", "error");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -213,8 +230,6 @@ Respond ONLY with the JSON object, no other text.`,
       toast("Upgrade your membership to unlock AI analysis.", "error");
       return;
     }
-
-    // ✅ Quota guard — prevents wasted calls and shows proper message
     if (outOfCredits) {
       setAiError(
         "You've used all your AI calls for this month. Your quota resets on the 1st.",
@@ -284,7 +299,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
         InBody <span className="text-primary">Assessment</span>
       </PageTitle>
 
-      {/* ── AI locked notice ─────────────────────────────────────────────── */}
+      {/* ── AI locked notice ───────────────────────────────────────────── */}
       {!isActiveMember && (
         <div
           className="mb-5 rounded-xl px-4 py-3 flex items-center gap-3 text-xs"
@@ -302,7 +317,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
         </div>
       )}
 
-      {/* ── Quota warning ────────────────────────────────────────────────── */}
+      {/* ── Quota warning ──────────────────────────────────────────────── */}
       {isActiveMember && outOfCredits && (
         <div className="mb-5 rounded-xl px-4 py-3 flex items-center gap-3 text-xs bg-red-500/10 border border-red-500/30 text-red-400">
           <span className="text-base shrink-0">⚠️</span>
@@ -313,7 +328,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
         </div>
       )}
 
-      {/* ── Link to Progress Report ──────────────────────────────────────── */}
+      {/* ── Link to Progress Report ────────────────────────────────────── */}
       {inbodyHistory.length > 0 && (
         <div
           className="mb-5 rounded-xl px-4 py-3 flex items-center justify-between gap-3 cursor-pointer hover:opacity-90 transition-opacity"
@@ -341,46 +356,77 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
       <div
         className={`grid gap-5 ${isMobile ? "grid-cols-1" : "grid-cols-2"} mb-6`}
       >
-        {/* ── Manual entry ─────────────────────────────────────────────────── */}
+        {/* ── Manual entry ─────────────────────────────────────────────── */}
         <div className="mk2-card">
-          <div className="font-bold text-sm mb-4">Enter Results Manually</div>
+          <div className="font-bold text-sm mb-1">Enter Results Manually</div>
+
+          {/* ✅ Double-check banner — shown after extraction, dismissed on save */}
+          {extractedPending && (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-4 rounded-xl px-4 py-3 flex items-start gap-3 text-xs"
+              style={{
+                background: "hsl(38 92% 44% / 0.10)",
+                border: "1px solid hsl(38 92% 44% / 0.35)",
+                color: "hsl(38 92% 44%)",
+              }}
+            >
+              <span className="text-base shrink-0 mt-0.5">⚠️</span>
+              <div>
+                <p className="font-bold mb-0.5">
+                  Please double-check your extracted values
+                </p>
+                <p
+                  className="leading-relaxed"
+                  style={{ color: "hsl(38 92% 44% / 0.85)" }}
+                >
+                  AI extraction can sometimes read numbers incorrectly —
+                  especially on scanned or low-res reports. Compare each field
+                  against your printout and correct anything that looks wrong
+                  before saving.
+                </p>
+              </div>
+            </motion.div>
+          )}
+
           <div className="grid grid-cols-2 gap-3 mb-3">
             {[
               {
                 label: "Weight (kg)",
                 val: weight,
                 set: setWeight,
-                placeholder: "78.5",
+                placeholder: "62.5",
               },
               {
-                label: "Body Fat (%)",
+                label: "Body Fat % (PBF)",
                 val: bodyFat,
                 set: setBodyFat,
-                placeholder: "18.2",
+                placeholder: "20.8",
               },
               {
                 label: "Muscle Mass (kg)",
                 val: muscleMass,
                 set: setMuscleMass,
-                placeholder: "35.4",
+                placeholder: "28.0",
               },
               {
                 label: "Fat Mass (kg)",
                 val: fatMass,
                 set: setFatMass,
-                placeholder: "14.2",
+                placeholder: "13.0",
               },
               {
                 label: "Visceral Fat",
                 val: visceralFat,
                 set: setVisceralFat,
-                placeholder: "7",
+                placeholder: "5",
               },
               {
                 label: "Body Water (L)",
                 val: totalBodyWater,
                 set: setTotalBodyWater,
-                placeholder: "41.2",
+                placeholder: "36.3",
               },
             ].map((f) => (
               <div key={f.label}>
@@ -407,8 +453,12 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
             />
           </div>
           <div className="flex gap-2 flex-wrap">
-            <Btn variant="primary" onClick={saveEntry}>
-              Save Assessment
+            <Btn variant="primary" onClick={saveEntry} disabled={saving}>
+              {saving
+                ? "Saving…"
+                : extractedPending
+                  ? "✅ Confirm & Save"
+                  : "Save Assessment"}
             </Btn>
             {inbodyHistory.length > 0 && (
               <Btn variant="ghost" onClick={() => setPage("Progress")}>
@@ -418,12 +468,13 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
           </div>
         </div>
 
-        {/* ── File upload ───────────────────────────────────────────────────── */}
+        {/* ── File upload ───────────────────────────────────────────────── */}
         <div className="mk2-card flex flex-col">
           <div className="font-bold text-sm mb-2">Upload InBody Report</div>
           <div className="text-xs text-muted-foreground mb-4 leading-relaxed">
             Upload your InBody printout (photo or PDF). We'll automatically
-            extract your metrics and save the assessment.
+            extract your metrics — you'll be asked to confirm the values before
+            saving.
           </div>
           <div
             onClick={() => !fileProcessing && fileRef.current?.click()}
@@ -453,7 +504,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
                 <span className="text-4xl">📤</span>
                 <div className="font-bold text-sm">Click to upload</div>
                 <div className="text-xs text-muted-foreground">
-                  JPG, PNG or PDF — values auto-extracted & saved
+                  JPG, PNG or PDF — values auto-extracted for review
                 </div>
               </>
             )}
@@ -466,21 +517,26 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
             onChange={handleFile}
             disabled={fileProcessing}
           />
-          <div className="mt-3 text-xs text-muted-foreground bg-secondary rounded-lg px-3 py-2">
-            ℹ️ Upload your report — values are extracted and saved
-            automatically.
+          {/* ✅ Updated hint — tells user what happens after upload */}
+          <div className="mt-3 text-xs text-muted-foreground bg-secondary rounded-lg px-3 py-2 leading-relaxed">
+            ℹ️ After upload, values are pre-filled on the left.{" "}
+            <strong className="text-foreground">
+              Always check them against your printout
+            </strong>{" "}
+            — AI can occasionally misread numbers. Correct anything wrong, then
+            press <strong className="text-foreground">Confirm & Save</strong>.
           </div>
         </div>
       </div>
 
-      {/* ── AI error banner ──────────────────────────────────────────────── */}
+      {/* ── AI error banner ────────────────────────────────────────────── */}
       {aiError && (
         <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-400">
           {aiError}
         </div>
       )}
 
-      {/* ── History ──────────────────────────────────────────────────────── */}
+      {/* ── History ────────────────────────────────────────────────────── */}
       {inbodyHistory.length > 0 && (
         <div className="mk2-card mb-5">
           <div className="flex items-center justify-between mb-4">
@@ -605,7 +661,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
         </div>
       )}
 
-      {/* ── About InBody ─────────────────────────────────────────────────── */}
+      {/* ── About InBody ──────────────────────────────────────────────── */}
       <div
         className="mk2-card"
         style={{ borderTop: "2px solid hsl(187 85% 40%)" }}
@@ -701,16 +757,18 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
     </div>
   );
 }
+
 // import { useState, useRef } from "react";
 // import { useAuth } from "@/context/AuthContext";
 // import { useBreakpoint } from "@/hooks/useBreakpoint";
 // import { getFunctions, httpsCallable } from "firebase/functions";
+// import { ref, set } from "firebase/database";
+// import { db } from "@/lib/firebase";
 // import { Btn } from "@/components/shared/Btn";
 // import { PageTitle } from "@/components/shared/PageTitle";
 // import { motion } from "framer-motion";
 
 // // ── Cloud Function ────────────────────────────────────────────────────────────
-// // Both callables go through the same aiChat function — region must match deployment.
 // const functions = getFunctions(undefined, "europe-west1");
 // const aiChatFn = httpsCallable(functions, "aiChat", { timeout: 60_000 });
 // const aiExtractFn = httpsCallable(functions, "aiChat", { timeout: 60_000 });
@@ -731,8 +789,16 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //   setPage: (page: string) => void;
 // }
 
+// // ── Helper: normalise European decimal commas → dots ─────────────────────────
+// // InBody reports from some regions use "62,5" instead of "62.5"
+// const parseInBodyNum = (val: any): number | null => {
+//   if (val == null) return null;
+//   const n = parseFloat(String(val).replace(",", "."));
+//   return isNaN(n) ? null : n;
+// };
+
 // export function InBody({ setPage }: Props) {
-//   const { user, updateUser, toast } = useAuth();
+//   const { user, setUser, toast } = useAuth();
 //   const { isMobile } = useBreakpoint();
 //   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -745,6 +811,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //   const [notes, setNotes] = useState("");
 //   const [fileName, setFileName] = useState<string | null>(null);
 //   const [fileProcessing, setFileProcessing] = useState(false);
+//   const [saving, setSaving] = useState(false);
 //   const [analysis, setAnalysis] = useState("");
 //   const [analysing, setAnalysing] = useState(false);
 //   const [activeEntry, setActiveEntry] = useState<InBodyEntry | null>(null);
@@ -757,14 +824,20 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //   const aiQuota = (user as any).aiQuota ?? null;
 //   const inbodyHistory: InBodyEntry[] = (user as any).inbodyHistory || [];
 
-//   // Quota calculation (mirrors NutritionCoach)
 //   const quotaTotal =
 //     membership === "gold" ? 100 : membership === "silver" ? 20 : 0;
 //   const used = aiQuota?.used ?? 0;
 //   const remaining = Math.max(0, quotaTotal - used);
 //   const outOfCredits = remaining <= 0;
 
-//   // ── File upload — extraction via aiChat function (NOT direct API call) ────
+//   // ── Targeted Firebase write — only touches inbodyHistory, not entire user ──
+//   const saveInbodyHistory = async (newHistory: InBodyEntry[]) => {
+//     await set(ref(db, `mk2_users/${user.uid}/inbodyHistory`), newHistory);
+//     // Sync local state directly — avoids the heavy saveUser write
+//     setUser({ ...(user as any), inbodyHistory: newHistory });
+//   };
+
+//   // ── File upload ───────────────────────────────────────────────────────────
 //   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
 //     const file = e.target.files?.[0];
 //     if (!file) return;
@@ -773,7 +846,6 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //     setFileProcessing(true);
 
 //     try {
-//       // Convert file to base64
 //       const base64 = await new Promise<string>((resolve, reject) => {
 //         const reader = new FileReader();
 //         reader.onload = () => resolve((reader.result as string).split(",")[1]);
@@ -784,90 +856,111 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //       const isPDF = file.type === "application/pdf";
 //       const mediaType = isPDF ? "application/pdf" : file.type || "image/jpeg";
 
-//       // ✅ Send through Firebase function — keeps Anthropic API key server-side
+//       // ✅ Improved prompt — explicit about European comma decimals, correct
+//       //    field names matching InBody report labels, and fallback guidance.
 //       const res = await aiExtractFn({
 //         mode: "inbody_extract",
 //         fileData: base64,
 //         mediaType,
 //         isPDF,
-//         prompt: `This is an InBody body composition report. Extract ONLY these values as a JSON object with these exact keys (use null if not found):
+//         prompt: `This is an InBody body composition report. Extract ONLY these specific values and return them as a JSON object.
+
+// IMPORTANT NOTES:
+// - Numbers may use European format with commas as decimal separators (e.g. "62,5" means 62.5) — always return as numbers with decimal points
+// - "Weight" is the total body weight in kg (found in Body Composition Analysis section, NOT target weight)
+// - "bodyFat" is PBF (Percent Body Fat) shown as a percentage (e.g. 20.8, NOT 0.208)
+// - "muscleMass" is SMM (Skeletal Muscle Mass) in kg
+// - "fatMass" is Body Fat Mass in kg
+// - "visceralFat" is Visceral Fat Level (a number, typically 1–20)
+// - "totalBodyWater" is Total Body Water in litres (L)
+
+// Return ONLY this JSON object, no explanation or markdown:
 // {
-//   "weight": number (kg),
-//   "bodyFat": number (percentage e.g. 18.2 not 0.182),
-//   "muscleMass": number (kg skeletal muscle mass),
-//   "fatMass": number (kg body fat mass),
-//   "visceralFat": number (visceral fat level/score),
-//   "totalBodyWater": number (litres)
+//   "weight": <number in kg>,
+//   "bodyFat": <PBF percentage e.g. 20.8>,
+//   "muscleMass": <SMM in kg>,
+//   "fatMass": <Body Fat Mass in kg>,
+//   "visceralFat": <Visceral Fat Level number>,
+//   "totalBodyWater": <Total Body Water in L>
 // }
-// Respond ONLY with the JSON object, no other text.`,
+
+// If a value cannot be found, use null for that key.`,
 //         systemPrompt:
-//           "You are a precise data extraction assistant. Extract InBody body composition values from the provided report image or PDF. Return only valid JSON, nothing else.",
+//           "You are a precise data extraction assistant. Extract InBody body composition values exactly as labeled in the report. Return only valid JSON with decimal points (not commas) for numbers. Never guess — use null if a value is not clearly visible.",
 //       });
 
 //       const data = res.data as { response: string };
-//       const cleaned = data.response.replace(/```json|```/g, "").trim();
-//       const parsed = JSON.parse(cleaned);
+//       // Strip any markdown fences the model might add despite instructions
+//       const cleaned = data.response
+//         .replace(/```json\s*/gi, "")
+//         .replace(/```\s*/g, "")
+//         .trim();
 
-//       // Count successfully extracted fields
-//       const fields: Array<keyof typeof parsed> = [
-//         "weight",
-//         "bodyFat",
-//         "muscleMass",
-//         "fatMass",
-//         "visceralFat",
-//         "totalBodyWater",
-//       ];
-//       const filled = fields.filter((k) => parsed[k] != null).length;
+//       let parsed: any;
+//       try {
+//         parsed = JSON.parse(cleaned);
+//       } catch {
+//         throw new Error("AI returned invalid JSON — please enter manually");
+//       }
 
-//       if (filled > 0) {
-//         // Pre-fill form fields
-//         if (parsed.weight != null) setWeight(String(parsed.weight));
-//         if (parsed.bodyFat != null) setBodyFat(String(parsed.bodyFat));
-//         if (parsed.muscleMass != null) setMuscleMass(String(parsed.muscleMass));
-//         if (parsed.fatMass != null) setFatMass(String(parsed.fatMass));
-//         if (parsed.visceralFat != null)
-//           setVisceralFat(String(parsed.visceralFat));
-//         if (parsed.totalBodyWater != null)
-//           setTotalBodyWater(String(parsed.totalBodyWater));
+//       // ✅ Normalise European comma decimals on every field
+//       const w = parseInBodyNum(parsed.weight);
+//       const bf = parseInBodyNum(parsed.bodyFat);
+//       const mm = parseInBodyNum(parsed.muscleMass);
+//       const fm = parseInBodyNum(parsed.fatMass);
+//       const vf = parseInBodyNum(parsed.visceralFat);
+//       const tbw = parseInBodyNum(parsed.totalBodyWater);
 
-//         // Auto-save the entry
-//         const entry: InBodyEntry = {
-//           date: Date.now(),
-//           weight: parsed.weight ?? 0,
-//           bodyFat: parsed.bodyFat ?? 0,
-//           muscleMass: parsed.muscleMass ?? 0,
-//           fatMass: parsed.fatMass ?? 0,
-//           visceralFat: parsed.visceralFat ?? 0,
-//           totalBodyWater: parsed.totalBodyWater ?? 0,
-//           notes: "",
-//           hasFile: true,
-//         };
+//       const fields = [w, bf, mm, fm, vf, tbw];
+//       const filled = fields.filter((v) => v != null).length;
 
-//         try {
-//           await updateUser({
-//             ...user,
-//             inbodyHistory: [entry, ...inbodyHistory],
-//           } as any);
-//           toast(
-//             `✅ Extracted ${filled} values and saved your assessment!`,
-//             "success",
-//           );
-//         } catch {
-//           toast(
-//             "⚠️ Values extracted but failed to save — press Save Assessment manually",
-//             "error",
-//           );
-//         }
-//       } else {
+//       if (filled === 0) {
 //         toast(
 //           "⚠️ Could not extract values — please enter them manually",
 //           "error",
 //         );
+//         return;
+//       }
+
+//       // Pre-fill form
+//       if (w != null) setWeight(String(w));
+//       if (bf != null) setBodyFat(String(bf));
+//       if (mm != null) setMuscleMass(String(mm));
+//       if (fm != null) setFatMass(String(fm));
+//       if (vf != null) setVisceralFat(String(vf));
+//       if (tbw != null) setTotalBodyWater(String(tbw));
+
+//       // ✅ Auto-save with targeted write
+//       const entry: InBodyEntry = {
+//         date: Date.now(),
+//         weight: w ?? 0,
+//         bodyFat: bf ?? 0,
+//         muscleMass: mm ?? 0,
+//         fatMass: fm ?? 0,
+//         visceralFat: vf ?? 0,
+//         totalBodyWater: tbw ?? 0,
+//         notes: "",
+//         hasFile: true,
+//       };
+
+//       try {
+//         await saveInbodyHistory([entry, ...inbodyHistory]);
+//         toast(
+//           `✅ Extracted ${filled}/6 values and saved your assessment!`,
+//           "success",
+//         );
+//       } catch {
+//         toast(
+//           "⚠️ Values extracted but failed to save — press Save Assessment manually",
+//           "error",
+//         );
 //       }
 //     } catch (err: any) {
-//       if (import.meta.env.DEV) console.error("File extraction error:", err);
+//       if (import.meta.env.DEV) console.error("InBody extraction error:", err);
 //       toast(
-//         "⚠️ Could not read file automatically — please enter values manually",
+//         err?.message?.includes("invalid JSON")
+//           ? "⚠️ AI could not parse the report — please enter values manually"
+//           : "⚠️ Could not read file automatically — please enter values manually",
 //         "error",
 //       );
 //     } finally {
@@ -891,11 +984,9 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //       hasFile: !!fileName,
 //     };
 
+//     setSaving(true);
 //     try {
-//       await updateUser({
-//         ...user,
-//         inbodyHistory: [entry, ...inbodyHistory],
-//       } as any);
+//       await saveInbodyHistory([entry, ...inbodyHistory]);
 //       toast("✅ InBody assessment saved!", "success");
 //       setWeight("");
 //       setBodyFat("");
@@ -907,6 +998,8 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //       setFileName(null);
 //     } catch {
 //       toast("❌ Failed to save — please try again", "error");
+//     } finally {
+//       setSaving(false);
 //     }
 //   };
 
@@ -916,8 +1009,6 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //       toast("Upgrade your membership to unlock AI analysis.", "error");
 //       return;
 //     }
-
-//     // ✅ Quota guard — prevents wasted calls and shows proper message
 //     if (outOfCredits) {
 //       setAiError(
 //         "You've used all your AI calls for this month. Your quota resets on the 1st.",
@@ -987,7 +1078,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //         InBody <span className="text-primary">Assessment</span>
 //       </PageTitle>
 
-//       {/* ── AI locked notice ─────────────────────────────────────────────── */}
+//       {/* ── AI locked notice ───────────────────────────────────────────── */}
 //       {!isActiveMember && (
 //         <div
 //           className="mb-5 rounded-xl px-4 py-3 flex items-center gap-3 text-xs"
@@ -1005,7 +1096,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //         </div>
 //       )}
 
-//       {/* ── Quota warning ────────────────────────────────────────────────── */}
+//       {/* ── Quota warning ──────────────────────────────────────────────── */}
 //       {isActiveMember && outOfCredits && (
 //         <div className="mb-5 rounded-xl px-4 py-3 flex items-center gap-3 text-xs bg-red-500/10 border border-red-500/30 text-red-400">
 //           <span className="text-base shrink-0">⚠️</span>
@@ -1016,7 +1107,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //         </div>
 //       )}
 
-//       {/* ── Link to Progress Report ──────────────────────────────────────── */}
+//       {/* ── Link to Progress Report ────────────────────────────────────── */}
 //       {inbodyHistory.length > 0 && (
 //         <div
 //           className="mb-5 rounded-xl px-4 py-3 flex items-center justify-between gap-3 cursor-pointer hover:opacity-90 transition-opacity"
@@ -1044,7 +1135,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //       <div
 //         className={`grid gap-5 ${isMobile ? "grid-cols-1" : "grid-cols-2"} mb-6`}
 //       >
-//         {/* ── Manual entry ─────────────────────────────────────────────────── */}
+//         {/* ── Manual entry ─────────────────────────────────────────────── */}
 //         <div className="mk2-card">
 //           <div className="font-bold text-sm mb-4">Enter Results Manually</div>
 //           <div className="grid grid-cols-2 gap-3 mb-3">
@@ -1053,37 +1144,37 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //                 label: "Weight (kg)",
 //                 val: weight,
 //                 set: setWeight,
-//                 placeholder: "78.5",
+//                 placeholder: "62.5",
 //               },
 //               {
-//                 label: "Body Fat (%)",
+//                 label: "Body Fat % (PBF)",
 //                 val: bodyFat,
 //                 set: setBodyFat,
-//                 placeholder: "18.2",
+//                 placeholder: "20.8",
 //               },
 //               {
 //                 label: "Muscle Mass (kg)",
 //                 val: muscleMass,
 //                 set: setMuscleMass,
-//                 placeholder: "35.4",
+//                 placeholder: "28.0",
 //               },
 //               {
 //                 label: "Fat Mass (kg)",
 //                 val: fatMass,
 //                 set: setFatMass,
-//                 placeholder: "14.2",
+//                 placeholder: "13.0",
 //               },
 //               {
 //                 label: "Visceral Fat",
 //                 val: visceralFat,
 //                 set: setVisceralFat,
-//                 placeholder: "7",
+//                 placeholder: "5",
 //               },
 //               {
 //                 label: "Body Water (L)",
 //                 val: totalBodyWater,
 //                 set: setTotalBodyWater,
-//                 placeholder: "41.2",
+//                 placeholder: "36.3",
 //               },
 //             ].map((f) => (
 //               <div key={f.label}>
@@ -1110,8 +1201,8 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //             />
 //           </div>
 //           <div className="flex gap-2 flex-wrap">
-//             <Btn variant="primary" onClick={saveEntry}>
-//               Save Assessment
+//             <Btn variant="primary" onClick={saveEntry} disabled={saving}>
+//               {saving ? "Saving…" : "Save Assessment"}
 //             </Btn>
 //             {inbodyHistory.length > 0 && (
 //               <Btn variant="ghost" onClick={() => setPage("Progress")}>
@@ -1121,7 +1212,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //           </div>
 //         </div>
 
-//         {/* ── File upload ───────────────────────────────────────────────────── */}
+//         {/* ── File upload ───────────────────────────────────────────────── */}
 //         <div className="mk2-card flex flex-col">
 //           <div className="font-bold text-sm mb-2">Upload InBody Report</div>
 //           <div className="text-xs text-muted-foreground mb-4 leading-relaxed">
@@ -1176,14 +1267,14 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //         </div>
 //       </div>
 
-//       {/* ── AI error banner ──────────────────────────────────────────────── */}
+//       {/* ── AI error banner ────────────────────────────────────────────── */}
 //       {aiError && (
 //         <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-400">
 //           {aiError}
 //         </div>
 //       )}
 
-//       {/* ── History ──────────────────────────────────────────────────────── */}
+//       {/* ── History ────────────────────────────────────────────────────── */}
 //       {inbodyHistory.length > 0 && (
 //         <div className="mk2-card mb-5">
 //           <div className="flex items-center justify-between mb-4">
@@ -1308,7 +1399,7 @@ Provide: 1) Assessment 2) Progress vs previous 3) Focus areas for their goal 4) 
 //         </div>
 //       )}
 
-//       {/* ── About InBody ─────────────────────────────────────────────────── */}
+//       {/* ── About InBody ──────────────────────────────────────────────── */}
 //       <div
 //         className="mk2-card"
 //         style={{ borderTop: "2px solid hsl(187 85% 40%)" }}

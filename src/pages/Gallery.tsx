@@ -141,7 +141,7 @@ export function Gallery() {
               </div>
             </div>
             <a
-              href={`https://instagram.com/${socials.instagramHandle}`}
+              href="https://www.instagram.com/mktworiversfitness" // ← only this line changed
               target="_blank"
               rel="noopener noreferrer"
               style={{

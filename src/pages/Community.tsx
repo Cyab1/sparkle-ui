@@ -837,7 +837,7 @@ export function Community() {
                 </>
               ) : (
                 <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground">
-                  <div className="text-5xl mb-4">💬</div>
+                  <div className="text-5xl mb-4"></div>
                   <p>Select a room to start chatting</p>
                 </div>
               )}

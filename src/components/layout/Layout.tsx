@@ -18,6 +18,7 @@ function MI({ icon, size = 22 }: { icon: string; size?: number }) {
   );
 }
 
+// ── Desktop nav groups ────────────────────────────────────────────────────────
 const NAV_GROUPS = [
   {
     label: "Main",
@@ -31,6 +32,7 @@ const NAV_GROUPS = [
     label: "Tools",
     tabs: [
       { id: "BMR", label: "BMR Calculator" },
+      { id: "WorkoutPlanner", label: "AI Workout Planner" },
       { id: "Nutrition", label: "AI Nutrition Coach" },
       { id: "InBody", label: "InBody Assessments" },
       { id: "Progress", label: "Progress Report" },
@@ -54,31 +56,52 @@ const NAV_GROUPS = [
   },
 ];
 
+// ── Mobile bottom nav — HOME | CLASSES | WORKOUTS | PROGRESS | MORE ──────────
 const BOTTOM_TABS = [
   { id: "Dashboard", icon: "home", label: "Home" },
-  { id: "Gallery", icon: "photo_library", label: "Gallery" },
-  { id: "Workout", icon: "bolt", label: "Tools" },
-  { id: "Account", icon: "account_circle", label: "Me" },
+  { id: "Classes", icon: "calendar_month", label: "Classes" },
+  { id: "WorkoutPlanner", icon: "fitness_center", label: "Workouts" },
+  { id: "Progress", icon: "trending_up", label: "Progress" },
+  { id: "__more__", icon: "menu", label: "More" },
 ];
 
-const MORE_PAGES = [
-  { id: "BMR", label: "BMR Calculator", group: "tools" },
-  { id: "Nutrition", label: "AI Nutrition Coach", group: "tools" },
-  { id: "InBody", label: "InBody Assessments", group: "tools" },
-  { id: "Progress", label: "Progress Report", group: "tools" },
-  { id: "Classes", label: "Book a Class", group: "gym" },
-  { id: "Checkin", label: "Check-In", group: "gym" },
-  { id: "Leaderboard", label: "Leaderboard", group: "gym" },
-  { id: "PRLogbook", label: "PR Logbook 🏆", group: "gym" },
-  { id: "Community", label: "Community", group: "gym" },
-  { id: "News", label: "News & Events", group: "gym" },
-  { id: "Membership", label: "Membership", group: "gym" },
-  { id: "NotificationSettings", label: "Notification Settings", group: "settings" },
-  { id: "About", label: "About Us", group: "settings" },
-  { id: "Contact", label: "Contact Us", group: "settings" },
-  { id: "Advertise", label: "Advertise 📣", group: "settings" },
-  { id: "Terms", label: "T&Cs", group: "settings" },
-  { id: "Privacy", label: "Privacy Policy", group: "settings" },
+// ── TOOL_PAGES — exported so Toolscreen.tsx can import it ────────────────────
+export const TOOL_PAGES = [
+  { id: "BMR", label: "🔥 BMR Calculator" },
+  { id: "WorkoutPlanner", label: "⚡ AI Workout Planner" },
+  { id: "Nutrition", label: "🥗 AI Nutrition Coach" },
+  { id: "InBody", label: "📊 InBody Assessment" },
+  { id: "Progress", label: "📈 Progress Report" },
+];
+
+// ── More drawer — Tools section + Gym + Settings ──────────────────────────────
+const MORE_TOOLS = [
+  { id: "Tools", label: "⚡ All Tools" },
+  { id: "BMR", label: "🔥 BMR Calculator" },
+  { id: "WorkoutPlanner", label: "💪 AI Workout Planner" },
+  { id: "Nutrition", label: "🥗 AI Nutrition Coach" },
+  { id: "InBody", label: "📊 InBody Assessment" },
+  { id: "Progress", label: "📈 Progress Report" },
+];
+
+const MORE_GYM = [
+  { id: "Checkin", label: "✅ Gym Check-In" },
+  { id: "Leaderboard", label: "🏅 Leaderboard" },
+  { id: "PRLogbook", label: "🏆 PR Logbook" },
+  { id: "Community", label: "💬 Community" },
+  { id: "News", label: "📢 News & Events" },
+  { id: "Membership", label: "💳 Membership" },
+  { id: "Gallery", label: "📸 Gallery" },
+  { id: "Account", label: "👤 My Account" },
+];
+
+const MORE_SETTINGS = [
+  { id: "NotificationSettings", label: "🔔 Notifications" },
+  { id: "About", label: "About Us" },
+  { id: "Contact", label: "Contact Us" },
+  { id: "Advertise", label: "📣 Advertise" },
+  { id: "Terms", label: "T&Cs" },
+  { id: "Privacy", label: "Privacy Policy" },
 ];
 
 interface LayoutProps {
@@ -94,22 +117,17 @@ export function Layout({ children, page, setPage }: LayoutProps) {
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // 🔔 Listen to user's personal notifications, count unread
   useEffect(() => {
     if (!user) return;
-    const notifRef = ref(db, `users/${user.uid}/notifications`);
-    return onValue(notifRef, (snap) => {
+    return onValue(ref(db, `users/${user.uid}/notifications`), (snap) => {
       if (!snap.exists()) {
         setUnreadCount(0);
         return;
       }
       const items = Object.values(snap.val()) as any[];
-      const unread = items.filter((n) => !n.read).length;
-      setUnreadCount(unread);
+      setUnreadCount(items.filter((n) => !n.read).length);
     });
   }, [user]);
-
-  if (!user) return null;
 
   const navigate = (id: string) => {
     setPage(id);
@@ -117,17 +135,23 @@ export function Layout({ children, page, setPage }: LayoutProps) {
     setActiveGroup(null);
   };
 
+  if (!user) return null;
+
+  // A page is "in bottom tabs" if it's one of the 4 real tab ids
+  const realTabIds = BOTTOM_TABS.filter((t) => t.id !== "__more__").map(
+    (t) => t.id,
+  );
+  const isMoreActive = showMore || !realTabIds.includes(page);
+
   return (
     <div
       className="min-h-screen bg-background text-foreground font-body"
-      style={{
-        overflowX: "hidden",
-        maxWidth: "100vw",
-      }}
+      style={{ overflowX: "hidden", maxWidth: "100vw" }}
     >
-      {/* Desktop nav */}
+      {/* ── Desktop nav ────────────────────────────────────────────────── */}
       {!isMobile && (
         <nav className="sticky top-0 z-[200] bg-background/95 backdrop-blur-xl border-b border-border px-5 h-[58px] flex items-center justify-between gap-4">
+          {/* Logo */}
           <div
             onClick={() => navigate("Dashboard")}
             className="flex items-center gap-2.5 cursor-pointer shrink-0 hover:opacity-80 transition-opacity"
@@ -152,6 +176,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
             </div>
           </div>
 
+          {/* Nav groups */}
           <div className="flex items-center gap-1 flex-1 justify-center">
             {NAV_GROUPS.map((group) => {
               const groupActive = group.tabs.some((t) => t.id === page);
@@ -175,6 +200,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
                     )}
                     <span className="text-[8px] opacity-60">▼</span>
                   </button>
+
                   <AnimatePresence>
                     {isOpen && (
                       <motion.div
@@ -205,6 +231,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
             })}
           </div>
 
+          {/* Right side */}
           <div className="flex items-center gap-2 shrink-0">
             <ThemeToggle />
             <button
@@ -241,7 +268,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
         </nav>
       )}
 
-      {/* Mobile top bar */}
+      {/* ── Mobile top bar ─────────────────────────────────────────────── */}
       {isMobile && (
         <div
           className="sticky top-0 z-[200] bg-background/97 border-b border-border px-4 flex items-center justify-between"
@@ -250,6 +277,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
             paddingBottom: "12px",
           }}
         >
+          {/* Logo */}
           <div className="flex items-center gap-2">
             <img
               src="/mk2r-logo.jpg"
@@ -270,6 +298,8 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               </div>
             </div>
           </div>
+
+          {/* Right controls */}
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <button
@@ -297,7 +327,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
         </div>
       )}
 
-      {/* Page content with bottom padding on mobile */}
+      {/* ── Page content ───────────────────────────────────────────────── */}
       <motion.div
         key={page}
         initial={{ opacity: 0, y: 6 }}
@@ -312,7 +342,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
         {children}
       </motion.div>
 
-      {/* Mobile bottom nav */}
+      {/* ── Mobile bottom nav — 4 tabs + More ─────────────────────────── */}
       {isMobile && (
         <nav
           className="fixed bottom-0 left-0 right-0 z-[200] bg-background/98 border-t border-border flex backdrop-blur-xl"
@@ -322,111 +352,169 @@ export function Layout({ children, page, setPage }: LayoutProps) {
             WebkitBackdropFilter: "blur(20px)",
           }}
         >
-          {BOTTOM_TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => {
-                setShowMore(false);
-                navigate(t.id);
-              }}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors duration-150 ${
-                page === t.id ? "text-primary" : "text-muted-foreground"
-              }`}
-              style={{ paddingBottom: 0 }}
-            >
-              <MI icon={t.icon} size={22} />
-              <span className="text-[9px] font-body font-bold tracking-[0.06em] uppercase">
-                {t.label}
-              </span>
-            </button>
-          ))}
-          <button
-            onClick={() => setShowMore(!showMore)}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors ${
-              showMore ? "text-primary" : "text-muted-foreground"
-            }`}
-            style={{ paddingBottom: 0 }}
-          >
-            <MI icon="grid_view" size={22} />
-            <span className="text-[9px] font-body font-bold tracking-[0.06em] uppercase">
-              More
-            </span>
-          </button>
+          {BOTTOM_TABS.map((t) => {
+            const isMore = t.id === "__more__";
+            const active = isMore ? isMoreActive : page === t.id && !showMore;
+
+            return (
+              <button
+                key={t.id}
+                onClick={() => {
+                  if (isMore) {
+                    setShowMore((v) => !v);
+                  } else {
+                    setShowMore(false);
+                    navigate(t.id);
+                  }
+                }}
+                className="flex-1 flex flex-col items-center justify-center gap-0.5 bg-transparent border-none cursor-pointer transition-colors duration-150"
+              >
+                {/* Active pill indicator */}
+                <div className="relative flex items-center justify-center">
+                  {active && (
+                    <motion.div
+                      layoutId="tab-indicator"
+                      className="absolute rounded-full"
+                      style={{
+                        background: "hsl(20 100% 50% / 0.15)",
+                        width: 36,
+                        height: 36,
+                        top: "50%",
+                        left: "50%",
+                        transform: "translate(-50%, -50%)",
+                      }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 380,
+                        damping: 30,
+                      }}
+                    />
+                  )}
+                  <MI icon={t.icon} size={22} />
+                </div>
+                <span
+                  className="text-[9px] font-body font-bold tracking-[0.06em] uppercase"
+                  style={{
+                    color: active
+                      ? "hsl(20 100% 50%)"
+                      : "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  {t.label}
+                </span>
+              </button>
+            );
+          })}
         </nav>
       )}
 
-      {/* More drawer with corrected z-index */}
+      {/* ── More drawer ────────────────────────────────────────────────── */}
       <AnimatePresence>
         {isMobile && showMore && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[201] bg-black/85 flex items-end"
+            className="fixed inset-0 z-[201] bg-black/80 flex items-end"
             onClick={() => setShowMore(false)}
           >
             <motion.div
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 26, stiffness: 300 }}
-              className="w-full bg-card rounded-t-2xl p-5 border border-border"
+              transition={{ type: "spring", damping: 28, stiffness: 300 }}
+              className="w-full bg-card rounded-t-2xl border border-border overflow-y-auto"
               style={{
-                paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
+                maxHeight: "82vh",
+                paddingBottom: "calc(80px + env(safe-area-inset-bottom, 0px))",
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Tools */}
-              <div className="mb-4">
-                <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                  <MI icon="bolt" size={14} /> Tools
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {MORE_PAGES.filter((p) => p.group === "tools").map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => navigate(p.id)}
-                      className="bg-primary/10 border border-primary/30 rounded-xl p-3.5 font-body font-bold text-sm text-primary cursor-pointer text-left hover:bg-primary/20 transition-colors"
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
+              {/* Handle bar */}
+              <div className="flex justify-center pt-3 pb-1">
+                <div
+                  className="rounded-full"
+                  style={{
+                    width: 36,
+                    height: 4,
+                    background: "hsl(var(--border))",
+                  }}
+                />
               </div>
 
-              {/* Gym */}
-              <div className="mb-4">
-                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
-                  Gym
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {MORE_PAGES.filter((p) => p.group === "gym").map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => navigate(p.id)}
-                      className="bg-secondary border border-border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left hover:border-primary/30 transition-colors"
+              <div className="px-5 pt-3 pb-2">
+                {/* ── Tools ───────────────────────────────────────────── */}
+                <div className="mb-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                      Tools
+                    </span>
+                    <span
+                      className="text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider"
+                      style={{ background: "hsl(20 100% 50%)", color: "#000" }}
                     >
-                      {p.label}
-                    </button>
-                  ))}
+                      NEW
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {MORE_TOOLS.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => navigate(p.id)}
+                        className={`bg-secondary border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left transition-colors active:scale-95 ${
+                          page === p.id
+                            ? "border-primary/50 bg-primary/10 text-primary"
+                            : "border-border hover:border-primary/30"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              {/* Settings & Info */}
-              <div>
-                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
-                  Settings & Info
+                {/* ── Gym ─────────────────────────────────────────────── */}
+                <div className="mb-5">
+                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
+                    Gym
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {MORE_GYM.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => navigate(p.id)}
+                        className={`bg-secondary border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left transition-colors active:scale-95 ${
+                          page === p.id
+                            ? "border-primary/50 bg-primary/10 text-primary"
+                            : "border-border hover:border-primary/30"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {MORE_PAGES.filter((p) => p.group === "settings").map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => navigate(p.id)}
-                      className="bg-secondary border border-border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left hover:border-primary/30 transition-colors"
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+
+                {/* ── Settings & Info ──────────────────────────────────── */}
+                <div>
+                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
+                    Settings & Info
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {MORE_SETTINGS.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => navigate(p.id)}
+                        className={`bg-secondary border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left transition-colors active:scale-95 ${
+                          page === p.id
+                            ? "border-primary/50 bg-primary/10 text-primary"
+                            : "border-border hover:border-primary/30"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -466,6 +554,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   );
 // }
 
+// // ── Desktop nav groups (unchanged) ───────────────────────────────────────────
 // const NAV_GROUPS = [
 //   {
 //     label: "Main",
@@ -479,6 +568,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //     label: "Tools",
 //     tabs: [
 //       { id: "BMR", label: "BMR Calculator" },
+//       { id: "WorkoutPlanner", label: "AI Workout Planner" },
 //       { id: "Nutrition", label: "AI Nutrition Coach" },
 //       { id: "InBody", label: "InBody Assessments" },
 //       { id: "Progress", label: "Progress Report" },
@@ -502,29 +592,37 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   },
 // ];
 
+// // ── Bottom nav — matches Image 1: HOME | CLASSES | WORKOUTS | PROGRESS | PROFILE
 // const BOTTOM_TABS = [
 //   { id: "Dashboard", icon: "home", label: "Home" },
-//   { id: "Gallery", icon: "photo_library", label: "Gallery" },
-//   { id: "Workout", icon: "bolt", label: "Tools" },
-//   { id: "Account", icon: "account_circle", label: "Me" },
+//   { id: "Classes", icon: "calendar_month", label: "Classes" },
+//   { id: "WorkoutPlanner", icon: "fitness_center", label: "Workouts" },
+//   { id: "Progress", icon: "trending_up", label: "Progress" },
+//   { id: "Account", icon: "account_circle", label: "Profile" },
 // ];
 
+// // ── Tools pages (accessible from desktop nav / More drawer) ──────────────────
+// export const TOOL_PAGES = [
+//   { id: "BMR", label: "🔥 BMR Calculator" },
+//   { id: "WorkoutPlanner", label: "⚡ AI Workout Planner" },
+//   { id: "Nutrition", label: "🥗 AI Nutrition Coach" },
+//   { id: "InBody", label: "📊 InBody Assessment" },
+//   { id: "Progress", label: "📈 Progress Report" },
+// ];
+
+// // ── More drawer pages (desktop / overflow) ────────────────────────────────────
 // const MORE_PAGES = [
-//   { id: "BMR", label: "BMR Calculator", group: "tools" },
-//   { id: "Nutrition", label: "AI Nutrition Coach", group: "tools" },
-//   { id: "InBody", label: "InBody Assessments", group: "tools" },
-//   { id: "Progress", label: "Progress Report", group: "tools" },
-//   { id: "Classes", label: "Book a Class", group: "gym" },
-//   { id: "Checkin", label: "Check-In", group: "gym" },
-//   { id: "Leaderboard", label: "Leaderboard", group: "gym" },
-//   { id: "PRLogbook", label: "PR Logbook 🏆", group: "gym" },
-//   { id: "Community", label: "Community", group: "gym" },
-//   { id: "News", label: "News & Events", group: "gym" },
-//   { id: "Membership", label: "Membership", group: "gym" },
-//   { id: "Notifications", label: "Notification Settings", group: "settings" },
+//   { id: "Checkin", label: "✅ Gym Check-In", group: "gym" },
+//   { id: "Leaderboard", label: "🏅 Leaderboard", group: "gym" },
+//   { id: "PRLogbook", label: "🏆 PR Logbook", group: "gym" },
+//   { id: "Community", label: "💬 Community", group: "gym" },
+//   { id: "News", label: "📢 News & Events", group: "gym" },
+//   { id: "Membership", label: "💳 Membership", group: "gym" },
+//   { id: "Gallery", label: "📸 Gallery", group: "gym" },
+//   { id: "NotificationSettings", label: "🔔 Notifications", group: "settings" },
 //   { id: "About", label: "About Us", group: "settings" },
 //   { id: "Contact", label: "Contact Us", group: "settings" },
-//   { id: "Advertise", label: "Advertise 📣", group: "settings" },
+//   { id: "Advertise", label: "📣 Advertise", group: "settings" },
 //   { id: "Terms", label: "T&Cs", group: "settings" },
 //   { id: "Privacy", label: "Privacy Policy", group: "settings" },
 // ];
@@ -544,16 +642,15 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 
 //   useEffect(() => {
 //     if (!user) return;
-//     return onValue(ref(db, "admin_news"), (snap) => {
-//       if (!snap.exists()) return;
-//       const lastSeen = (user as any).lastSeenNewsAt ?? 0;
+//     return onValue(ref(db, `users/${user.uid}/notifications`), (snap) => {
+//       if (!snap.exists()) {
+//         setUnreadCount(0);
+//         return;
+//       }
 //       const items = Object.values(snap.val()) as any[];
-//       const unread = items.filter((n) => (n.createdAt ?? 0) > lastSeen).length;
-//       setUnreadCount(unread);
+//       setUnreadCount(items.filter((n) => !n.read).length);
 //     });
 //   }, [user]);
-
-//   if (!user) return null;
 
 //   const navigate = (id: string) => {
 //     setPage(id);
@@ -561,17 +658,21 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //     setActiveGroup(null);
 //   };
 
+//   if (!user) return null;
+
+//   // A page is "in bottom tabs" if it matches one of the 5 tab ids
+//   const bottomTabIds = BOTTOM_TABS.map((t) => t.id);
+//   const isMoreActive = showMore || !bottomTabIds.includes(page);
+
 //   return (
 //     <div
 //       className="min-h-screen bg-background text-foreground font-body"
-//       style={{
-//         overflowX: "hidden",
-//         maxWidth: "100vw",
-//       }}
+//       style={{ overflowX: "hidden", maxWidth: "100vw" }}
 //     >
-//       {/* Desktop nav */}
+//       {/* ── Desktop nav ──────────────────────────────────────────────── */}
 //       {!isMobile && (
 //         <nav className="sticky top-0 z-[200] bg-background/95 backdrop-blur-xl border-b border-border px-5 h-[58px] flex items-center justify-between gap-4">
+//           {/* Logo */}
 //           <div
 //             onClick={() => navigate("Dashboard")}
 //             className="flex items-center gap-2.5 cursor-pointer shrink-0 hover:opacity-80 transition-opacity"
@@ -596,6 +697,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //             </div>
 //           </div>
 
+//           {/* Nav groups */}
 //           <div className="flex items-center gap-1 flex-1 justify-center">
 //             {NAV_GROUPS.map((group) => {
 //               const groupActive = group.tabs.some((t) => t.id === page);
@@ -619,6 +721,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //                     )}
 //                     <span className="text-[8px] opacity-60">▼</span>
 //                   </button>
+
 //                   <AnimatePresence>
 //                     {isOpen && (
 //                       <motion.div
@@ -649,10 +752,11 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //             })}
 //           </div>
 
+//           {/* Right side */}
 //           <div className="flex items-center gap-2 shrink-0">
 //             <ThemeToggle />
 //             <button
-//               onClick={() => navigate("Notifications")}
+//               onClick={() => navigate("NotificationsInbox")}
 //               className="relative w-9 h-9 flex items-center justify-center rounded-full bg-secondary border border-border cursor-pointer hover:border-primary/40 transition-colors"
 //             >
 //               <MI icon="notifications" size={18} />
@@ -685,7 +789,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         </nav>
 //       )}
 
-//       {/* Mobile top bar */}
+//       {/* ── Mobile top bar ────────────────────────────────────────────── */}
 //       {isMobile && (
 //         <div
 //           className="sticky top-0 z-[200] bg-background/97 border-b border-border px-4 flex items-center justify-between"
@@ -694,6 +798,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //             paddingBottom: "12px",
 //           }}
 //         >
+//           {/* Logo */}
 //           <div className="flex items-center gap-2">
 //             <img
 //               src="/mk2r-logo.jpg"
@@ -714,10 +819,12 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //               </div>
 //             </div>
 //           </div>
+
+//           {/* Right controls */}
 //           <div className="flex items-center gap-2">
 //             <ThemeToggle />
 //             <button
-//               onClick={() => navigate("Notifications")}
+//               onClick={() => navigate("NotificationsInbox")}
 //               className="relative w-8 h-8 flex items-center justify-center rounded-full bg-secondary border border-border cursor-pointer"
 //             >
 //               <MI icon="notifications" size={18} />
@@ -741,7 +848,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         </div>
 //       )}
 
-//       {/* Page content with bottom padding on mobile */}
+//       {/* ── Page content ─────────────────────────────────────────────── */}
 //       <motion.div
 //         key={page}
 //         initial={{ opacity: 0, y: 6 }}
@@ -756,7 +863,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         {children}
 //       </motion.div>
 
-//       {/* Mobile bottom nav */}
+//       {/* ── Mobile bottom nav — 5 tabs matching Image 1 ───────────────── */}
 //       {isMobile && (
 //         <nav
 //           className="fixed bottom-0 left-0 right-0 z-[200] bg-background/98 border-t border-border flex backdrop-blur-xl"
@@ -766,40 +873,58 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //             WebkitBackdropFilter: "blur(20px)",
 //           }}
 //         >
-//           {BOTTOM_TABS.map((t) => (
-//             <button
-//               key={t.id}
-//               onClick={() => {
-//                 setShowMore(false);
-//                 navigate(t.id);
-//               }}
-//               className={`flex-1 flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors duration-150 ${
-//                 page === t.id ? "text-primary" : "text-muted-foreground"
-//               }`}
-//               style={{ paddingBottom: 0 }}
-//             >
-//               <MI icon={t.icon} size={22} />
-//               <span className="text-[9px] font-body font-bold tracking-[0.06em] uppercase">
-//                 {t.label}
-//               </span>
-//             </button>
-//           ))}
-//           <button
-//             onClick={() => setShowMore(!showMore)}
-//             className={`flex-1 flex flex-col items-center justify-center gap-1 bg-transparent border-none cursor-pointer transition-colors ${
-//               showMore ? "text-primary" : "text-muted-foreground"
-//             }`}
-//             style={{ paddingBottom: 0 }}
-//           >
-//             <MI icon="grid_view" size={22} />
-//             <span className="text-[9px] font-body font-bold tracking-[0.06em] uppercase">
-//               More
-//             </span>
-//           </button>
+//           {BOTTOM_TABS.map((t) => {
+//             const active = page === t.id;
+//             return (
+//               <button
+//                 key={t.id}
+//                 onClick={() => {
+//                   setShowMore(false);
+//                   navigate(t.id);
+//                 }}
+//                 className="flex-1 flex flex-col items-center justify-center gap-0.5 bg-transparent border-none cursor-pointer transition-colors duration-150"
+//                 style={{ paddingBottom: 0 }}
+//               >
+//                 {/* Active indicator dot */}
+//                 <div className="relative flex items-center justify-center">
+//                   {active && (
+//                     <motion.div
+//                       layoutId="tab-indicator"
+//                       className="absolute inset-0 rounded-full"
+//                       style={{
+//                         background: "hsl(20 100% 50% / 0.15)",
+//                         width: 36,
+//                         height: 36,
+//                         top: "50%",
+//                         left: "50%",
+//                         transform: "translate(-50%, -50%)",
+//                       }}
+//                       transition={{
+//                         type: "spring",
+//                         stiffness: 380,
+//                         damping: 30,
+//                       }}
+//                     />
+//                   )}
+//                   <MI icon={t.icon} size={22} />
+//                 </div>
+//                 <span
+//                   className="text-[9px] font-body font-bold tracking-[0.06em] uppercase"
+//                   style={{
+//                     color: active
+//                       ? "hsl(20 100% 50%)"
+//                       : "hsl(var(--muted-foreground))",
+//                   }}
+//                 >
+//                   {t.label}
+//                 </span>
+//               </button>
+//             );
+//           })}
 //         </nav>
 //       )}
 
-//       {/* More drawer with corrected z-index */}
+//       {/* ── More drawer (reachable from desktop or deep links) ────────── */}
 //       <AnimatePresence>
 //         {isMobile && showMore && (
 //           <motion.div
@@ -814,33 +939,16 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //               animate={{ y: 0 }}
 //               exit={{ y: "100%" }}
 //               transition={{ type: "spring", damping: 26, stiffness: 300 }}
-//               className="w-full bg-card rounded-t-2xl p-5 border border-border"
+//               className="w-full bg-card rounded-t-2xl p-5 border border-border overflow-y-auto"
 //               style={{
+//                 maxHeight: "80vh",
 //                 paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
 //               }}
 //               onClick={(e) => e.stopPropagation()}
 //             >
-//               {/* Tools */}
-//               <div className="mb-4">
-//                 <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-2 flex items-center gap-1.5">
-//                   <MI icon="bolt" size={14} /> Tools
-//                 </div>
-//                 <div className="grid grid-cols-2 gap-2">
-//                   {MORE_PAGES.filter((p) => p.group === "tools").map((p) => (
-//                     <button
-//                       key={p.id}
-//                       onClick={() => navigate(p.id)}
-//                       className="bg-primary/10 border border-primary/30 rounded-xl p-3.5 font-body font-bold text-sm text-primary cursor-pointer text-left hover:bg-primary/20 transition-colors"
-//                     >
-//                       {p.label}
-//                     </button>
-//                   ))}
-//                 </div>
-//               </div>
-
 //               {/* Gym */}
-//               <div className="mb-4">
-//                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
+//               <div className="mb-5">
+//                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
 //                   Gym
 //                 </div>
 //                 <div className="grid grid-cols-2 gap-2">
@@ -848,7 +956,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //                     <button
 //                       key={p.id}
 //                       onClick={() => navigate(p.id)}
-//                       className="bg-secondary border border-border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left hover:border-primary/30 transition-colors"
+//                       className="bg-secondary border border-border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left hover:border-primary/30 transition-colors active:scale-95"
 //                     >
 //                       {p.label}
 //                     </button>
@@ -856,9 +964,9 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //                 </div>
 //               </div>
 
-//               {/* Settings & Info */}
+//               {/* Settings */}
 //               <div>
-//                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">
+//                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
 //                   Settings & Info
 //                 </div>
 //                 <div className="grid grid-cols-2 gap-2">
@@ -866,7 +974,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //                     <button
 //                       key={p.id}
 //                       onClick={() => navigate(p.id)}
-//                       className="bg-secondary border border-border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left hover:border-primary/30 transition-colors"
+//                       className="bg-secondary border border-border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left hover:border-primary/30 transition-colors active:scale-95"
 //                     >
 //                       {p.label}
 //                     </button>

@@ -15,6 +15,7 @@ import {
 } from "firebase/storage";
 
 import { ref, get, set, remove, push, onValue } from "firebase/database";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
 import { QRScanner } from "@/components/shared/QRScanner";
@@ -241,6 +242,33 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
     </div>
   );
 }
+
+// ── FIX 1: Admin component with session-persistent auth ───────────────────────
+// Replace your existing Admin() function shell with this pattern.
+// Auth survives tab switches / navigation but clears when the browser is closed.
+//
+// function Admin() {
+//   const [authed, setAuthed] = useState(
+//     () => sessionStorage.getItem("mk2r_admin_authed") === "true"
+//   );
+//
+//   const handleLogin = () => {
+//     sessionStorage.setItem("mk2r_admin_authed", "true");
+//     setAuthed(true);
+//   };
+//
+//   const handleLogout = () => {
+//     sessionStorage.removeItem("mk2r_admin_authed");
+//     setAuthed(false);
+//   };
+//
+//   if (!authed) return <AdminLogin onLogin={handleLogin} />;
+//
+//   // Pass handleLogout down to your admin header/nav, e.g.:
+//   // return <AdminShell onLogout={handleLogout} />;
+//   // Then in that header:
+//   // <Btn variant="danger" size="sm" onClick={onLogout}>🔒 Lock Admin</Btn>
+// }
 
 // ── Admin Calendar (timezone‑safe) ───────────────────────────────────────────
 function AdminCalendar({
@@ -525,10 +553,308 @@ function CategoryManager({ toast }: any) {
   );
 }
 
-// ── Classes Manager ───────────────────────────────────────────────────────────
-// UPDATED: Adds waitlist display, Cancel Class button, and cancelEntireClass logic.
-// Drop this function into Admin.tsx in place of the existing ClassesManager.
+function PendingPanel({
+  cls,
+  selectedDateKey,
+}: {
+  cls: any;
+  selectedDateKey: string;
+}) {
+  const [pendingItems, setPendingItems] = useState<any[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
+  useEffect(() => {
+    // Read mk2_bookings filtered by classId + dateKey + status
+    get(ref(db, "mk2_bookings")).then((snap) => {
+      if (!snap.exists()) {
+        setLoaded(true);
+        return;
+      }
+      const list: any[] = [];
+      Object.entries(snap.val()).forEach(([key, v]: [string, any]) => {
+        if (
+          v.status === "pending_payment" &&
+          v.classId === cls.id &&
+          v.dateKey === selectedDateKey
+        ) {
+          list.push({ key, ...v });
+        }
+      });
+      list.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+      setPendingItems(list);
+      setLoaded(true);
+    });
+  }, [cls.id, selectedDateKey]);
+
+  if (!loaded || pendingItems.length === 0) return null;
+
+  const STUCK_THRESHOLD = 15 * 60 * 1000;
+
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        paddingTop: 12,
+        borderTop: "1px solid hsl(var(--border))",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: "hsl(38 92% 44%)",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          marginBottom: 8,
+        }}
+      >
+        ⏳ Pending Payment ({pendingItems.length})
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {pendingItems.map((item) => {
+          const ageMs = Date.now() - (item.createdAt ?? 0);
+          const isStuck = ageMs > STUCK_THRESHOLD;
+          const minsLeft = Math.max(0, 15 - Math.floor(ageMs / 60000));
+          return (
+            <div
+              key={item.key}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "8px 12px",
+                borderRadius: 8,
+                background: isStuck
+                  ? "hsl(0 84% 51% / 0.06)"
+                  : "hsl(38 92% 44% / 0.06)",
+                border: `1px solid ${isStuck ? "hsl(0 84% 51% / 0.25)" : "hsl(38 92% 44% / 0.25)"}`,
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: "50%",
+                    background: isStuck ? "hsl(0 84% 51%)" : "hsl(38 92% 44%)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontWeight: 700,
+                    fontSize: 12,
+                    color: "#000",
+                    flexShrink: 0,
+                  }}
+                >
+                  {(item.userName ?? "?")?.[0]?.toUpperCase() ?? "?"}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>
+                    {item.userName ?? item.userId}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "hsl(var(--muted-foreground))",
+                    }}
+                  >
+                    R{item.price} ·{" "}
+                    {isStuck
+                      ? "⚠ Stuck — auto-release overdue"
+                      : `⏳ ${minsLeft} min until auto-release`}
+                  </div>
+                </div>
+              </div>
+              <div
+                style={{ fontSize: 11, color: "hsl(var(--muted-foreground))" }}
+              >
+                {timeAgo(item.createdAt ?? 0)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div
+        style={{
+          marginTop: 8,
+          fontSize: 11,
+          color: "hsl(var(--muted-foreground))",
+        }}
+      >
+        To manually release a stuck spot, go to the{" "}
+        <strong style={{ color: "hsl(20 100% 50%)" }}>Pending Payments</strong>{" "}
+        tab.
+      </div>
+    </div>
+  );
+}
+
+// ── FIX 2: WodViewer — shows warmup, exercises and WOD notes in the expanded panel ──
+function WodViewer({ cls }: { cls: any }) {
+  const hasWarmup = String(cls.warmup ?? "").trim().length > 0;
+  const hasExercises = Array.isArray(cls.exercises) && cls.exercises.length > 0;
+  const hasWodNotes = String(cls.wod ?? "").trim().length > 0;
+
+  if (!hasWarmup && !hasExercises && !hasWodNotes) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        paddingTop: 12,
+        borderTop: "1px solid hsl(var(--border))",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: "hsl(20 100% 50%)",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          marginBottom: 10,
+        }}
+      >
+        📋 Today's Workout
+      </div>
+
+      {/* Warm up */}
+      {hasWarmup && (
+        <div style={{ marginBottom: 10 }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "hsl(var(--muted-foreground))",
+              marginBottom: 4,
+            }}
+          >
+            🔥 WARM UP
+          </div>
+          <pre
+            style={{
+              fontSize: 12,
+              color: "hsl(var(--foreground))",
+              background: "hsl(var(--secondary))",
+              borderRadius: 8,
+              padding: "10px 12px",
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              fontFamily: "monospace",
+              lineHeight: 1.6,
+            }}
+          >
+            {cls.warmup}
+          </pre>
+        </div>
+      )}
+
+      {/* Exercises */}
+      {hasExercises && (
+        <div style={{ marginBottom: 10 }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "hsl(var(--muted-foreground))",
+              marginBottom: 6,
+            }}
+          >
+            ⚡ WORKOUT
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {cls.exercises.map((ex: any, i: number) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 12px",
+                  background: "hsl(var(--secondary))",
+                  borderRadius: 8,
+                  fontSize: 13,
+                }}
+              >
+                <span
+                  style={{
+                    fontWeight: 700,
+                    color: "hsl(20 100% 50%)",
+                    minWidth: 24,
+                    fontSize: 11,
+                  }}
+                >
+                  {i + 1}.
+                </span>
+                <span style={{ fontWeight: 700, flex: 1 }}>{ex.name}</span>
+                {ex.sets && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: "hsl(var(--muted-foreground))",
+                      background: "hsl(var(--background))",
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                    }}
+                  >
+                    {ex.sets}
+                  </span>
+                )}
+                {ex.value && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: "hsl(20 100% 50%)",
+                    }}
+                  >
+                    {ex.value} {ex.measure}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* WOD Notes */}
+      {hasWodNotes && (
+        <div>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "hsl(var(--muted-foreground))",
+              marginBottom: 4,
+            }}
+          >
+            📝 NOTES / SCALING
+          </div>
+          <pre
+            style={{
+              fontSize: 12,
+              color: "hsl(var(--foreground))",
+              background: "hsl(var(--secondary))",
+              borderRadius: 8,
+              padding: "10px 12px",
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              fontFamily: "monospace",
+              lineHeight: 1.6,
+            }}
+          >
+            {cls.wod}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Classes Manager ───────────────────────────────────────────────────────────
 function ClassesManager({ toast }: any) {
   const [cats, setCats] = useState<string[]>([
     "Crossfit",
@@ -557,12 +883,10 @@ function ClassesManager({ toast }: any) {
   });
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
 
-  // --- CHANGE 1a: allBookings state (unchanged) ---
   const [allBookings, setAllBookings] = useState<
     Record<string, Record<string, any>>
   >({});
 
-  // --- CHANGE 1b: allWaitlists state (NEW) ---
   const [allWaitlists, setAllWaitlists] = useState<
     Record<string, Record<string, any>>
   >({});
@@ -600,14 +924,12 @@ function ClassesManager({ toast }: any) {
     load();
   }, []);
 
-  // allBookings listener (unchanged)
   useEffect(() => {
     return onValue(ref(db, "class_bookings"), (snap) =>
       setAllBookings(snap.val() ?? {}),
     );
   }, []);
 
-  // --- CHANGE 1c: allWaitlists listener (NEW) ---
   useEffect(() => {
     return onValue(ref(db, "class_waitlist"), (snap) =>
       setAllWaitlists(snap.val() ?? {}),
@@ -790,7 +1112,6 @@ function ClassesManager({ toast }: any) {
     setCancelling(null);
   };
 
-  // --- CHANGE 4: cancelEntireClass function (NEW) ---
   const cancelEntireClass = async (cls: any) => {
     const currentBookings = getClassBookings(cls);
     const count = currentBookings.length;
@@ -803,13 +1124,11 @@ function ClassesManager({ toast }: any) {
 
     const bk = buildBookingKey(cls.name, selectedDateKey);
 
-    // Get all booked members from Firebase directly
     const bookingsSnap = await get(ref(db, `class_bookings/${bk}`));
     const booked = bookingsSnap.exists()
       ? Object.entries(bookingsSnap.val())
       : [];
 
-    // Notify each booked member and remove their booking entry
     for (const [uid] of booked) {
       await push(ref(db, `users/${uid}/notifications`), {
         title: "Class Cancelled",
@@ -832,11 +1151,9 @@ function ClassesManager({ toast }: any) {
       }
     }
 
-    // Remove all bookings and waitlist for this class+date slot
     await remove(ref(db, `class_bookings/${bk}`));
     await remove(ref(db, `class_waitlist/${bk}`));
 
-    // If it's a once-off class, delete it from admin_classes entirely
     if (cls.scheduleType === "date") {
       await deleteFromCollection("admin_classes", cls.id);
       load();
@@ -860,7 +1177,6 @@ function ClassesManager({ toast }: any) {
     }));
   };
 
-  // --- CHANGE 2: getClassWaitlist helper (NEW) ---
   const getClassWaitlist = (
     cls: any,
   ): Array<{ uid: string; name: string; joinedAt: number }> => {
@@ -875,7 +1191,6 @@ function ClassesManager({ toast }: any) {
       .sort((a, b) => a.joinedAt - b.joinedAt);
   };
 
-  // --- CHANGE 3: ClassActions now accepts waitlist prop and shows Cancel Class ---
   const ClassActions = ({
     cls,
     bookings,
@@ -928,7 +1243,6 @@ function ClassesManager({ toast }: any) {
       <Btn variant="subtle" size="sm" onClick={() => startEdit(cls)}>
         Edit
       </Btn>
-      {/* CHANGE 3b: Cancel Class button (NEW) */}
       <Btn variant="danger" size="sm" onClick={() => cancelEntireClass(cls)}>
         🚫 Cancel Class
       </Btn>
@@ -1612,7 +1926,6 @@ function ClassesManager({ toast }: any) {
               >
                 {classesOnDate.map((cls) => {
                   const bookings = getClassBookings(cls);
-                  // CHANGE 6: also get waitlist
                   const waitlist = getClassWaitlist(cls);
                   const isExpanded = expandedBookings === cls.id;
                   return (
@@ -1694,7 +2007,6 @@ function ClassesManager({ toast }: any) {
                             {cls.category}
                           </div>
                         </div>
-                        {/* CHANGE 6: pass waitlist to ClassActions */}
                         <ClassActions
                           cls={cls}
                           bookings={bookings}
@@ -1820,7 +2132,7 @@ function ClassesManager({ toast }: any) {
                               </div>
                             )}
 
-                            {/* CHANGE 5: Waitlist section below bookings */}
+                            {/* Waitlist section */}
                             {(() => {
                               const wl = getClassWaitlist(cls);
                               return wl.length > 0 ? (
@@ -1896,6 +2208,13 @@ function ClassesManager({ toast }: any) {
                                 </div>
                               ) : null;
                             })()}
+
+                            {/* FIX 2: Workout viewer — shows warmup / exercises / WOD notes */}
+                            <PendingPanel
+                              cls={cls}
+                              selectedDateKey={selectedDateKey}
+                            />
+                            <WodViewer cls={cls} />
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -1908,7 +2227,7 @@ function ClassesManager({ toast }: any) {
         </>
       )}
 
-      {/* List View — ClassActions here doesn't show waitlist count (no date context) */}
+      {/* List View */}
       {viewMode === "list" &&
         (loading ? (
           <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
@@ -2007,6 +2326,2694 @@ function ClassesManager({ toast }: any) {
             ))}
           </div>
         ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOOKING EXPORTS — paste this component above export function Admin()
+//
+// No new npm packages needed — CSV uses a Blob download, print uses
+// window.print() with a hidden iframe.
+//
+// WIRE UP:
+// 1. NAV: in NAV_GROUPS "Admin" group items add:
+//      { id: "exports", icon: "ti-download", label: "Exports" },
+//
+// 2. ROUTE: in Admin() motion.div block add:
+//      {tab === "exports" && <BookingExports toast={toast} />}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function downloadCSV(filename: string, rows: string[][]) {
+  const escape = (v: string) => {
+    const s = String(v ?? "").replace(/"/g, '""');
+    return /[",\n\r]/.test(s) ? `"${s}"` : s;
+  };
+  const csv = rows.map((r) => r.map(escape).join(",")).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function printHTML(title: string, html: string) {
+  const win = window.open("", "_blank", "width=900,height=700");
+  if (!win) return;
+  win.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>${title}</title>
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; font-size: 13px; color: #111; padding: 32px; }
+        h1 { font-size: 20px; margin-bottom: 4px; }
+        .sub { font-size: 12px; color: #555; margin-bottom: 24px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f5f5f5; text-align: left; padding: 8px 10px; font-size: 11px;
+             text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #ddd; }
+        td { padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+        tr:last-child td { border-bottom: none; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px;
+                 font-weight: bold; background: #f0f0f0; }
+        .badge-gold   { background: #fef3c7; color: #92400e; }
+        .badge-silver { background: #f1f5f9; color: #475569; }
+        .badge-basic  { background: #f3f4f6; color: #6b7280; }
+        .footer { margin-top: 28px; font-size: 11px; color: #999; border-top: 1px solid #eee; padding-top: 12px; }
+        @media print { body { padding: 16px; } }
+      </style>
+    </head>
+    <body>
+      ${html}
+      <div class="footer">MK2R Admin · Exported ${new Date().toLocaleString("en-ZA")}</div>
+    </body>
+    </html>
+  `);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 400);
+}
+
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+// =============================================================================
+// MANUAL CASH BOOKING — paste above export function Admin() in Admin.tsx
+//
+// Logic:
+// - Members (any tier except basic): book directly, no credits touched
+// - Non-members (basic): deduct 1 credit if they have one, else force-book
+//   with a cash_override note on their creditHistory
+// - Category rules enforced, monthly/daily limits skipped (admin override)
+// - Full class → adds to waitlist instead of blocking
+//
+// WIRE UP:
+// 1. NAV: in NAV_GROUPS "Classes" group items add:
+//      { id: "cashbooking", icon: "ti-cash", label: "Cash Booking" },
+//
+// 2. ROUTE: in Admin() motion.div block add:
+//      {tab === "cashbooking" && <ManualCashBooking toast={toast} />}
+// =============================================================================
+
+// ── Tier category rules (mirrored from booking.ts) ────────────────────────────
+const CASH_TIER_ALLOWED: Record<string, string[]> = {
+  u18: ["Crossfit"],
+  hybrid_12m: [
+    "Crossfit",
+    "Gymnastics",
+    "Strength",
+    "Olympic Lifting",
+    "Saturday Smasher",
+  ],
+  hybrid_6m: [
+    "Crossfit",
+    "Gymnastics",
+    "Strength",
+    "Olympic Lifting",
+    "Saturday Smasher",
+  ],
+  hybrid_m2m: [
+    "Crossfit",
+    "Gymnastics",
+    "Strength",
+    "Olympic Lifting",
+    "Saturday Smasher",
+  ],
+  unlimited_12m: [],
+  unlimited_6m: [],
+  unlimited_m2m: [],
+  basic: [],
+};
+
+function isCategoryAllowed(tier: string, category: string): boolean {
+  const allowed = CASH_TIER_ALLOWED[tier] ?? [];
+  return allowed.length === 0 || allowed.includes(category);
+}
+
+function ManualCashBooking({ toast }: any) {
+  const [members, setMembers] = useState<any[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [selectedUid, setSelectedUid] = useState("");
+  const [selectedClsId, setSelectedClsId] = useState("");
+  const [bookingDate, setBookingDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+  const [calMonth, setCalMonth] = useState(new Date().getMonth());
+  const [calYear, setCalYear] = useState(new Date().getFullYear());
+  const [payNote, setPayNote] = useState("Cash payment at reception");
+  const [submitting, setSubmitting] = useState(false);
+
+  const selectedMember = members.find((m) => m.uid === selectedUid) ?? null;
+  const selectedDateKey = bookingDate.toISOString().split("T")[0];
+  const selectedDayName = getDayName(bookingDate);
+  const isNonMember = !selectedMember || selectedMember.membership === "basic";
+
+  const classesOnDate = classes
+    .filter((c) =>
+      c.scheduleType === "date"
+        ? c.specificDate === selectedDateKey
+        : c.day === selectedDayName,
+    )
+    .sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+
+  const selectedCls = classesOnDate.find((c) => c.id === selectedClsId) ?? null;
+
+  const categoryBlocked =
+    selectedMember &&
+    selectedCls &&
+    selectedMember.membership !== "basic" &&
+    !isCategoryAllowed(selectedMember.membership, selectedCls.category);
+
+  useEffect(() => {
+    Promise.all([
+      get(ref(db, "mk2_users")),
+      get(ref(db, "admin_classes")),
+    ]).then(([membersSnap, classesSnap]) => {
+      if (membersSnap.exists()) {
+        const list = Object.entries(membersSnap.val()).map(
+          ([uid, v]: [string, any]) => ({
+            uid,
+            name: v.name || "Unnamed",
+            email: v.email || "",
+            membership: v.membership || "basic",
+            classCredits: v.classCredits ?? 0,
+            bookings: Array.isArray(v.bookings) ? v.bookings : [],
+          }),
+        );
+        setMembers(list.sort((a, b) => a.name.localeCompare(b.name)));
+      }
+      if (classesSnap.exists()) {
+        const list = Object.entries(classesSnap.val()).map(
+          ([id, v]: [string, any]) => ({ id, ...v }),
+        );
+        setClasses(list);
+      }
+      setLoading(false);
+    });
+  }, []);
+
+  const handleBook = async () => {
+    if (!selectedUid) return toast("Select a member", "error");
+    if (!selectedClsId) return toast("Select a class", "error");
+    if (!selectedCls) return toast("Class not found", "error");
+    if (categoryBlocked)
+      return toast(
+        `${selectedCls.category} is not included in ${selectedMember.name}'s tier`,
+        "error",
+      );
+
+    setSubmitting(true);
+    try {
+      const bKey = buildBookingKey(selectedCls.name, selectedDateKey);
+      const snap = await get(ref(db, `class_bookings/${bKey}`));
+      const current: Record<string, any> = snap.val() ?? {};
+
+      if (current[selectedUid]) {
+        toast(
+          `${selectedMember.name} is already booked into this class`,
+          "error",
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      const isFull = Object.keys(current).length >= selectedCls.spots;
+
+      if (isFull) {
+        // ── Waitlist ──────────────────────────────────────────────────────
+        const waitlistRef = ref(db, `class_waitlist/${bKey}/${selectedUid}`);
+        const wSnap = await get(waitlistRef);
+        if (wSnap.exists()) {
+          toast(`${selectedMember.name} is already on the waitlist`, "error");
+          setSubmitting(false);
+          return;
+        }
+        await set(waitlistRef, {
+          name: selectedMember.name,
+          email: selectedMember.email,
+          joinedAt: Date.now(),
+          addedBy: "admin_cash",
+          note: payNote,
+        });
+        await Promise.resolve(
+          push(ref(db, `users/${selectedUid}/notifications`), {
+            title: "Added to Waitlist",
+            body: `You've been added to the waitlist for ${selectedCls.name} on ${bookingDate.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })}. You'll be notified if a spot opens up.`,
+            type: "class_update",
+            read: false,
+            createdAt: Date.now(),
+          }),
+        );
+        toast(
+          `Class full — ${selectedMember.name} added to waitlist ✓`,
+          "info",
+        );
+      } else {
+        // ── Confirmed booking ─────────────────────────────────────────────
+        await set(ref(db, `class_bookings/${bKey}/${selectedUid}`), {
+          name: selectedMember.name,
+          email: selectedMember.email,
+          bookedAt: Date.now(),
+          status: "confirmed",
+          membershipTier: selectedMember.membership,
+          addedBy: "admin_cash",
+          note: payNote,
+        });
+
+        await Promise.resolve(
+          push(ref(db, "mk2_bookings"), {
+            userId: selectedUid,
+            userEmail: selectedMember.email,
+            userName: selectedMember.name,
+            classId: selectedCls.id,
+            className: selectedCls.name,
+            dateKey: selectedDateKey,
+            dateDisplay: bookingDate.toLocaleDateString("en-ZA", {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+            }),
+            time: selectedCls.time,
+            price: selectedCls.price ?? 0,
+            status: "confirmed",
+            createdAt: Date.now(),
+            addedBy: "admin_cash",
+            note: payNote,
+          }),
+        );
+
+        // Credits for non-members
+        if (isNonMember) {
+          if (selectedMember.classCredits >= 1) {
+            await set(
+              ref(db, `mk2_users/${selectedUid}/classCredits`),
+              selectedMember.classCredits - 1,
+            );
+            await Promise.resolve(
+              push(ref(db, `mk2_users/${selectedUid}/creditHistory`), {
+                amount: -1,
+                type: "class_spend",
+                note: `Admin cash booking: ${selectedCls.name} on ${selectedDateKey} — ${payNote}`,
+                timestamp: Date.now(),
+                adminAssigned: true,
+              }),
+            );
+            setMembers((prev) =>
+              prev.map((m) =>
+                m.uid === selectedUid
+                  ? { ...m, classCredits: m.classCredits - 1 }
+                  : m,
+              ),
+            );
+          } else {
+            await Promise.resolve(
+              push(ref(db, `mk2_users/${selectedUid}/creditHistory`), {
+                amount: 0,
+                type: "admin_assign",
+                note: `Cash override — no credits deducted: ${selectedCls.name} on ${selectedDateKey} — ${payNote}`,
+                timestamp: Date.now(),
+                adminAssigned: true,
+                cashOverride: true,
+              }),
+            );
+          }
+        }
+
+        // Add to member booking list
+        const userBookingsRef = ref(db, `mk2_users/${selectedUid}/bookings`);
+        const userBookingsSnap = await get(userBookingsRef);
+        const existing: any[] = userBookingsSnap.val() ?? [];
+        if (
+          !existing.some(
+            (b: any) =>
+              b.name === selectedCls.name && b.dateKey === selectedDateKey,
+          )
+        ) {
+          await set(userBookingsRef, [
+            ...existing,
+            {
+              name: selectedCls.name,
+              dateKey: selectedDateKey,
+              date: selectedCls.day ?? "",
+              displayDate: bookingDate.toLocaleDateString("en-ZA", {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+              }),
+              time: selectedCls.time,
+              trainer: selectedCls.trainer,
+              category: selectedCls.category,
+            },
+          ]);
+        }
+
+        // Notify member
+        await Promise.resolve(
+          push(ref(db, `users/${selectedUid}/notifications`), {
+            title: "Booking Confirmed",
+            body: `Your booking for ${selectedCls.name} on ${bookingDate.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })} at ${selectedCls.time} has been confirmed.`,
+            type: "class_update",
+            read: false,
+            createdAt: Date.now(),
+          }),
+        );
+
+        toast(
+          `${selectedMember.name} booked into ${selectedCls.name} ✓`,
+          "success",
+        );
+      }
+
+      setSelectedUid("");
+      setSelectedClsId("");
+      setPayNote("Cash payment at reception");
+    } catch (err: any) {
+      toast(err?.message ?? "Booking failed — try again", "error");
+    }
+    setSubmitting(false);
+  };
+
+  // ── Mini calendar ─────────────────────────────────────────────────────────
+  const MONTH_NAMES = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const firstDay = new Date(calYear, calMonth, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+        Manual Cash Booking
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 20,
+        }}
+      >
+        Add a member or non-member to a class when they pay cash at reception.
+        Category rules apply — monthly and daily limits are skipped.
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(300px,1fr))",
+          gap: 20,
+          alignItems: "start",
+        }}
+      >
+        {/* Left — member + date */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Member picker */}
+          <div
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: "14px 16px",
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>
+              1. Select member
+            </div>
+            {loading ? (
+              <div
+                style={{ fontSize: 13, color: "hsl(var(--muted-foreground))" }}
+              >
+                Loading…
+              </div>
+            ) : (
+              <select
+                style={inp}
+                value={selectedUid}
+                onChange={(e) => {
+                  setSelectedUid(e.target.value);
+                  setSelectedClsId("");
+                }}
+              >
+                <option value="">— Choose member —</option>
+                {members.map((m) => (
+                  <option key={m.uid} value={m.uid}>
+                    {m.name} ({m.email}) —{" "}
+                    {m.membership === "basic"
+                      ? `🎟 ${m.classCredits} credits`
+                      : m.membership}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedMember && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: "8px 12px",
+                  background: "hsl(var(--background))",
+                  borderRadius: 8,
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ fontWeight: 700 }}>{selectedMember.name}</div>
+                <div
+                  style={{
+                    color: "hsl(var(--muted-foreground))",
+                    marginTop: 2,
+                  }}
+                >
+                  {selectedMember.email}
+                </div>
+                <div
+                  style={{
+                    marginTop: 6,
+                    display: "flex",
+                    gap: 6,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: "2px 8px",
+                      borderRadius: 20,
+                      background: "hsl(20 100% 50% / 0.12)",
+                      color: "hsl(20 100% 50%)",
+                    }}
+                  >
+                    {selectedMember.membership}
+                  </span>
+                  {isNonMember && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: "2px 8px",
+                        borderRadius: 20,
+                        background:
+                          selectedMember.classCredits > 0
+                            ? "hsl(142 72% 37% / 0.12)"
+                            : "hsl(38 92% 44% / 0.12)",
+                        color:
+                          selectedMember.classCredits > 0
+                            ? "hsl(142 72% 37%)"
+                            : "hsl(38 92% 44%)",
+                      }}
+                    >
+                      🎟 {selectedMember.classCredits} credits{" "}
+                      {selectedMember.classCredits === 0
+                        ? "— cash override"
+                        : "— 1 will be deducted"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Mini calendar */}
+          <div
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: "14px 16px",
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>
+              2. Pick a date
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 10,
+              }}
+            >
+              <button
+                onClick={() => {
+                  if (calMonth === 0) {
+                    setCalMonth(11);
+                    setCalYear((y) => y - 1);
+                  } else setCalMonth((m) => m - 1);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "hsl(var(--muted-foreground))",
+                  fontSize: 16,
+                  padding: "2px 8px",
+                }}
+              >
+                ←
+              </button>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>
+                {MONTH_NAMES[calMonth]} {calYear}
+              </div>
+              <button
+                onClick={() => {
+                  if (calMonth === 11) {
+                    setCalMonth(0);
+                    setCalYear((y) => y + 1);
+                  } else setCalMonth((m) => m + 1);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "hsl(var(--muted-foreground))",
+                  fontSize: 16,
+                  padding: "2px 8px",
+                }}
+              >
+                →
+              </button>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(7,1fr)",
+                marginBottom: 4,
+              }}
+            >
+              {DAY_NAMES_SHORT.map((d) => (
+                <div
+                  key={d}
+                  style={{
+                    textAlign: "center",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: "hsl(var(--muted-foreground))",
+                    padding: "2px 0",
+                  }}
+                >
+                  {d}
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(7,1fr)",
+                gap: 2,
+              }}
+            >
+              {cells.map((day, i) => {
+                if (!day) return <div key={i} />;
+                const d = new Date(calYear, calMonth, day);
+                d.setHours(0, 0, 0, 0);
+                const isToday = d.getTime() === today.getTime();
+                const isSel = d.toISOString().split("T")[0] === selectedDateKey;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setBookingDate(new Date(calYear, calMonth, day));
+                      setSelectedClsId("");
+                    }}
+                    style={{
+                      aspectRatio: "1",
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      border: "none",
+                      background: isSel
+                        ? "hsl(20 100% 50%)"
+                        : isToday
+                          ? "hsl(20 100% 50% / 0.15)"
+                          : "transparent",
+                      color: isSel
+                        ? "#000"
+                        : isToday
+                          ? "hsl(20 100% 50%)"
+                          : "hsl(var(--foreground))",
+                      outline:
+                        isToday && !isSel
+                          ? "1px solid hsl(20 100% 50%)"
+                          : "none",
+                    }}
+                  >
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 11,
+                color: "hsl(var(--muted-foreground))",
+              }}
+            >
+              Selected:{" "}
+              <strong style={{ color: "hsl(20 100% 50%)" }}>
+                {bookingDate.toLocaleDateString("en-ZA", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
+              </strong>
+            </div>
+          </div>
+        </div>
+
+        {/* Right — class picker + confirm */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: "14px 16px",
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>
+              3. Select class
+            </div>
+            {classesOnDate.length === 0 ? (
+              <div
+                style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
+              >
+                No classes on this date.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {classesOnDate.map((cls) => {
+                  const isSelected = selectedClsId === cls.id;
+                  const blocked =
+                    selectedMember &&
+                    selectedMember.membership !== "basic" &&
+                    !isCategoryAllowed(selectedMember.membership, cls.category);
+                  const full = (cls.bookedCount ?? 0) >= cls.spots;
+                  return (
+                    <button
+                      key={cls.id}
+                      onClick={() => !blocked && setSelectedClsId(cls.id)}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        border: `1px solid ${isSelected ? "hsl(20 100% 50%)" : "hsl(var(--border))"}`,
+                        background: isSelected
+                          ? "hsl(20 100% 50% / 0.1)"
+                          : "hsl(var(--background))",
+                        cursor: blocked ? "not-allowed" : "pointer",
+                        opacity: blocked ? 0.4 : 1,
+                        textAlign: "left",
+                        fontFamily: "var(--font-body)",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: 700,
+                            fontSize: 13,
+                            color: isSelected
+                              ? "hsl(20 100% 50%)"
+                              : "hsl(var(--foreground))",
+                          }}
+                        >
+                          {cls.name}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "hsl(var(--muted-foreground))",
+                            marginTop: 2,
+                          }}
+                        >
+                          {cls.time} · {cls.trainer} · {cls.category}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: full ? "hsl(0 84% 51%)" : "hsl(142 72% 37%)",
+                          }}
+                        >
+                          {cls.bookedCount ?? 0}/{cls.spots}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: "hsl(var(--muted-foreground))",
+                          }}
+                        >
+                          {full ? "Full → waitlist" : "Available"}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {selectedCls && (
+            <div
+              style={{
+                background: "hsl(var(--secondary))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: 12,
+                padding: "14px 16px",
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>
+                4. Confirm booking
+              </div>
+              <div
+                style={{
+                  padding: "10px 14px",
+                  background: "hsl(var(--background))",
+                  borderRadius: 8,
+                  marginBottom: 12,
+                  fontSize: 12,
+                  lineHeight: 1.9,
+                }}
+              >
+                <div>
+                  <strong>Member:</strong> {selectedMember?.name ?? "—"}
+                </div>
+                <div>
+                  <strong>Class:</strong> {selectedCls.name} ·{" "}
+                  {selectedCls.time}
+                </div>
+                <div>
+                  <strong>Date:</strong>{" "}
+                  {bookingDate.toLocaleDateString("en-ZA", {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                  })}
+                </div>
+                <div>
+                  <strong>Trainer:</strong> {selectedCls.trainer}
+                </div>
+                {(selectedCls.bookedCount ?? 0) >= selectedCls.spots && (
+                  <div
+                    style={{
+                      color: "hsl(38 92% 44%)",
+                      fontWeight: 700,
+                      marginTop: 4,
+                    }}
+                  >
+                    ⚠ Class is full — member will be added to waitlist
+                  </div>
+                )}
+                {categoryBlocked && (
+                  <div
+                    style={{
+                      color: "hsl(0 84% 51%)",
+                      fontWeight: 700,
+                      marginTop: 4,
+                    }}
+                  >
+                    ✕ {selectedCls.category} not allowed for{" "}
+                    {selectedMember?.membership} tier
+                  </div>
+                )}
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={lbl}>Payment note</label>
+                <input
+                  style={inp}
+                  placeholder="e.g. Cash payment at reception — R250"
+                  value={payNote}
+                  onChange={(e) => setPayNote(e.target.value)}
+                />
+              </div>
+              <Btn
+                variant="primary"
+                onClick={handleBook}
+                disabled={
+                  submitting ||
+                  !selectedUid ||
+                  !selectedClsId ||
+                  !!categoryBlocked
+                }
+                full
+              >
+                {submitting
+                  ? "Booking…"
+                  : (selectedCls.bookedCount ?? 0) >= selectedCls.spots
+                    ? "➕ Add to Waitlist"
+                    : "✓ Confirm Cash Booking"}
+              </Btn>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// CREDIT HISTORY + REVENUE SUMMARY
+// Paste above export function Admin() in Admin.tsx
+//
+// Reads from:
+//   pending_bookings/  — PayFast transactions (class + pack purchases)
+//   mk2_users/{uid}/creditHistory — all credit movements per member
+//
+// WIRE UP:
+// 1. NAV: in NAV_GROUPS "Admin" group items add:
+//      { id: "revenue", icon: "ti-report-money", label: "Revenue" },
+//
+// 2. ROUTE: in Admin() motion.div block add:
+//      {tab === "revenue" && <RevenueManager toast={toast} />}
+// =============================================================================
+
+function RevenueManager({ toast }: any) {
+  const [subTab, setSubTab] = useState<"revenue" | "history">("revenue");
+
+  // ── Revenue state ─────────────────────────────────────────────────────────
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [txLoading, setTxLoading] = useState(true);
+  const [txFilter, setTxFilter] = useState<
+    "all" | "class_booking" | "credit_pack"
+  >("all");
+
+  // ── Credit history state ──────────────────────────────────────────────────
+  const [members, setMembers] = useState<any[]>([]);
+  const [selectedUid, setSelectedUid] = useState("");
+  const [history, setHistory] = useState<any[]>([]);
+  const [histLoading, setHistLoading] = useState(false);
+  const [typeFilter, setTypeFilter] = useState("all");
+
+  // ── Load PayFast transactions ─────────────────────────────────────────────
+  const loadTransactions = async () => {
+    setTxLoading(true);
+    try {
+      const snap = await get(ref(db, "pending_bookings"));
+      if (!snap.exists()) {
+        setTransactions([]);
+        setTxLoading(false);
+        return;
+      }
+      const list: any[] = [];
+      Object.entries(snap.val()).forEach(([key, v]: [string, any]) => {
+        // Only show completed payments
+        if (v.status === "confirmed") {
+          list.push({ key, ...v });
+        }
+      });
+      list.sort(
+        (a, b) =>
+          (b.confirmedAt ?? b.createdAt ?? 0) -
+          (a.confirmedAt ?? a.createdAt ?? 0),
+      );
+      setTransactions(list);
+    } catch {
+      toast("Failed to load transactions", "error");
+    }
+    setTxLoading(false);
+  };
+
+  // ── Load members for history picker ───────────────────────────────────────
+  const loadMembers = async () => {
+    try {
+      const snap = await get(ref(db, "mk2_users"));
+      if (!snap.exists()) return;
+      const list = Object.entries(snap.val()).map(
+        ([uid, v]: [string, any]) => ({
+          uid,
+          name: v.name || "Unnamed",
+          email: v.email || "",
+          classCredits: v.classCredits ?? 0,
+        }),
+      );
+      setMembers(list.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch {
+      /* non-critical */
+    }
+  };
+
+  useEffect(() => {
+    loadTransactions();
+    loadMembers();
+  }, []);
+
+  // ── Load credit history for selected member ───────────────────────────────
+  useEffect(() => {
+    if (!selectedUid) {
+      setHistory([]);
+      return;
+    }
+    setHistLoading(true);
+    get(ref(db, `mk2_users/${selectedUid}/creditHistory`)).then((snap) => {
+      if (!snap.exists()) {
+        setHistory([]);
+        setHistLoading(false);
+        return;
+      }
+      const list = Object.entries(snap.val()).map(
+        ([key, v]: [string, any]) => ({
+          key,
+          ...v,
+        }),
+      );
+      list.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+      setHistory(list);
+      setHistLoading(false);
+    });
+  }, [selectedUid]);
+
+  // ── Revenue calculations ──────────────────────────────────────────────────
+  const now = new Date();
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const lastMonth = (() => {
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+
+  const confirmed = transactions; // already filtered to confirmed above
+
+  const totalRevenue = confirmed.reduce((s, t) => s + (t.price ?? 0), 0);
+  const thisMonthRev = confirmed
+    .filter(
+      (t) =>
+        new Date(t.confirmedAt ?? t.createdAt ?? 0)
+          .toISOString()
+          .slice(0, 7) === thisMonth,
+    )
+    .reduce((s, t) => s + (t.price ?? 0), 0);
+  const lastMonthRev = confirmed
+    .filter(
+      (t) =>
+        new Date(t.confirmedAt ?? t.createdAt ?? 0)
+          .toISOString()
+          .slice(0, 7) === lastMonth,
+    )
+    .reduce((s, t) => s + (t.price ?? 0), 0);
+  const classBookingRev = confirmed
+    .filter((t) => t.custom_str2 === "class_booking" || !t.creditsPurchased)
+    .reduce((s, t) => s + (t.price ?? 0), 0);
+  const packRev = confirmed
+    .filter((t) => t.creditsPurchased)
+    .reduce((s, t) => s + (t.price ?? 0), 0);
+
+  // Monthly breakdown
+  const byMonth: Record<string, number> = {};
+  confirmed.forEach((t) => {
+    const mo = new Date(t.confirmedAt ?? t.createdAt ?? 0)
+      .toISOString()
+      .slice(0, 7);
+    byMonth[mo] = (byMonth[mo] ?? 0) + (t.price ?? 0);
+  });
+  const monthlyBreakdown = Object.entries(byMonth)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, 6);
+
+  // Filtered transactions list
+  const filteredTx =
+    txFilter === "all"
+      ? confirmed
+      : txFilter === "credit_pack"
+        ? confirmed.filter((t) => t.creditsPurchased)
+        : confirmed.filter((t) => !t.creditsPurchased);
+
+  // Credit history type labels
+  const CREDIT_TYPE_META: Record<string, { label: string; color: string }> = {
+    pack_purchase: { label: "Pack purchase", color: "hsl(142 72% 37%)" },
+    class_spend: { label: "Class booked", color: "hsl(0 84% 51%)" },
+    admin_assign: { label: "Admin assigned", color: "hsl(217 91% 53%)" },
+    admin_cancel: { label: "Admin cancelled", color: "hsl(38 92% 44%)" },
+    user_cancel: { label: "User cancelled", color: "hsl(38 92% 44%)" },
+  };
+
+  const historyTypes = ["all", ...Object.keys(CREDIT_TYPE_META)];
+  const filteredHistory =
+    typeFilter === "all"
+      ? history
+      : history.filter((h) => h.type === typeFilter);
+
+  const selectedMember = members.find((m) => m.uid === selectedUid);
+
+  // ── Shared styles ─────────────────────────────────────────────────────────
+  const S: any = {
+    card: {
+      background: "hsl(var(--secondary))",
+      border: "1px solid hsl(var(--border))",
+      borderRadius: 12,
+      padding: "14px 18px",
+    },
+    th: {
+      textAlign: "left" as const,
+      padding: "6px 10px",
+      fontWeight: 700,
+      fontSize: 10,
+      textTransform: "uppercase" as const,
+      letterSpacing: "0.08em",
+      color: "hsl(var(--muted-foreground))",
+      borderBottom: "1px solid hsl(var(--border))",
+    },
+    td: {
+      padding: "8px 10px",
+      borderBottom: "1px solid hsl(var(--border))",
+      fontSize: 12,
+      verticalAlign: "top" as const,
+    },
+  };
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+        Revenue & Credit History
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 20,
+        }}
+      >
+        PayFast transaction log and per-member credit movement history.
+      </div>
+
+      {/* Sub-tabs */}
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          padding: 4,
+          borderRadius: 10,
+          background: "hsl(var(--secondary))",
+          width: "fit-content",
+          marginBottom: 24,
+        }}
+      >
+        {[
+          { id: "revenue" as const, label: "💰 Revenue" },
+          { id: "history" as const, label: "🎟 Credit History" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 8,
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "var(--font-body)",
+              fontWeight: 700,
+              fontSize: 12,
+              background: subTab === t.id ? "hsl(20 100% 50%)" : "transparent",
+              color: subTab === t.id ? "#000" : "hsl(var(--muted-foreground))",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── REVENUE TAB ── */}
+      {subTab === "revenue" && (
+        <div>
+          {/* Summary cards */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))",
+              gap: 10,
+              marginBottom: 20,
+            }}
+          >
+            {[
+              {
+                label: "Total revenue",
+                val: `R${totalRevenue.toLocaleString("en-ZA")}`,
+                accent: true,
+              },
+              {
+                label: "This month",
+                val: `R${thisMonthRev.toLocaleString("en-ZA")}`,
+                accent: false,
+              },
+              {
+                label: "Last month",
+                val: `R${lastMonthRev.toLocaleString("en-ZA")}`,
+                accent: false,
+              },
+              {
+                label: "Class bookings",
+                val: `R${classBookingRev.toLocaleString("en-ZA")}`,
+                accent: false,
+              },
+              {
+                label: "Credit packs",
+                val: `R${packRev.toLocaleString("en-ZA")}`,
+                accent: false,
+              },
+              {
+                label: "Total transactions",
+                val: String(confirmed.length),
+                accent: false,
+              },
+            ].map((s) => (
+              <div
+                key={s.label}
+                style={{
+                  ...S.card,
+                  borderLeft: s.accent
+                    ? "3px solid hsl(20 100% 50%)"
+                    : undefined,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: s.accent
+                      ? "hsl(20 100% 50%)"
+                      : "hsl(var(--foreground))",
+                    lineHeight: 1,
+                  }}
+                >
+                  {txLoading ? "—" : s.val}
+                </div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "hsl(var(--muted-foreground))",
+                    marginTop: 6,
+                  }}
+                >
+                  {s.label}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Monthly breakdown */}
+          {!txLoading && monthlyBreakdown.length > 0 && (
+            <div style={{ ...S.card, marginBottom: 20 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
+                Monthly breakdown
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {monthlyBreakdown.map(([mo, rev]) => {
+                  const maxRev = Math.max(
+                    ...monthlyBreakdown.map(([, r]) => r),
+                  );
+                  const pct = maxRev > 0 ? (rev / maxRev) * 100 : 0;
+                  const [yr, mn] = mo.split("-");
+                  const label = new Date(
+                    Number(yr),
+                    Number(mn) - 1,
+                    1,
+                  ).toLocaleDateString("en-ZA", {
+                    month: "long",
+                    year: "numeric",
+                  });
+                  return (
+                    <div key={mo}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: 12,
+                          marginBottom: 4,
+                        }}
+                      >
+                        <span
+                          style={{
+                            color:
+                              mo === thisMonth
+                                ? "hsl(20 100% 50%)"
+                                : "hsl(var(--foreground))",
+                            fontWeight: mo === thisMonth ? 700 : 400,
+                          }}
+                        >
+                          {label}
+                        </span>
+                        <span style={{ fontWeight: 700 }}>
+                          R{rev.toLocaleString("en-ZA")}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          height: 6,
+                          background: "hsl(var(--border))",
+                          borderRadius: 4,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${pct}%`,
+                            height: "100%",
+                            background:
+                              mo === thisMonth
+                                ? "hsl(20 100% 50%)"
+                                : "hsl(217 91% 53%)",
+                            borderRadius: 4,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Transaction list */}
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              marginBottom: 14,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            {(["all", "class_booking", "credit_pack"] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setTxFilter(f)}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: 20,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  background:
+                    txFilter === f
+                      ? "hsl(20 100% 50%)"
+                      : "hsl(var(--secondary))",
+                  color: txFilter === f ? "#000" : "hsl(var(--foreground))",
+                  border:
+                    txFilter === f ? "none" : "1px solid hsl(var(--border))",
+                  fontFamily: "var(--font-body)",
+                }}
+              >
+                {f === "all"
+                  ? `All (${confirmed.length})`
+                  : f === "credit_pack"
+                    ? "Credit packs"
+                    : "Class bookings"}
+              </button>
+            ))}
+            <Btn variant="subtle" size="sm" onClick={loadTransactions}>
+              ↻ Refresh
+            </Btn>
+          </div>
+
+          {txLoading ? (
+            <div
+              style={{ fontSize: 13, color: "hsl(var(--muted-foreground))" }}
+            >
+              Loading…
+            </div>
+          ) : filteredTx.length === 0 ? (
+            <div
+              style={{ fontSize: 13, color: "hsl(var(--muted-foreground))" }}
+            >
+              No transactions yet.
+            </div>
+          ) : (
+            <div style={{ ...S.card, overflowX: "auto" }}>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: 12,
+                }}
+              >
+                <thead>
+                  <tr>
+                    <th style={S.th}>Member</th>
+                    <th style={S.th}>Type</th>
+                    <th style={S.th}>Description</th>
+                    <th style={S.th}>Amount</th>
+                    <th style={S.th}>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTx.map((t) => {
+                    const isPack = Boolean(t.creditsPurchased);
+                    const date = new Date(t.confirmedAt ?? t.createdAt ?? 0);
+                    return (
+                      <tr key={t.key}>
+                        <td style={S.td}>
+                          <div style={{ fontWeight: 700 }}>
+                            {t.userName ?? "—"}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: "hsl(var(--muted-foreground))",
+                            }}
+                          >
+                            {t.userEmail ?? ""}
+                          </div>
+                        </td>
+                        <td style={S.td}>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: "2px 8px",
+                              borderRadius: 20,
+                              background: isPack
+                                ? "hsl(142 72% 37% / 0.12)"
+                                : "hsl(20 100% 50% / 0.12)",
+                              color: isPack
+                                ? "hsl(142 72% 37%)"
+                                : "hsl(20 100% 50%)",
+                            }}
+                          >
+                            {isPack ? "Credit pack" : "Class booking"}
+                          </span>
+                        </td>
+                        <td style={S.td}>
+                          {isPack
+                            ? `${t.className} · ${t.creditsPurchased} credits`
+                            : `${t.className} · ${t.dateDisplay ?? t.dateKey}`}
+                        </td>
+                        <td
+                          style={{
+                            ...S.td,
+                            fontWeight: 700,
+                            color: "hsl(20 100% 50%)",
+                          }}
+                        >
+                          R{(t.price ?? 0).toLocaleString("en-ZA")}
+                        </td>
+                        <td
+                          style={{
+                            ...S.td,
+                            color: "hsl(var(--muted-foreground))",
+                            whiteSpace: "nowrap" as const,
+                          }}
+                        >
+                          {date.toLocaleDateString("en-ZA", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {/* Total row */}
+                <tfoot>
+                  <tr>
+                    <td
+                      colSpan={3}
+                      style={{
+                        ...S.td,
+                        fontWeight: 700,
+                        borderBottom: "none",
+                        borderTop: "2px solid hsl(var(--border))",
+                      }}
+                    >
+                      Total ({filteredTx.length} transactions)
+                    </td>
+                    <td
+                      style={{
+                        ...S.td,
+                        fontWeight: 700,
+                        color: "hsl(20 100% 50%)",
+                        borderBottom: "none",
+                        borderTop: "2px solid hsl(var(--border))",
+                      }}
+                    >
+                      R
+                      {filteredTx
+                        .reduce((s, t) => s + (t.price ?? 0), 0)
+                        .toLocaleString("en-ZA")}
+                    </td>
+                    <td
+                      style={{
+                        ...S.td,
+                        borderBottom: "none",
+                        borderTop: "2px solid hsl(var(--border))",
+                      }}
+                    />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── CREDIT HISTORY TAB ── */}
+      {subTab === "history" && (
+        <div>
+          {/* Member picker */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={lbl}>Select member</label>
+            <select
+              style={{ ...inp, maxWidth: 420 }}
+              value={selectedUid}
+              onChange={(e) => setSelectedUid(e.target.value)}
+            >
+              <option value="">— Choose a member —</option>
+              {members.map((m) => (
+                <option key={m.uid} value={m.uid}>
+                  {m.name} ({m.email}) — 🎟 {m.classCredits} credits
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedMember && (
+            <>
+              {/* Member credit summary */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(140px,1fr))",
+                  gap: 10,
+                  marginBottom: 16,
+                }}
+              >
+                {[
+                  {
+                    label: "Current credits",
+                    val: String(selectedMember.classCredits),
+                    accent: true,
+                  },
+                  {
+                    label: "Total earned",
+                    val: String(
+                      history
+                        .filter((h) => h.amount > 0)
+                        .reduce((s, h) => s + h.amount, 0),
+                    ),
+                    accent: false,
+                  },
+                  {
+                    label: "Total spent",
+                    val: String(
+                      Math.abs(
+                        history
+                          .filter((h) => h.amount < 0)
+                          .reduce((s, h) => s + h.amount, 0),
+                      ),
+                    ),
+                    accent: false,
+                  },
+                  {
+                    label: "Transactions",
+                    val: String(history.length),
+                    accent: false,
+                  },
+                ].map((s) => (
+                  <div
+                    key={s.label}
+                    style={{
+                      ...S.card,
+                      borderLeft: s.accent
+                        ? "3px solid hsl(20 100% 50%)"
+                        : undefined,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 22,
+                        fontWeight: 700,
+                        color: s.accent
+                          ? "hsl(20 100% 50%)"
+                          : "hsl(var(--foreground))",
+                        lineHeight: 1,
+                      }}
+                    >
+                      {histLoading ? "—" : s.val}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "hsl(var(--muted-foreground))",
+                        marginTop: 6,
+                      }}
+                    >
+                      {s.label}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Type filter */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  marginBottom: 14,
+                  flexWrap: "wrap",
+                }}
+              >
+                {historyTypes.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTypeFilter(t)}
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: 20,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      textTransform: "capitalize",
+                      background:
+                        typeFilter === t
+                          ? "hsl(20 100% 50%)"
+                          : "hsl(var(--secondary))",
+                      color:
+                        typeFilter === t ? "#000" : "hsl(var(--foreground))",
+                      border:
+                        typeFilter === t
+                          ? "none"
+                          : "1px solid hsl(var(--border))",
+                      fontFamily: "var(--font-body)",
+                    }}
+                  >
+                    {t === "all" ? "All" : (CREDIT_TYPE_META[t]?.label ?? t)}
+                  </button>
+                ))}
+              </div>
+
+              {/* History list */}
+              {histLoading ? (
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  Loading…
+                </div>
+              ) : filteredHistory.length === 0 ? (
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  No credit history for this member.
+                </div>
+              ) : (
+                <div style={{ ...S.card, padding: "4px 16px" }}>
+                  {filteredHistory.map((h, i) => {
+                    const meta = CREDIT_TYPE_META[h.type] ?? {
+                      label: h.type,
+                      color: "hsl(var(--muted-foreground))",
+                    };
+                    const isLast = i === filteredHistory.length - 1;
+                    const isCredit = h.amount > 0;
+                    return (
+                      <div
+                        key={h.key}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          padding: "10px 0",
+                          borderBottom: isLast
+                            ? "none"
+                            : "1px solid hsl(var(--border))",
+                        }}
+                      >
+                        {/* Amount indicator */}
+                        <div
+                          style={{
+                            width: 42,
+                            height: 42,
+                            borderRadius: 10,
+                            background: isCredit
+                              ? "hsl(142 72% 37% / 0.12)"
+                              : h.amount === 0
+                                ? "hsl(217 91% 53% / 0.12)"
+                                : "hsl(0 84% 51% / 0.12)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontWeight: 700,
+                            fontSize: 15,
+                            color: isCredit
+                              ? "hsl(142 72% 37%)"
+                              : h.amount === 0
+                                ? "hsl(217 91% 53%)"
+                                : "hsl(0 84% 51%)",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {h.amount > 0
+                            ? `+${h.amount}`
+                            : h.amount === 0
+                              ? "—"
+                              : h.amount}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              flexWrap: "wrap",
+                              marginBottom: 2,
+                            }}
+                          >
+                            <span style={{ fontWeight: 700, fontSize: 13 }}>
+                              {meta.label}
+                            </span>
+                            {h.cashOverride && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: "1px 6px",
+                                  borderRadius: 20,
+                                  background: "hsl(38 92% 44% / 0.12)",
+                                  color: "hsl(38 92% 44%)",
+                                }}
+                              >
+                                cash override
+                              </span>
+                            )}
+                            {h.adminAssigned && !h.cashOverride && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: "1px 6px",
+                                  borderRadius: 20,
+                                  background: "hsl(217 91% 53% / 0.12)",
+                                  color: "hsl(217 91% 53%)",
+                                }}
+                              >
+                                admin
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: "hsl(var(--muted-foreground))",
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {h.note}
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "hsl(var(--muted-foreground))",
+                            flexShrink: 0,
+                            textAlign: "right" as const,
+                          }}
+                        >
+                          {h.timestamp
+                            ? new Date(h.timestamp).toLocaleDateString(
+                                "en-ZA",
+                                {
+                                  day: "numeric",
+                                  month: "short",
+                                  year: "numeric",
+                                },
+                              )
+                            : "—"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+function BookingExports({ toast }: any) {
+  const [subTab, setSubTab] = useState<"roster" | "members" | "checkins">(
+    "roster",
+  );
+
+  // ── Roster state ─────────────────────────────────────────────────────────
+  const [classes, setClasses] = useState<any[]>([]);
+  const [classesLoading, setClassesLoading] = useState(true);
+  const [rosterDate, setRosterDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+  const [rosterClassId, setRosterClassId] = useState("");
+  const [rosterData, setRosterData] = useState<any[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterClass, setRosterClass] = useState<any>(null);
+
+  // ── Member list state ─────────────────────────────────────────────────────
+  const [memberExportLoading, setMemberExportLoading] = useState(false);
+  const [memberPreview, setMemberPreview] = useState<any[]>([]);
+  const [memberPreviewLoaded, setMemberPreviewLoaded] = useState(false);
+
+  // ── Check-in history state ────────────────────────────────────────────────
+  const [ciFrom, setCiFrom] = useState("");
+  const [ciTo, setCiTo] = useState("");
+  const [ciLoading, setCiLoading] = useState(false);
+  const [ciPreview, setCiPreview] = useState<any[]>([]);
+  const [ciPreviewLoaded, setCiPreviewLoaded] = useState(false);
+
+  // ── Calendar for roster ───────────────────────────────────────────────────
+  const [calMonth, setCalMonth] = useState(rosterDate.getMonth());
+  const [calYear, setCalYear] = useState(rosterDate.getFullYear());
+
+  useEffect(() => {
+    get(ref(db, "admin_classes")).then((snap) => {
+      if (snap.exists()) {
+        const list = Object.entries(snap.val()).map(
+          ([id, v]: [string, any]) => ({ id, ...v }),
+        );
+        setClasses(
+          list.sort((a, b) => (a.time || "").localeCompare(b.time || "")),
+        );
+      }
+      setClassesLoading(false);
+    });
+  }, []);
+
+  // Classes on selected roster date
+  const selectedDateKey = formatDateKey(rosterDate);
+  const selectedDayName = getDayName(rosterDate);
+  const classesOnDate = classes
+    .filter((c) =>
+      c.scheduleType === "date"
+        ? c.specificDate === selectedDateKey
+        : c.day === selectedDayName,
+    )
+    .sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+
+  // ── Load roster ───────────────────────────────────────────────────────────
+  const loadRoster = async () => {
+    if (!rosterClassId) return toast("Select a class first", "error");
+    const cls = classes.find((c) => c.id === rosterClassId);
+    if (!cls) return;
+    setRosterLoading(true);
+    setRosterClass(cls);
+    try {
+      const bk = buildBookingKey(cls.name, selectedDateKey);
+      const snap = await get(ref(db, `class_bookings/${bk}`));
+      if (!snap.exists()) {
+        setRosterData([]);
+      } else {
+        const rows = Object.entries(snap.val()).map(
+          ([uid, v]: [string, any]) => ({
+            uid,
+            name: v.name || "Unknown",
+            email: v.email || "",
+          }),
+        );
+        setRosterData(rows.sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    } catch {
+      toast("Failed to load roster", "error");
+    }
+    setRosterLoading(false);
+  };
+
+  const exportRosterCSV = () => {
+    if (!rosterClass) return;
+    const rows = [
+      ["#", "Name", "Email", "Class", "Date", "Time", "Trainer"],
+      ...rosterData.map((r, i) => [
+        String(i + 1),
+        r.name,
+        r.email,
+        rosterClass.name,
+        selectedDateKey,
+        rosterClass.time,
+        rosterClass.trainer,
+      ]),
+    ];
+    downloadCSV(`roster_${rosterClass.name}_${selectedDateKey}.csv`, rows);
+    toast("CSV downloaded ✓", "success");
+  };
+
+  const exportRosterPrint = () => {
+    if (!rosterClass) return;
+    const rows = rosterData
+      .map(
+        (r, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${r.name}</td>
+          <td>${r.email}</td>
+          <td style="text-align:center">☐</td>
+        </tr>`,
+      )
+      .join("");
+    printHTML(
+      `Roster — ${rosterClass.name} ${selectedDateKey}`,
+      `<h1>Class Roster</h1>
+       <div class="sub">${rosterClass.name} · ${selectedDateKey} · ${rosterClass.time} · Coach ${rosterClass.trainer} · ${rosterData.length}/${rosterClass.spots} booked</div>
+       <table>
+         <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Present</th></tr></thead>
+         <tbody>${rows || "<tr><td colspan='4'>No bookings</td></tr>"}</tbody>
+       </table>`,
+    );
+  };
+
+  // ── Load member list ──────────────────────────────────────────────────────
+  const loadMembers = async () => {
+    setMemberExportLoading(true);
+    try {
+      const snap = await get(ref(db, "mk2_users"));
+      if (!snap.exists()) {
+        setMemberPreview([]);
+        setMemberPreviewLoaded(true);
+        setMemberExportLoading(false);
+        return;
+      }
+      const list = Object.entries(snap.val()).map(
+        ([uid, v]: [string, any]) => ({
+          uid,
+          name: v.name || "Unnamed",
+          email: v.email || "",
+          membership: v.membership || "basic",
+          points: v.points ?? 0,
+          classCredits: v.classCredits ?? 0,
+          checkIns: Array.isArray(v.checkIns) ? v.checkIns.length : 0,
+          joinedAt: v.createdAt ?? 0,
+        }),
+      );
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      setMemberPreview(list);
+      setMemberPreviewLoaded(true);
+    } catch {
+      toast("Failed to load members", "error");
+    }
+    setMemberExportLoading(false);
+  };
+
+  const exportMembersCSV = () => {
+    const rows = [
+      [
+        "Name",
+        "Email",
+        "Membership",
+        "Points",
+        "Class Credits",
+        "Total Check-Ins",
+        "Joined",
+      ],
+      ...memberPreview.map((m) => [
+        m.name,
+        m.email,
+        m.membership,
+        String(m.points),
+        String(m.classCredits),
+        String(m.checkIns),
+        m.joinedAt ? new Date(m.joinedAt).toLocaleDateString("en-ZA") : "",
+      ]),
+    ];
+    downloadCSV(`mk2r_members_${formatDateKey(new Date())}.csv`, rows);
+    toast("Members CSV downloaded ✓", "success");
+  };
+
+  const exportMembersPrint = () => {
+    const rows = memberPreview
+      .map(
+        (m) => `
+        <tr>
+          <td>${m.name}</td>
+          <td>${m.email}</td>
+          <td><span class="badge badge-${m.membership}">${m.membership}</span></td>
+          <td style="text-align:center">${m.points}</td>
+          <td style="text-align:center">${m.classCredits}</td>
+          <td style="text-align:center">${m.checkIns}</td>
+        </tr>`,
+      )
+      .join("");
+    printHTML(
+      "MK2R Member List",
+      `<h1>Member List</h1>
+       <div class="sub">${memberPreview.length} members · Exported ${new Date().toLocaleDateString("en-ZA")}</div>
+       <table>
+         <thead><tr><th>Name</th><th>Email</th><th>Tier</th><th>Points</th><th>Credits</th><th>Check-Ins</th></tr></thead>
+         <tbody>${rows}</tbody>
+       </table>`,
+    );
+  };
+
+  // ── Load check-in history ─────────────────────────────────────────────────
+  const loadCheckIns = async () => {
+    if (!ciFrom || !ciTo) return toast("Select a date range", "error");
+    const from = new Date(ciFrom + "T00:00:00");
+    const to = new Date(ciTo + "T23:59:59");
+    if (from > to) return toast("From date must be before To date", "error");
+    setCiLoading(true);
+    try {
+      const snap = await get(ref(db, "mk2_users"));
+      if (!snap.exists()) {
+        setCiPreview([]);
+        setCiPreviewLoaded(true);
+        setCiLoading(false);
+        return;
+      }
+      const rows: any[] = [];
+      Object.entries(snap.val()).forEach(([, v]: [string, any]) => {
+        const checkIns: any[] = Array.isArray(v.checkIns) ? v.checkIns : [];
+        checkIns.forEach((ci: any) => {
+          if (!ci?.date) return;
+          // Parse DD/MM/YYYY
+          const [d, mo, yr] = ci.date.split("/");
+          const ciDate = new Date(`${yr}-${mo}-${d}T00:00:00`);
+          if (ciDate >= from && ciDate <= to) {
+            rows.push({
+              name: v.name || "Unnamed",
+              email: v.email || "",
+              date: ci.date,
+              time: ci.time || "—",
+              backdated: ci.backdated ? "Yes" : "No",
+              // For sorting
+              _ts: ciDate.getTime(),
+            });
+          }
+        });
+      });
+      rows.sort((a, b) => a._ts - b._ts || a.name.localeCompare(b.name));
+      setCiPreview(rows);
+      setCiPreviewLoaded(true);
+    } catch {
+      toast("Failed to load check-ins", "error");
+    }
+    setCiLoading(false);
+  };
+
+  const exportCheckInsCSV = () => {
+    const rows = [
+      ["Name", "Email", "Date", "Time", "Backdated"],
+      ...ciPreview.map((r) => [r.name, r.email, r.date, r.time, r.backdated]),
+    ];
+    downloadCSV(`mk2r_checkins_${ciFrom}_to_${ciTo}.csv`, rows);
+    toast("Check-ins CSV downloaded ✓", "success");
+  };
+
+  const exportCheckInsPrint = () => {
+    const tableRows = ciPreview
+      .map(
+        (r) => `
+        <tr>
+          <td>${r.name}</td>
+          <td>${r.email}</td>
+          <td>${r.date}</td>
+          <td>${r.time}</td>
+          <td>${r.backdated}</td>
+        </tr>`,
+      )
+      .join("");
+    printHTML(
+      `Check-In History ${ciFrom} – ${ciTo}`,
+      `<h1>Check-In History</h1>
+       <div class="sub">${ciPreview.length} entries · ${ciFrom} to ${ciTo}</div>
+       <table>
+         <thead><tr><th>Name</th><th>Email</th><th>Date</th><th>Time</th><th>Backdated</th></tr></thead>
+         <tbody>${tableRows || "<tr><td colspan='5'>No check-ins in range</td></tr>"}</tbody>
+       </table>`,
+    );
+  };
+
+  // ── Mini calendar for roster ──────────────────────────────────────────────
+  const MONTH_NAMES = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const firstDay = new Date(calYear, calMonth, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  // shared styles
+  const S: any = {
+    card: {
+      background: "hsl(var(--secondary))",
+      border: "1px solid hsl(var(--border))",
+      borderRadius: 12,
+      padding: "16px 18px",
+      marginBottom: 16,
+    },
+    sectionTitle: { fontWeight: 700, fontSize: 13, marginBottom: 10 },
+    exportRow: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap" as const,
+      marginTop: 14,
+    },
+    empty: {
+      fontSize: 13,
+      color: "hsl(var(--muted-foreground))",
+      padding: "16px 0",
+    },
+    previewTable: {
+      width: "100%",
+      borderCollapse: "collapse" as const,
+      fontSize: 12,
+      marginTop: 10,
+    },
+    th: {
+      textAlign: "left" as const,
+      padding: "6px 10px",
+      fontWeight: 700,
+      fontSize: 10,
+      textTransform: "uppercase" as const,
+      letterSpacing: "0.08em",
+      color: "hsl(var(--muted-foreground))",
+      borderBottom: "1px solid hsl(var(--border))",
+    },
+    td: {
+      padding: "7px 10px",
+      borderBottom: "1px solid hsl(var(--border))",
+      fontSize: 12,
+    },
+  };
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+        Exports
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 20,
+        }}
+      >
+        Download class rosters, member lists, and check-in history as CSV or
+        printable sheets.
+      </div>
+
+      {/* Sub-tabs */}
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          padding: 4,
+          borderRadius: 10,
+          background: "hsl(var(--secondary))",
+          width: "fit-content",
+          marginBottom: 24,
+        }}
+      >
+        {[
+          { id: "roster" as const, label: "📋 Class roster" },
+          { id: "members" as const, label: "👥 Member list" },
+          { id: "checkins" as const, label: "✅ Check-in history" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 8,
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "var(--font-body)",
+              fontWeight: 700,
+              fontSize: 12,
+              background: subTab === t.id ? "hsl(20 100% 50%)" : "transparent",
+              color: subTab === t.id ? "#000" : "hsl(var(--muted-foreground))",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── CLASS ROSTER ── */}
+      {subTab === "roster" && (
+        <div>
+          {/* Mini calendar */}
+          <div style={{ ...S.card, maxWidth: 340 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 10,
+              }}
+            >
+              <button
+                onClick={() => {
+                  if (calMonth === 0) {
+                    setCalMonth(11);
+                    setCalYear((y) => y - 1);
+                  } else setCalMonth((m) => m - 1);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "hsl(var(--muted-foreground))",
+                  fontSize: 16,
+                  padding: "2px 8px",
+                }}
+              >
+                ←
+              </button>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>
+                {MONTH_NAMES[calMonth]} {calYear}
+              </div>
+              <button
+                onClick={() => {
+                  if (calMonth === 11) {
+                    setCalMonth(0);
+                    setCalYear((y) => y + 1);
+                  } else setCalMonth((m) => m + 1);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "hsl(var(--muted-foreground))",
+                  fontSize: 16,
+                  padding: "2px 8px",
+                }}
+              >
+                →
+              </button>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(7,1fr)",
+                marginBottom: 4,
+              }}
+            >
+              {DAY_NAMES.map((d) => (
+                <div
+                  key={d}
+                  style={{
+                    textAlign: "center",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: "hsl(var(--muted-foreground))",
+                    padding: "2px 0",
+                  }}
+                >
+                  {d}
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(7,1fr)",
+                gap: 2,
+              }}
+            >
+              {cells.map((day, i) => {
+                if (!day) return <div key={i} />;
+                const d = new Date(calYear, calMonth, day);
+                d.setHours(0, 0, 0, 0);
+                const isToday = d.getTime() === today.getTime();
+                const isSel = formatDateKey(d) === formatDateKey(rosterDate);
+                return (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setRosterDate(new Date(calYear, calMonth, day));
+                      setRosterClassId("");
+                      setRosterData([]);
+                      setRosterClass(null);
+                    }}
+                    style={{
+                      aspectRatio: "1",
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      border: "none",
+                      background: isSel
+                        ? "hsl(20 100% 50%)"
+                        : isToday
+                          ? "hsl(20 100% 50% / 0.15)"
+                          : "transparent",
+                      color: isSel
+                        ? "#000"
+                        : isToday
+                          ? "hsl(20 100% 50%)"
+                          : "hsl(var(--foreground))",
+                      outline:
+                        isToday && !isSel
+                          ? "1px solid hsl(20 100% 50%)"
+                          : "none",
+                    }}
+                  >
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Class picker */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>
+              Class on{" "}
+              {rosterDate.toLocaleDateString("en-ZA", {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+              })}
+            </label>
+            {classesLoading ? (
+              <div style={S.empty}>Loading classes…</div>
+            ) : classesOnDate.length === 0 ? (
+              <div style={{ ...S.empty, padding: "10px 0" }}>
+                No classes on this date.
+              </div>
+            ) : (
+              <select
+                style={{ ...inp, maxWidth: 400 }}
+                value={rosterClassId}
+                onChange={(e) => {
+                  setRosterClassId(e.target.value);
+                  setRosterData([]);
+                  setRosterClass(null);
+                }}
+              >
+                <option value="">— Select a class —</option>
+                {classesOnDate.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.time} · {c.name} · {c.trainer}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <Btn
+            variant="primary"
+            size="sm"
+            onClick={loadRoster}
+            disabled={!rosterClassId || rosterLoading}
+          >
+            {rosterLoading ? "Loading…" : "Load Roster"}
+          </Btn>
+
+          {/* Roster preview */}
+          {rosterClass && !rosterLoading && (
+            <div style={{ ...S.card, marginTop: 20 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  marginBottom: 10,
+                }}
+              >
+                <div>
+                  <div style={S.sectionTitle}>
+                    {rosterClass.name} — {selectedDateKey}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "hsl(var(--muted-foreground))",
+                    }}
+                  >
+                    {rosterClass.time} · Coach {rosterClass.trainer} ·{" "}
+                    {rosterData.length}/{rosterClass.spots} booked
+                  </div>
+                </div>
+                <div style={S.exportRow}>
+                  <Btn
+                    variant="primary"
+                    size="sm"
+                    onClick={exportRosterCSV}
+                    disabled={rosterData.length === 0}
+                  >
+                    ⬇ CSV
+                  </Btn>
+                  <Btn variant="subtle" size="sm" onClick={exportRosterPrint}>
+                    🖨 Print / PDF
+                  </Btn>
+                </div>
+              </div>
+
+              {rosterData.length === 0 ? (
+                <div style={S.empty}>
+                  No bookings for this class on this date.
+                </div>
+              ) : (
+                <table style={S.previewTable}>
+                  <thead>
+                    <tr>
+                      <th style={S.th}>#</th>
+                      <th style={S.th}>Name</th>
+                      <th style={S.th}>Email</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rosterData.map((r, i) => (
+                      <tr key={r.uid}>
+                        <td
+                          style={{
+                            ...S.td,
+                            color: "hsl(var(--muted-foreground))",
+                            width: 32,
+                          }}
+                        >
+                          {i + 1}
+                        </td>
+                        <td style={{ ...S.td, fontWeight: 700 }}>{r.name}</td>
+                        <td
+                          style={{
+                            ...S.td,
+                            color: "hsl(var(--muted-foreground))",
+                          }}
+                        >
+                          {r.email}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── MEMBER LIST ── */}
+      {subTab === "members" && (
+        <div>
+          <div style={S.card}>
+            <div style={S.sectionTitle}>Export all app users</div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "hsl(var(--muted-foreground))",
+                marginBottom: 14,
+              }}
+            >
+              Includes name, email, membership tier, points, class credits,
+              total check-ins and join date.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Btn
+                variant="primary"
+                size="sm"
+                onClick={loadMembers}
+                disabled={memberExportLoading}
+              >
+                {memberExportLoading
+                  ? "Loading…"
+                  : memberPreviewLoaded
+                    ? "↻ Refresh"
+                    : "Load Members"}
+              </Btn>
+              {memberPreviewLoaded && (
+                <>
+                  <Btn variant="primary" size="sm" onClick={exportMembersCSV}>
+                    ⬇ CSV
+                  </Btn>
+                  <Btn variant="subtle" size="sm" onClick={exportMembersPrint}>
+                    🖨 Print / PDF
+                  </Btn>
+                </>
+              )}
+            </div>
+          </div>
+
+          {memberPreviewLoaded && (
+            <div style={S.card}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "hsl(var(--muted-foreground))",
+                  marginBottom: 10,
+                }}
+              >
+                {memberPreview.length} members
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={S.previewTable}>
+                  <thead>
+                    <tr>
+                      <th style={S.th}>Name</th>
+                      <th style={S.th}>Email</th>
+                      <th style={S.th}>Tier</th>
+                      <th style={S.th}>Points</th>
+                      <th style={S.th}>Credits</th>
+                      <th style={S.th}>Check-ins</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {memberPreview.map((m) => (
+                      <tr key={m.uid}>
+                        <td style={{ ...S.td, fontWeight: 700 }}>{m.name}</td>
+                        <td
+                          style={{
+                            ...S.td,
+                            color: "hsl(var(--muted-foreground))",
+                          }}
+                        >
+                          {m.email}
+                        </td>
+                        <td style={S.td}>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: "2px 8px",
+                              borderRadius: 20,
+                              background:
+                                m.membership === "gold"
+                                  ? "hsl(38 92% 44% / 0.15)"
+                                  : m.membership === "silver"
+                                    ? "hsl(var(--secondary))"
+                                    : "hsl(var(--secondary))",
+                              color:
+                                m.membership === "gold"
+                                  ? "hsl(38 92% 44%)"
+                                  : "hsl(var(--muted-foreground))",
+                            }}
+                          >
+                            {m.membership}
+                          </span>
+                        </td>
+                        <td style={{ ...S.td, textAlign: "center" }}>
+                          {m.points}
+                        </td>
+                        <td style={{ ...S.td, textAlign: "center" }}>
+                          {m.classCredits}
+                        </td>
+                        <td style={{ ...S.td, textAlign: "center" }}>
+                          {m.checkIns}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── CHECK-IN HISTORY ── */}
+      {subTab === "checkins" && (
+        <div>
+          <div style={S.card}>
+            <div style={S.sectionTitle}>
+              Export check-in history by date range
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                gap: 12,
+                marginBottom: 14,
+              }}
+            >
+              <div>
+                <label style={lbl}>From *</label>
+                <input
+                  style={inp}
+                  type="date"
+                  value={ciFrom}
+                  onChange={(e) => {
+                    setCiFrom(e.target.value);
+                    setCiPreviewLoaded(false);
+                  }}
+                />
+              </div>
+              <div>
+                <label style={lbl}>To *</label>
+                <input
+                  style={inp}
+                  type="date"
+                  value={ciTo}
+                  onChange={(e) => {
+                    setCiTo(e.target.value);
+                    setCiPreviewLoaded(false);
+                  }}
+                />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Btn
+                variant="primary"
+                size="sm"
+                onClick={loadCheckIns}
+                disabled={ciLoading || !ciFrom || !ciTo}
+              >
+                {ciLoading ? "Loading…" : "Load Check-Ins"}
+              </Btn>
+              {ciPreviewLoaded && (
+                <>
+                  <Btn
+                    variant="primary"
+                    size="sm"
+                    onClick={exportCheckInsCSV}
+                    disabled={ciPreview.length === 0}
+                  >
+                    ⬇ CSV
+                  </Btn>
+                  <Btn variant="subtle" size="sm" onClick={exportCheckInsPrint}>
+                    🖨 Print / PDF
+                  </Btn>
+                </>
+              )}
+            </div>
+          </div>
+
+          {ciPreviewLoaded && (
+            <div style={S.card}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "hsl(var(--muted-foreground))",
+                  marginBottom: 10,
+                }}
+              >
+                {ciPreview.length} check-in{ciPreview.length !== 1 ? "s" : ""}{" "}
+                between {ciFrom} and {ciTo}
+              </div>
+              {ciPreview.length === 0 ? (
+                <div style={S.empty}>
+                  No check-ins found in this date range.
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={S.previewTable}>
+                    <thead>
+                      <tr>
+                        <th style={S.th}>Name</th>
+                        <th style={S.th}>Email</th>
+                        <th style={S.th}>Date</th>
+                        <th style={S.th}>Time</th>
+                        <th style={S.th}>Backdated</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ciPreview.map((r, i) => (
+                        <tr key={i}>
+                          <td style={{ ...S.td, fontWeight: 700 }}>{r.name}</td>
+                          <td
+                            style={{
+                              ...S.td,
+                              color: "hsl(var(--muted-foreground))",
+                            }}
+                          >
+                            {r.email}
+                          </td>
+                          <td style={S.td}>{r.date}</td>
+                          <td style={S.td}>{r.time}</td>
+                          <td style={S.td}>
+                            {r.backdated === "Yes" && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: "2px 8px",
+                                  borderRadius: 20,
+                                  background: "hsl(38 92% 44% / 0.12)",
+                                  color: "hsl(38 92% 44%)",
+                                }}
+                              >
+                                backdated
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2628,10 +5635,13 @@ function PhotosManager({ toast }: any) {
 // ── News Manager ──────────────────────────────────────────────────────────────
 function NewsManager({ toast }: any) {
   const [items, setItems] = useState<any[]>([]);
+  const [drafts, setDrafts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingItem, setEditingItem] = useState<any | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [showDrafts, setShowDrafts] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const blank = {
@@ -2643,20 +5653,44 @@ function NewsManager({ toast }: any) {
     registrationCutoff: "",
     paymentLink: "",
     imageUrl: "",
+    status: "published",
   };
   const [form, setForm] = useState(blank);
   const f = (k: string) => (e: any) =>
     setForm((p) => ({ ...p, [k]: e.target.value }));
   const isEvent = form.type === "Event";
 
+  // Track whether form has unsaved changes
+  const isDirty =
+    form.title !== blank.title ||
+    form.date !== blank.date ||
+    form.desc !== blank.desc ||
+    form.imageUrl !== blank.imageUrl;
+
   const load = async () => {
     setLoading(true);
-    setItems(await fetchCollection("admin_news"));
+    const all = await fetchCollection("admin_news");
+    setItems(all.filter((i: any) => i.status !== "draft"));
+    setDrafts(all.filter((i: any) => i.status === "draft"));
     setLoading(false);
   };
+
   useEffect(() => {
     load();
   }, []);
+
+  // ── Cancel with confirmation if form has changes ──────────────────────────
+  const handleCancel = () => {
+    if (isDirty) {
+      const confirmed = window.confirm(
+        "You have unsaved changes. Are you sure you want to discard them?",
+      );
+      if (!confirmed) return;
+    }
+    setShowForm(false);
+    setEditingItem(null);
+    setForm(blank);
+  };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2701,25 +5735,181 @@ function NewsManager({ toast }: any) {
     }
   };
 
+  // ── Publish ───────────────────────────────────────────────────────────────
   const save = async () => {
     if (!form.title || !form.date)
       return toast("Fill in Title and Date", "error");
-    await addToCollection("admin_news", { ...form, createdAt: Date.now() });
-    toast("Published ✓", "success");
+    const payload = { ...form, status: "published", createdAt: Date.now() };
+    if (editingItem) {
+      await updateInCollection("admin_news", editingItem.id, payload);
+      toast("Updated ✓", "success");
+    } else {
+      await addToCollection("admin_news", payload);
+      toast("Published ✓", "success");
+    }
     setShowForm(false);
+    setEditingItem(null);
     setForm(blank);
     load();
   };
 
+  // ── Save as Draft ─────────────────────────────────────────────────────────
+  const saveDraft = async () => {
+    if (!form.title) return toast("Add a title before saving draft", "error");
+    const payload = { ...form, status: "draft", createdAt: Date.now() };
+    if (editingItem) {
+      await updateInCollection("admin_news", editingItem.id, payload);
+      toast("Draft updated ✓", "success");
+    } else {
+      await addToCollection("admin_news", payload);
+      toast("Saved as draft ✓", "success");
+    }
+    setShowForm(false);
+    setEditingItem(null);
+    setForm(blank);
+    load();
+  };
+
+  // ── Publish a draft ───────────────────────────────────────────────────────
+  const publishDraft = async (item: any) => {
+    await updateInCollection("admin_news", item.id, {
+      ...item,
+      status: "published",
+    });
+    toast("Published ✓", "success");
+    load();
+  };
+
+  // ── Edit ──────────────────────────────────────────────────────────────────
+  const startEdit = (item: any) => {
+    setEditingItem(item);
+    setForm({
+      title: item.title || "",
+      type: item.type || "News",
+      date: item.date || "",
+      desc: item.desc || "",
+      registrationLink: item.registrationLink || "",
+      registrationCutoff: item.registrationCutoff || "",
+      paymentLink: item.paymentLink || "",
+      imageUrl: item.imageUrl || "",
+      status: item.status || "published",
+    });
+    setShowForm(true);
+    setShowDrafts(false);
+  };
+
+  // ── Delete ────────────────────────────────────────────────────────────────
   const del = async (id: string) => {
-    if (!confirm("Delete?")) return;
+    if (!confirm("Delete this post permanently?")) return;
     await deleteFromCollection("admin_news", id);
     toast("Deleted", "info");
     load();
   };
 
+  const renderItem = (item: any, isDraft = false) => (
+    <div
+      key={item.id}
+      style={{
+        background: "hsl(var(--secondary))",
+        border: `1px solid ${isDraft ? "hsl(38 92% 44% / 0.4)" : "hsl(var(--border))"}`,
+        borderRadius: 10,
+        padding: "12px 16px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 10,
+      }}
+    >
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        {item.imageUrl && (
+          <img
+            src={item.imageUrl}
+            alt={item.title}
+            style={{
+              width: 56,
+              height: 40,
+              objectFit: "cover",
+              borderRadius: 6,
+              flexShrink: 0,
+            }}
+          />
+        )}
+        <div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{item.title}</span>
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "2px 8px",
+                borderRadius: 20,
+                background:
+                  item.type === "Event"
+                    ? "hsl(20 100% 50% / 0.15)"
+                    : "hsl(var(--secondary))",
+                color:
+                  item.type === "Event"
+                    ? "hsl(20 100% 50%)"
+                    : "hsl(var(--muted-foreground))",
+                border: "1px solid hsl(var(--border))",
+              }}
+            >
+              {item.type}
+            </span>
+            {isDraft && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: 20,
+                  background: "hsl(38 92% 44% / 0.12)",
+                  color: "hsl(38 92% 44%)",
+                  border: "1px solid hsl(38 92% 44% / 0.3)",
+                }}
+              >
+                ✏️ Draft
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "hsl(var(--muted-foreground))",
+              marginTop: 3,
+            }}
+          >
+            {item.date}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {isDraft && (
+          <Btn variant="primary" size="sm" onClick={() => publishDraft(item)}>
+            🚀 Publish
+          </Btn>
+        )}
+        <Btn variant="subtle" size="sm" onClick={() => startEdit(item)}>
+          ✏️ Edit
+        </Btn>
+        <Btn variant="danger" size="sm" onClick={() => del(item.id)}>
+          Delete
+        </Btn>
+      </div>
+    </div>
+  );
+
   return (
     <div>
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -2732,19 +5922,75 @@ function NewsManager({ toast }: any) {
       >
         <div style={{ fontWeight: 700, fontSize: 15 }}>
           News & Events ({items.length})
+          {drafts.length > 0 && (
+            <button
+              onClick={() => setShowDrafts((v) => !v)}
+              style={{
+                marginLeft: 10,
+                fontSize: 11,
+                fontWeight: 700,
+                padding: "2px 10px",
+                borderRadius: 20,
+                background: "hsl(38 92% 44% / 0.12)",
+                color: "hsl(38 92% 44%)",
+                border: "1px solid hsl(38 92% 44% / 0.3)",
+                cursor: "pointer",
+              }}
+            >
+              ✏️ {drafts.length} Draft{drafts.length !== 1 ? "s" : ""}
+            </button>
+          )}
         </div>
         <Btn
           variant="primary"
           size="sm"
           onClick={() => {
-            setShowForm(!showForm);
-            setForm(blank);
+            if (showForm) {
+              handleCancel();
+            } else {
+              setEditingItem(null);
+              setForm(blank);
+              setShowForm(true);
+            }
           }}
         >
           {showForm ? "✕ Cancel" : "+ Add Post"}
         </Btn>
       </div>
 
+      {/* Drafts section */}
+      <AnimatePresence>
+        {showDrafts && drafts.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            style={{
+              marginBottom: 20,
+              padding: "14px 16px",
+              background: "hsl(38 92% 44% / 0.05)",
+              border: "1px solid hsl(38 92% 44% / 0.25)",
+              borderRadius: 12,
+            }}
+          >
+            <div
+              style={{
+                fontWeight: 700,
+                fontSize: 12,
+                color: "hsl(38 92% 44%)",
+                marginBottom: 10,
+              }}
+            >
+              ✏️ Saved Drafts
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {drafts.map((item) => renderItem(item, true))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Form */}
       <AnimatePresence>
         {showForm && (
           <motion.div
@@ -2759,6 +6005,21 @@ function NewsManager({ toast }: any) {
               marginBottom: 20,
             }}
           >
+            <div
+              style={{
+                fontWeight: 700,
+                fontSize: 14,
+                marginBottom: 16,
+                color: "hsl(var(--foreground))",
+              }}
+            >
+              {editingItem
+                ? editingItem.status === "draft"
+                  ? "✏️ Edit Draft"
+                  : "✏️ Edit Post"
+                : "➕ New Post"}
+            </div>
+
             <div
               style={{
                 display: "grid",
@@ -2794,6 +6055,7 @@ function NewsManager({ toast }: any) {
                 />
               </div>
             </div>
+
             <div style={{ marginBottom: 14 }}>
               <label style={lbl}>Description</label>
               <textarea
@@ -2803,6 +6065,7 @@ function NewsManager({ toast }: any) {
                 onChange={f("desc")}
               />
             </div>
+
             <div style={{ marginBottom: 14 }}>
               <label style={lbl}>Image (optional)</label>
               {form.imageUrl ? (
@@ -2892,6 +6155,7 @@ function NewsManager({ toast }: any) {
                 </div>
               )}
             </div>
+
             {isEvent && (
               <div
                 style={{
@@ -2949,11 +6213,16 @@ function NewsManager({ toast }: any) {
                 </div>
               </div>
             )}
-            <div style={{ display: "flex", gap: 10 }}>
+
+            {/* Action buttons */}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <Btn variant="primary" onClick={save} disabled={uploading}>
-                Publish
+                🚀 {editingItem?.status === "draft" ? "Publish Now" : "Publish"}
               </Btn>
-              <Btn variant="subtle" onClick={() => setShowForm(false)}>
+              <Btn variant="subtle" onClick={saveDraft} disabled={uploading}>
+                💾 Save as Draft
+              </Btn>
+              <Btn variant="ghost" onClick={handleCancel}>
                 Cancel
               </Btn>
             </div>
@@ -2961,125 +6230,18 @@ function NewsManager({ toast }: any) {
         )}
       </AnimatePresence>
 
+      {/* Published posts list */}
       {loading ? (
         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
           Loading…
         </div>
       ) : items.length === 0 ? (
         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
-          No posts yet.
+          No published posts yet.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {items.map((item) => (
-            <div
-              key={item.id}
-              style={{
-                background: "hsl(var(--secondary))",
-                border: "1px solid hsl(var(--border))",
-                borderRadius: 10,
-                padding: "12px 16px",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: 10,
-              }}
-            >
-              <div
-                style={{ display: "flex", gap: 12, alignItems: "flex-start" }}
-              >
-                {item.imageUrl && (
-                  <img
-                    src={item.imageUrl}
-                    alt={item.title}
-                    style={{
-                      width: 56,
-                      height: 40,
-                      objectFit: "cover",
-                      borderRadius: 6,
-                      flexShrink: 0,
-                    }}
-                  />
-                )}
-                <div>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <span style={{ fontWeight: 700, fontSize: 14 }}>
-                      {item.title}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        padding: "2px 8px",
-                        borderRadius: 20,
-                        background:
-                          item.type === "Event"
-                            ? "hsl(20 100% 50% / 0.15)"
-                            : "hsl(var(--secondary))",
-                        color:
-                          item.type === "Event"
-                            ? "hsl(20 100% 50%)"
-                            : "hsl(var(--muted-foreground))",
-                        border: "1px solid hsl(var(--border))",
-                      }}
-                    >
-                      {item.type}
-                    </span>
-                    {item.registrationLink && (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          padding: "2px 8px",
-                          borderRadius: 20,
-                          background: "hsl(142 72% 37% / 0.12)",
-                          color: "hsl(142 72% 37%)",
-                        }}
-                      >
-                        🎟 Registration
-                      </span>
-                    )}
-                    {item.paymentLink && (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          padding: "2px 8px",
-                          borderRadius: 20,
-                          background: "hsl(217 91% 53% / 0.12)",
-                          color: "hsl(217 91% 53%)",
-                        }}
-                      >
-                        💳 Payment
-                      </span>
-                    )}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "hsl(var(--muted-foreground))",
-                      marginTop: 3,
-                    }}
-                  >
-                    {item.date}
-                    {item.registrationCutoff &&
-                      ` · Cutoff: ${item.registrationCutoff}`}
-                  </div>
-                </div>
-              </div>
-              <Btn variant="danger" size="sm" onClick={() => del(item.id)}>
-                Delete
-              </Btn>
-            </div>
-          ))}
+          {items.map((item) => renderItem(item, false))}
         </div>
       )}
     </div>
@@ -3092,11 +6254,58 @@ function MembersManager({ toast }: any) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
-  const TIER_CONFIG = {
-    basic: { color: "#9ca3af", label: "Basic" },
-    silver: { color: "#e2e8f0", label: "Silver" },
-    gold: { color: "hsl(38 92% 50%)", label: "Gold" },
+
+  // ── Tier config ─────────────────────────────────────────────────────────────
+  const TIER_CONFIG: Record<
+    string,
+    { color: string; label: string; group: string }
+  > = {
+    // Under 18
+    u18: { color: "hsl(263 85% 58%)", label: "Under 18", group: "u18" },
+    // Hybrid
+    hybrid_12m: {
+      color: "hsl(217 91% 53%)",
+      label: "Hybrid 12-month",
+      group: "hybrid",
+    },
+    hybrid_6m: {
+      color: "hsl(217 91% 53%)",
+      label: "Hybrid 6-month",
+      group: "hybrid",
+    },
+    hybrid_m2m: {
+      color: "hsl(217 91% 53%)",
+      label: "Hybrid M-to-M",
+      group: "hybrid",
+    },
+    // Unlimited
+    unlimited_12m: {
+      color: "hsl(20 100% 50%)",
+      label: "Unlimited 12-month",
+      group: "unlimited",
+    },
+    unlimited_6m: {
+      color: "hsl(20 100% 50%)",
+      label: "Unlimited 6-month",
+      group: "unlimited",
+    },
+    unlimited_m2m: {
+      color: "hsl(20 100% 50%)",
+      label: "Unlimited M-to-M",
+      group: "unlimited",
+    },
+    // Legacy fallbacks — safe to keep so old data doesn't break
+    basic: {
+      color: "hsl(var(--muted-foreground))",
+      label: "Basic (legacy)",
+      group: "legacy",
+    },
+    silver: { color: "#e2e8f0", label: "Silver (legacy)", group: "legacy" },
+    gold: { color: "hsl(38 92% 50%)", label: "Gold (legacy)", group: "legacy" },
   };
+
+  const getTierCfg = (tier: string) => TIER_CONFIG[tier] ?? TIER_CONFIG.basic;
+
   const loadMembers = async () => {
     setLoading(true);
     try {
@@ -3109,13 +6318,16 @@ function MembersManager({ toast }: any) {
             membership: val.membership ?? "basic",
           }),
         );
-        setMembers(list.sort((a, b) => b.createdAt - a.createdAt));
+        setMembers(
+          list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
+        );
       }
     } catch {
       toast("Failed to load members", "error");
     }
     setLoading(false);
   };
+
   useEffect(() => {
     loadMembers();
   }, []);
@@ -3127,7 +6339,7 @@ function MembersManager({ toast }: any) {
       setMembers((prev) =>
         prev.map((m) => (m.uid === uid ? { ...m, membership: tier } : m)),
       );
-      toast(`Tier updated to ${tier} ✓`, "success");
+      toast(`Tier updated to ${getTierCfg(tier).label} ✓`, "success");
     } catch {
       toast("Update failed", "error");
     }
@@ -3140,8 +6352,29 @@ function MembersManager({ toast }: any) {
       m.email?.toLowerCase().includes(search.toLowerCase()),
   );
 
+  // ── Group counts for summary pills ─────────────────────────────────────────
+  const groupCounts = {
+    u18: members.filter((m) => m.membership === "u18").length,
+    hybrid: members.filter((m) => (m.membership ?? "").startsWith("hybrid"))
+      .length,
+    unlimited: members.filter((m) =>
+      (m.membership ?? "").startsWith("unlimited"),
+    ).length,
+    legacy: members.filter((m) =>
+      ["basic", "silver", "gold"].includes(m.membership ?? "basic"),
+    ).length,
+  };
+
+  const GROUP_PILLS = [
+    { key: "u18", label: "Under 18", color: "hsl(263 85% 58%)" },
+    { key: "hybrid", label: "Hybrid", color: "hsl(217 91% 53%)" },
+    { key: "unlimited", label: "Unlimited", color: "hsl(20 100% 50%)" },
+    { key: "legacy", label: "Legacy", color: "hsl(var(--muted-foreground))" },
+  ];
+
   return (
     <div>
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -3152,7 +6385,6 @@ function MembersManager({ toast }: any) {
           gap: 10,
         }}
       >
-        {/* FIX: label updated to "App Users" */}
         <div style={{ fontWeight: 700, fontSize: 15 }}>
           👥 App Users ({members.length})
         </div>
@@ -3168,32 +6400,43 @@ function MembersManager({ toast }: any) {
           </Btn>
         </div>
       </div>
+
+      {/* Group summary pills */}
       <div
-        style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}
+        style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}
       >
-        {(["basic", "silver", "gold"] as const).map((t) => {
-          const count = members.filter(
-            (m) => (m.membership ?? "basic") === t,
-          ).length;
-          const cfg = TIER_CONFIG[t];
-          return (
-            <div
-              key={t}
-              style={{
-                background: `${cfg.color}15`,
-                border: `1px solid ${cfg.color}40`,
-                borderRadius: 8,
-                padding: "6px 14px",
-                fontSize: 12,
-                fontWeight: 700,
-                color: cfg.color,
-              }}
-            >
-              {cfg.label}: {count}
-            </div>
-          );
-        })}
+        <div
+          style={{
+            background: "hsl(var(--secondary))",
+            border: "1px solid hsl(var(--border))",
+            borderRadius: 8,
+            padding: "6px 14px",
+            fontSize: 12,
+            fontWeight: 700,
+            color: "hsl(var(--muted-foreground))",
+          }}
+        >
+          Total: {members.length}
+        </div>
+        {GROUP_PILLS.map((g) => (
+          <div
+            key={g.key}
+            style={{
+              background: `${g.color}15`,
+              border: `1px solid ${g.color}40`,
+              borderRadius: 8,
+              padding: "6px 14px",
+              fontSize: 12,
+              fontWeight: 700,
+              color: g.color,
+            }}
+          >
+            {g.label}: {groupCounts[g.key as keyof typeof groupCounts]}
+          </div>
+        ))}
       </div>
+
+      {/* Member list */}
       {loading ? (
         <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
           Loading members…
@@ -3205,10 +6448,7 @@ function MembersManager({ toast }: any) {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.map((m) => {
-            const cfg =
-              TIER_CONFIG[
-                (m.membership ?? "basic") as keyof typeof TIER_CONFIG
-              ];
+            const cfg = getTierCfg(m.membership ?? "basic");
             return (
               <div
                 key={m.uid}
@@ -3233,6 +6473,7 @@ function MembersManager({ toast }: any) {
                       display: "flex",
                       alignItems: "center",
                       gap: 8,
+                      flexWrap: "wrap",
                     }}
                   >
                     {m.name || "Unnamed"}
@@ -3256,10 +6497,12 @@ function MembersManager({ toast }: any) {
                       marginTop: 2,
                     }}
                   >
-                    {m.email} · {m.points ?? 0} pts · {m.checkIns?.length ?? 0}{" "}
+                    {m.email} · {m.points ?? 0} pts ·{" "}
+                    {Array.isArray(m.checkIns) ? m.checkIns.length : 0}{" "}
                     check-ins · 🎟 {m.classCredits ?? 0} credits
                   </div>
                 </div>
+
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <select
                     value={m.membership ?? "basic"}
@@ -3274,9 +6517,36 @@ function MembersManager({ toast }: any) {
                       color: cfg.color,
                     }}
                   >
-                    <option value="basic">Basic (Free)</option>
-                    <option value="silver">Silver (R288/mo)</option>
-                    <option value="gold">Gold (R588/mo)</option>
+                    {/* Active tiers */}
+                    <optgroup label="Under 18">
+                      <option value="u18">Under 18</option>
+                    </optgroup>
+                    <optgroup label="Hybrid">
+                      <option value="hybrid_12m">Hybrid — 12 month</option>
+                      <option value="hybrid_6m">Hybrid — 6 month</option>
+                      <option value="hybrid_m2m">
+                        Hybrid — Month to month
+                      </option>
+                    </optgroup>
+                    <optgroup label="Unlimited">
+                      <option value="unlimited_12m">
+                        Unlimited — 12 month
+                      </option>
+                      <option value="unlimited_6m">Unlimited — 6 month</option>
+                      <option value="unlimited_m2m">
+                        Unlimited — Month to month
+                      </option>
+                    </optgroup>
+                    {/* Legacy fallback — only shown if member currently has it */}
+                    {["basic", "silver", "gold"].includes(
+                      m.membership ?? "basic",
+                    ) && (
+                      <optgroup label="Legacy">
+                        <option value="basic">Basic (legacy)</option>
+                        <option value="silver">Silver (legacy)</option>
+                        <option value="gold">Gold (legacy)</option>
+                      </optgroup>
+                    )}
                   </select>
                   {saving === m.uid && (
                     <span
@@ -3792,8 +7062,446 @@ function PackagesManager({ toast }: any) {
   );
 }
 
+// =============================================================================
+//  PendingPaymentsManager
+// =============================================================================
+function PendingPaymentsManager({ toast }: any) {
+  const [pending, setPending] = useState<any[]>([]);
+  const [members, setMembers] = useState<Record<string, any>>({});
+  const [loading, setLoading] = useState(true);
+  const [releasing, setReleasing] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "stuck">("all");
+
+  // A booking is "stuck" if it's been pending for more than 15 minutes
+  // (your cleanup function should have fired, but sometimes it doesn't)
+  const STUCK_THRESHOLD = 15 * 60 * 1000;
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      // Load all mk2_bookings and filter for pending_payment
+      const [bookSnap, membersSnap] = await Promise.all([
+        get(ref(db, "mk2_bookings")),
+        get(ref(db, "mk2_users")),
+      ]);
+
+      const membersMap: Record<string, any> = {};
+      if (membersSnap.exists()) {
+        Object.entries(membersSnap.val()).forEach(([uid, v]: [string, any]) => {
+          membersMap[uid] = v;
+        });
+      }
+      setMembers(membersMap);
+
+      if (!bookSnap.exists()) {
+        setPending([]);
+        setLoading(false);
+        return;
+      }
+
+      const list: any[] = [];
+      Object.entries(bookSnap.val()).forEach(([key, v]: [string, any]) => {
+        if (v.status === "pending_payment") {
+          list.push({ key, ...v });
+        }
+      });
+
+      // Sort newest first
+      list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      setPending(list);
+    } catch {
+      toast("Failed to load pending payments", "error");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  // ── Manually release a stuck pending booking ───────────────────────────────
+  const releaseBooking = async (item: any) => {
+    if (
+      !confirm(
+        `Release stuck booking for ${members[item.userId]?.name ?? "this member"} on ${item.className} ${item.dateKey}? This will free up the spot.`,
+      )
+    )
+      return;
+    setReleasing(item.key);
+    try {
+      // Remove from mk2_bookings
+      await remove(ref(db, `mk2_bookings/${item.key}`));
+
+      // Also remove from class_bookings if it was written there
+      const bk = `${item.className.replace(/\s+/g, "_").toUpperCase()}_${item.dateKey}`;
+      const cbSnap = await get(ref(db, `class_bookings/${bk}/${item.userId}`));
+      if (cbSnap.exists()) {
+        await remove(ref(db, `class_bookings/${bk}/${item.userId}`));
+      }
+
+      // Notify the member
+      await Promise.resolve(
+        push(ref(db, `users/${item.userId}/notifications`), {
+          title: "Booking Released",
+          body: `Your pending booking for ${item.className} on ${item.dateDisplay ?? item.dateKey} was released. Please try booking again.`,
+          type: "class_cancelled",
+          read: false,
+          createdAt: Date.now(),
+        }),
+      );
+
+      toast("Booking released ✓ — member notified", "success");
+      setPending((prev) => prev.filter((p) => p.key !== item.key));
+    } catch {
+      toast("Release failed — try again", "error");
+    }
+    setReleasing(null);
+  };
+
+  const stuckCount = pending.filter(
+    (p) => Date.now() - (p.createdAt ?? 0) > STUCK_THRESHOLD,
+  ).length;
+
+  const filtered =
+    filter === "stuck"
+      ? pending.filter((p) => Date.now() - (p.createdAt ?? 0) > STUCK_THRESHOLD)
+      : pending;
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+        Pending Payments
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 20,
+        }}
+      >
+        Non-members who started checkout but haven't completed payment. Spots
+        are reserved for 15 minutes then auto-released.
+      </div>
+
+      {/* Summary cards */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))",
+          gap: 10,
+          marginBottom: 20,
+        }}
+      >
+        {[
+          { label: "Total pending", val: pending.length, accent: false },
+          { label: "Stuck (>15 min)", val: stuckCount, accent: stuckCount > 0 },
+        ].map((s) => (
+          <div
+            key={s.label}
+            style={{
+              background: "hsl(var(--secondary))",
+              border: `1px solid ${s.accent ? "hsl(0 84% 51% / 0.4)" : "hsl(var(--border))"}`,
+              borderRadius: 12,
+              padding: "14px 18px",
+              borderLeft: s.accent ? "3px solid hsl(0 84% 51%)" : undefined,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 26,
+                fontWeight: 700,
+                color: s.accent ? "hsl(0 84% 51%)" : "hsl(var(--foreground))",
+                lineHeight: 1,
+              }}
+            >
+              {loading ? "—" : s.val}
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "hsl(var(--muted-foreground))",
+                marginTop: 6,
+              }}
+            >
+              {s.label}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Info box */}
+      <div
+        style={{
+          marginBottom: 20,
+          padding: "10px 14px",
+          background: "hsl(217 91% 53% / 0.08)",
+          border: "1px solid hsl(217 91% 53% / 0.2)",
+          borderRadius: 8,
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          lineHeight: 1.7,
+        }}
+      >
+        ℹ️ Your Firebase Function auto-releases spots after 15 minutes. Only
+        manually release if a member reports being stuck or the function failed
+        to fire.
+      </div>
+
+      {/* Filter + refresh */}
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          marginBottom: 16,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        {(["all", "stuck"] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            style={{
+              padding: "5px 14px",
+              borderRadius: 20,
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+              background:
+                filter === f ? "hsl(20 100% 50%)" : "hsl(var(--secondary))",
+              color: filter === f ? "#000" : "hsl(var(--foreground))",
+              border: filter === f ? "none" : "1px solid hsl(var(--border))",
+              fontFamily: "var(--font-body)",
+            }}
+          >
+            {f === "all"
+              ? `All (${pending.length})`
+              : `⚠ Stuck (${stuckCount})`}
+          </button>
+        ))}
+        <Btn variant="subtle" size="sm" onClick={load}>
+          ↻ Refresh
+        </Btn>
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+          Loading…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div
+          style={{
+            color: "hsl(var(--muted-foreground))",
+            fontSize: 13,
+            padding: "20px 0",
+          }}
+        >
+          {filter === "stuck"
+            ? "No stuck bookings — all clear ✓"
+            : "No pending payments right now."}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtered.map((item) => {
+            const member = members[item.userId];
+            const ageMs = Date.now() - (item.createdAt ?? 0);
+            const isStuck = ageMs > STUCK_THRESHOLD;
+            const minsLeft = Math.max(0, 15 - Math.floor(ageMs / 60000));
+
+            return (
+              <div
+                key={item.key}
+                style={{
+                  background: "hsl(var(--secondary))",
+                  border: `1px solid ${isStuck ? "hsl(0 84% 51% / 0.35)" : "hsl(var(--border))"}`,
+                  borderRadius: 10,
+                  padding: "14px 16px",
+                  borderLeft: `3px solid ${isStuck ? "hsl(0 84% 51%)" : "hsl(38 92% 44%)"}`,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    flexWrap: "wrap",
+                    gap: 10,
+                  }}
+                >
+                  <div>
+                    {/* Member info */}
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: 14,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        marginBottom: 4,
+                      }}
+                    >
+                      {member?.name ?? item.userId}
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: 20,
+                          background: isStuck
+                            ? "hsl(0 84% 51% / 0.12)"
+                            : "hsl(38 92% 44% / 0.12)",
+                          color: isStuck ? "hsl(0 84% 51%)" : "hsl(38 92% 44%)",
+                        }}
+                      >
+                        {isStuck ? "⚠ Stuck" : `⏳ ${minsLeft} min left`}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "hsl(var(--muted-foreground))",
+                        marginBottom: 2,
+                      }}
+                    >
+                      {member?.email ?? "—"}
+                    </div>
+
+                    {/* Class info */}
+                    <div
+                      style={{
+                        marginTop: 8,
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 16,
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.08em",
+                            color: "hsl(var(--muted-foreground))",
+                            marginBottom: 2,
+                          }}
+                        >
+                          Class
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>
+                          {item.className}
+                        </div>
+                      </div>
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.08em",
+                            color: "hsl(var(--muted-foreground))",
+                            marginBottom: 2,
+                          }}
+                        >
+                          Date
+                        </div>
+                        <div style={{ fontSize: 13 }}>
+                          {item.dateDisplay ?? item.dateKey}
+                        </div>
+                      </div>
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.08em",
+                            color: "hsl(var(--muted-foreground))",
+                            marginBottom: 2,
+                          }}
+                        >
+                          Time
+                        </div>
+                        <div style={{ fontSize: 13 }}>{item.time ?? "—"}</div>
+                      </div>
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.08em",
+                            color: "hsl(var(--muted-foreground))",
+                            marginBottom: 2,
+                          }}
+                        >
+                          Amount
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 700,
+                            color: "hsl(20 100% 50%)",
+                          }}
+                        >
+                          R{item.price ?? "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.08em",
+                            color: "hsl(var(--muted-foreground))",
+                            marginBottom: 2,
+                          }}
+                        >
+                          Started
+                        </div>
+                        <div style={{ fontSize: 13 }}>
+                          {timeAgo(item.createdAt ?? 0)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    {isStuck && (
+                      <Btn
+                        variant="danger"
+                        size="sm"
+                        disabled={releasing === item.key}
+                        onClick={() => releaseBooking(item)}
+                      >
+                        {releasing === item.key
+                          ? "Releasing…"
+                          : "🔓 Release Spot"}
+                      </Btn>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Manual Check-In Manager ───────────────────────────────────────────────────
-// FIX: All state and logic moved inside the component
+// Adds: Backdate Check-In tab so staff can log historical visits for members.
 function ManualCheckInManager({ toast }: any) {
   const [members, setMembers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3802,6 +7510,18 @@ function ManualCheckInManager({ toast }: any) {
   const [adjustingPoints, setAdjustingPoints] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [recentCheckIns, setRecentCheckIns] = useState<any[]>([]);
+  const [subTab, setSubTab] = useState<"manual" | "backdate">("manual");
+
+  // Backdate state
+  const [bdUid, setBdUid] = useState("");
+  const [bdDate, setBdDate] = useState("");
+  const [bdTime, setBdTime] = useState("07:00");
+  const [bdSubmitting, setBdSubmitting] = useState(false);
+  const [bdPreview, setBdPreview] = useState<{
+    alreadyExists: boolean;
+    newTotal: number;
+    milestone: boolean;
+  } | null>(null);
 
   const today = new Date().toLocaleDateString("en-ZA", {
     year: "numeric",
@@ -3816,6 +7536,7 @@ function ManualCheckInManager({ toast }: any) {
       return dateStr === today;
     }) ?? false;
 
+  // ── Load members list once on mount ───────────────────────────────────────
   const loadMembers = async () => {
     setLoading(true);
     try {
@@ -3839,10 +7560,18 @@ function ManualCheckInManager({ toast }: any) {
     setLoading(false);
   };
 
-  const loadRecentCheckIns = async () => {
-    try {
-      const snap = await get(ref(db, "mk2_users"));
-      if (!snap.exists()) return;
+  useEffect(() => {
+    loadMembers();
+  }, []);
+
+  // ── Real-time listener for today's check-ins ──────────────────────────────
+  // Updates instantly when any member checks in — no refresh button needed
+  useEffect(() => {
+    return onValue(ref(db, "mk2_users"), (snap) => {
+      if (!snap.exists()) {
+        setRecentCheckIns([]);
+        return;
+      }
       const list: any[] = [];
       Object.entries(snap.val()).forEach(([uid, val]: [string, any]) => {
         const checkIns = Array.isArray(val.checkIns) ? val.checkIns : [];
@@ -3856,16 +7585,39 @@ function ManualCheckInManager({ toast }: any) {
         }
       });
       setRecentCheckIns(list.sort((a, b) => a.time.localeCompare(b.time)));
-    } catch {
-      /* non-critical */
-    }
-  };
-
-  useEffect(() => {
-    loadMembers();
-    loadRecentCheckIns();
+    });
   }, []);
 
+  // ── Recompute backdate preview whenever member or date changes ─────────────
+  useEffect(() => {
+    if (!bdUid || !bdDate) {
+      setBdPreview(null);
+      return;
+    }
+    const member = members.find((m) => m.uid === bdUid);
+    if (!member) {
+      setBdPreview(null);
+      return;
+    }
+    const [y, mo, d] = bdDate.split("-");
+    const localeDateStr = `${d}/${mo}/${y}`;
+    const checkIns: any[] = Array.isArray(member.checkIns)
+      ? member.checkIns
+      : [];
+    const alreadyExists = checkIns.some(
+      (ci: any) => ci?.date === localeDateStr,
+    );
+    const newTotal = alreadyExists ? checkIns.length : checkIns.length + 1;
+    const oldMilestones = Math.floor(checkIns.length / 40);
+    const newMilestones = Math.floor(newTotal / 40);
+    setBdPreview({
+      alreadyExists,
+      newTotal,
+      milestone: newMilestones > oldMilestones,
+    });
+  }, [bdUid, bdDate, members]);
+
+  // ── Manual check-in ───────────────────────────────────────────────────────
   const handleManualCheckIn = async () => {
     if (!selectedUid) return toast("Select a member first", "error");
     if (alreadyCheckedIn)
@@ -3926,13 +7678,14 @@ function ManualCheckInManager({ toast }: any) {
       );
       setSelectedUid("");
       setPointsBonus("10");
-      loadRecentCheckIns();
+      // No need to call loadRecentCheckIns — onValue listener updates automatically
     } catch {
       toast("Check-in failed — try again", "error");
     }
     setSubmitting(false);
   };
 
+  // ── Adjust points ─────────────────────────────────────────────────────────
   const handleAdjustPoints = async () => {
     if (!selectedUid || !selectedMember) return;
     const delta = parseInt(pointsBonus);
@@ -3959,6 +7712,97 @@ function ManualCheckInManager({ toast }: any) {
     setAdjustingPoints(false);
   };
 
+  // ── Backdate submit ───────────────────────────────────────────────────────
+  const handleBackdate = async () => {
+    if (!bdUid) return toast("Select a member", "error");
+    if (!bdDate) return toast("Pick a date", "error");
+    if (bdPreview?.alreadyExists)
+      return toast("Member already has a check-in on that date", "error");
+
+    const picked = new Date(bdDate + "T00:00:00");
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+    if (picked > todayDate)
+      return toast("Cannot backdate to a future date", "error");
+
+    setBdSubmitting(true);
+    try {
+      const memberSnap = await get(ref(db, `mk2_users/${bdUid}`));
+      if (!memberSnap.exists()) throw new Error("Member not found");
+      const val = memberSnap.val();
+
+      const checkIns: any[] = Array.isArray(val.checkIns) ? val.checkIns : [];
+
+      const [y, mo, d] = bdDate.split("-");
+      const localeDateStr = `${d}/${mo}/${y}`;
+
+      if (checkIns.some((ci: any) => ci?.date === localeDateStr)) {
+        toast("That date already exists for this member", "error");
+        setBdSubmitting(false);
+        return;
+      }
+
+      const newEntry = { date: localeDateStr, time: bdTime, backdated: true };
+      const newCheckIns = [...checkIns, newEntry].sort((a, b) => {
+        const parse = (s: string) => {
+          const parts = s.split("/");
+          return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).getTime();
+        };
+        return parse(a.date) - parse(b.date);
+      });
+
+      const newTotal = newCheckIns.length;
+      const oldMilestones = Math.floor(checkIns.length / 40);
+      const newMilestones = Math.floor(newTotal / 40);
+      const milestoneReached = newMilestones > oldMilestones;
+      const newPoints = (val.points ?? 0) + 10;
+
+      await set(ref(db, `mk2_users/${bdUid}/checkIns`), newCheckIns);
+      await set(ref(db, `mk2_users/${bdUid}/points`), newPoints);
+
+      if (milestoneReached) {
+        const code = `MK2R-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+        const earnedAt = Date.now();
+        const expiresAt = earnedAt + 60 * 24 * 60 * 60 * 1000;
+        await push(ref(db, `mk2_users/${bdUid}/rewards`), {
+          status: "pending",
+          earnedAt,
+          expiresAt,
+          redemptionCode: code,
+          checkInMilestone: newMilestones * 40,
+          type: null,
+          note: `Backdated milestone — check-in logged for ${localeDateStr}`,
+        });
+        toast(
+          `✓ Backdated to ${localeDateStr} — 🎉 milestone hit, reward created!`,
+          "success",
+        );
+      } else {
+        toast(
+          `✓ Check-in backdated to ${localeDateStr} for ${members.find((m) => m.uid === bdUid)?.name} (${newTotal} total)`,
+          "success",
+        );
+      }
+
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.uid === bdUid
+            ? { ...m, checkIns: newCheckIns, points: newPoints }
+            : m,
+        ),
+      );
+      setBdUid("");
+      setBdDate("");
+      setBdTime("07:00");
+      setBdPreview(null);
+    } catch {
+      toast("Backdate failed — try again", "error");
+    }
+    setBdSubmitting(false);
+  };
+
+  const bdMember = members.find((m) => m.uid === bdUid) ?? null;
+
   return (
     <div>
       <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
@@ -3971,144 +7815,476 @@ function ManualCheckInManager({ toast }: any) {
           marginBottom: 20,
         }}
       >
-        Override for when members forget to check in via app.
+        Override for when members forget to check in via app, or backdate
+        historical visits.
       </div>
 
+      {/* Sub-tab switcher */}
       <div
         style={{
+          display: "flex",
+          gap: 4,
+          padding: 4,
+          borderRadius: 10,
           background: "hsl(var(--secondary))",
-          border: "1px solid hsl(var(--border))",
-          borderRadius: 12,
-          padding: "16px 20px",
+          width: "fit-content",
           marginBottom: 20,
         }}
       >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))",
-            gap: 12,
-            marginBottom: 14,
-          }}
-        >
-          <div style={{ gridColumn: "1/-1" }}>
-            <label style={lbl}>Select Member</label>
-            {loading ? (
-              <div
-                style={{ fontSize: 13, color: "hsl(var(--muted-foreground))" }}
-              >
-                Loading…
-              </div>
-            ) : (
-              <select
-                style={inp}
-                value={selectedUid}
-                onChange={(e) => setSelectedUid(e.target.value)}
-              >
-                <option value="">— Choose member —</option>
-                {members.map((m) => (
-                  <option key={m.uid} value={m.uid}>
-                    {m.name} ({m.email})
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-          <div>
-            <label style={lbl}>Points Bonus / Adjustment</label>
-            <input
-              style={inp}
-              type="number"
-              value={pointsBonus}
-              onChange={(e) => setPointsBonus(e.target.value)}
-              placeholder="10"
-            />
-          </div>
-        </div>
-
-        {selectedMember && (
-          <div
+        {[
+          { id: "manual" as const, label: "✅ Check In Today" },
+          { id: "backdate" as const, label: "📅 Backdate Check-In" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
             style={{
-              fontSize: 12,
-              color: "hsl(var(--muted-foreground))",
-              marginBottom: 14,
-              padding: "8px 12px",
-              background: "hsl(var(--background))",
+              padding: "7px 16px",
               borderRadius: 8,
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "var(--font-body)",
+              fontWeight: 700,
+              fontSize: 12,
+              background: subTab === t.id ? "hsl(20 100% 50%)" : "transparent",
+              color: subTab === t.id ? "#000" : "hsl(var(--muted-foreground))",
             }}
           >
-            <strong style={{ color: "hsl(var(--foreground))" }}>
-              {selectedMember.name}
-            </strong>{" "}
-            — {selectedMember.checkIns.length} check-ins total ·{" "}
-            {selectedMember.points} pts
-            {alreadyCheckedIn && (
-              <span style={{ color: "hsl(38 92% 44%)", marginLeft: 8 }}>
-                ⚠ Already checked in today
-              </span>
-            )}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Btn
-            variant="primary"
-            onClick={handleManualCheckIn}
-            disabled={submitting || !selectedUid || alreadyCheckedIn}
-          >
-            {submitting ? "Checking in…" : "✓ Check In"}
-          </Btn>
-          <Btn
-            variant="subtle"
-            onClick={handleAdjustPoints}
-            disabled={adjustingPoints || !selectedUid}
-          >
-            {adjustingPoints ? "Updating…" : "± Adjust Points"}
-          </Btn>
-          <Btn
-            variant="subtle"
-            size="sm"
-            onClick={() => {
-              loadMembers();
-              loadRecentCheckIns();
-            }}
-          >
-            ↻ Refresh
-          </Btn>
-        </div>
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {recentCheckIns.length > 0 && (
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>
-            Today's Check-Ins ({recentCheckIns.length})
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {recentCheckIns.map((ci) => (
+      {/* ── CHECK IN TODAY ── */}
+      {subTab === "manual" && (
+        <>
+          <div
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: "16px 20px",
+              marginBottom: 20,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))",
+                gap: 12,
+                marginBottom: 14,
+              }}
+            >
+              <div style={{ gridColumn: "1/-1" }}>
+                <label style={lbl}>Select Member</label>
+                {loading ? (
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "hsl(var(--muted-foreground))",
+                    }}
+                  >
+                    Loading…
+                  </div>
+                ) : (
+                  <select
+                    style={inp}
+                    value={selectedUid}
+                    onChange={(e) => setSelectedUid(e.target.value)}
+                  >
+                    <option value="">— Choose member —</option>
+                    {members.map((m) => (
+                      <option key={m.uid} value={m.uid}>
+                        {m.name} ({m.email})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <div>
+                <label style={lbl}>Points Bonus / Adjustment</label>
+                <input
+                  style={inp}
+                  type="number"
+                  value={pointsBonus}
+                  onChange={(e) => setPointsBonus(e.target.value)}
+                  placeholder="10"
+                />
+              </div>
+            </div>
+
+            {selectedMember && (
               <div
-                key={ci.uid}
                 style={{
-                  background: "hsl(var(--secondary))",
-                  border: "1px solid hsl(var(--border))",
+                  fontSize: 12,
+                  color: "hsl(var(--muted-foreground))",
+                  marginBottom: 14,
+                  padding: "8px 12px",
+                  background: "hsl(var(--background))",
                   borderRadius: 8,
-                  padding: "8px 14px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
                 }}
               >
-                <span style={{ fontWeight: 700, fontSize: 13 }}>{ci.name}</span>
+                <strong style={{ color: "hsl(var(--foreground))" }}>
+                  {selectedMember.name}
+                </strong>{" "}
+                — {selectedMember.checkIns.length} check-ins total ·{" "}
+                {selectedMember.points} pts
+                {alreadyCheckedIn && (
+                  <span style={{ color: "hsl(38 92% 44%)", marginLeft: 8 }}>
+                    ⚠ Already checked in today
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <Btn
+                variant="primary"
+                onClick={handleManualCheckIn}
+                disabled={submitting || !selectedUid || alreadyCheckedIn}
+              >
+                {submitting ? "Checking in…" : "✓ Check In"}
+              </Btn>
+              <Btn
+                variant="subtle"
+                onClick={handleAdjustPoints}
+                disabled={adjustingPoints || !selectedUid}
+              >
+                {adjustingPoints ? "Updating…" : "± Adjust Points"}
+              </Btn>
+              <Btn variant="subtle" size="sm" onClick={loadMembers}>
+                ↻ Refresh Members
+              </Btn>
+            </div>
+          </div>
+
+          {/* Today's check-ins — updates in real-time via onValue */}
+          {recentCheckIns.length > 0 && (
+            <div>
+              <div
+                style={{
+                  fontWeight: 700,
+                  fontSize: 13,
+                  marginBottom: 10,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                Today's Check-Ins ({recentCheckIns.length})
                 <span
                   style={{
-                    fontSize: 12,
-                    color: "hsl(var(--muted-foreground))",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: 20,
+                    background: "hsl(142 72% 37% / 0.12)",
+                    color: "hsl(142 72% 37%)",
                   }}
                 >
-                  {ci.time}
+                  ● Live
                 </span>
               </div>
-            ))}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {recentCheckIns.map((ci) => (
+                  <div
+                    key={ci.uid}
+                    style={{
+                      background: "hsl(var(--secondary))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: 8,
+                      padding: "8px 14px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>
+                      {ci.name}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: "hsl(var(--muted-foreground))",
+                      }}
+                    >
+                      {ci.time}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── BACKDATE TAB ── */}
+      {subTab === "backdate" && (
+        <div>
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: 8,
+              background: "hsl(38 92% 44% / 0.08)",
+              border: "1px solid hsl(38 92% 44% / 0.25)",
+              fontSize: 12,
+              color: "hsl(38 92% 44%)",
+              marginBottom: 20,
+              lineHeight: 1.6,
+            }}
+          >
+            ⚠ Use this to log check-ins members completed before the app
+            launched. Each backdated entry awards +10 pts and counts toward the
+            40-check-in reward cycle. Duplicate dates are blocked automatically.
           </div>
+
+          <div
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: "16px 20px",
+              marginBottom: 20,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))",
+                gap: 12,
+                marginBottom: 14,
+              }}
+            >
+              <div style={{ gridColumn: "1/-1" }}>
+                <label style={lbl}>Select Member *</label>
+                {loading ? (
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "hsl(var(--muted-foreground))",
+                    }}
+                  >
+                    Loading…
+                  </div>
+                ) : (
+                  <select
+                    style={inp}
+                    value={bdUid}
+                    onChange={(e) => setBdUid(e.target.value)}
+                  >
+                    <option value="">— Choose member —</option>
+                    {members.map((m) => (
+                      <option key={m.uid} value={m.uid}>
+                        {m.name} ({m.email}) — {m.checkIns.length} check-ins
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label style={lbl}>Date *</label>
+                <input
+                  style={inp}
+                  type="date"
+                  value={bdDate}
+                  max={new Date().toISOString().split("T")[0]}
+                  onChange={(e) => setBdDate(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label style={lbl}>Time (approx)</label>
+                <select
+                  style={inp}
+                  value={bdTime}
+                  onChange={(e) => setBdTime(e.target.value)}
+                >
+                  {[
+                    "05:00",
+                    "05:30",
+                    "06:00",
+                    "06:30",
+                    "07:00",
+                    "07:30",
+                    "08:00",
+                    "08:30",
+                    "09:00",
+                    "09:30",
+                    "10:00",
+                    "10:30",
+                    "11:00",
+                    "12:00",
+                    "13:00",
+                    "14:00",
+                    "15:00",
+                    "16:00",
+                    "17:00",
+                    "17:30",
+                    "18:00",
+                    "18:30",
+                    "19:00",
+                    "19:30",
+                    "20:00",
+                  ].map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Live preview */}
+            {bdPreview && bdMember && (
+              <div
+                style={{
+                  marginBottom: 14,
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  background: bdPreview.alreadyExists
+                    ? "hsl(0 84% 51% / 0.08)"
+                    : bdPreview.milestone
+                      ? "hsl(142 72% 37% / 0.08)"
+                      : "hsl(var(--background))",
+                  border: `1px solid ${
+                    bdPreview.alreadyExists
+                      ? "hsl(0 84% 51% / 0.3)"
+                      : bdPreview.milestone
+                        ? "hsl(142 72% 37% / 0.3)"
+                        : "hsl(var(--border))"
+                  }`,
+                  fontSize: 12,
+                  lineHeight: 1.7,
+                }}
+              >
+                {bdPreview.alreadyExists ? (
+                  <span style={{ color: "hsl(0 84% 51%)", fontWeight: 700 }}>
+                    ✕ {bdMember.name} already has a check-in on this date.
+                  </span>
+                ) : (
+                  <>
+                    <span
+                      style={{
+                        color: "hsl(var(--foreground))",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {bdMember.name}
+                    </span>
+                    <span style={{ color: "hsl(var(--muted-foreground))" }}>
+                      {" "}
+                      · Currently {bdMember.checkIns.length} check-ins →{" "}
+                    </span>
+                    <span
+                      style={{ color: "hsl(20 100% 50%)", fontWeight: 700 }}
+                    >
+                      {bdPreview.newTotal} after this entry
+                    </span>
+                    {bdPreview.milestone && (
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          color: "hsl(142 72% 37%)",
+                          fontWeight: 700,
+                        }}
+                      >
+                        🎉 This will trigger a reward!
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <Btn
+                variant="primary"
+                onClick={handleBackdate}
+                disabled={
+                  bdSubmitting ||
+                  !bdUid ||
+                  !bdDate ||
+                  !!bdPreview?.alreadyExists
+                }
+              >
+                {bdSubmitting ? "Saving…" : "📅 Save Backdated Check-In"}
+              </Btn>
+              <Btn variant="subtle" size="sm" onClick={loadMembers}>
+                ↻ Refresh Members
+              </Btn>
+            </div>
+          </div>
+
+          {/* Member check-in history preview */}
+          {bdMember && bdMember.checkIns.length > 0 && (
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                {bdMember.name}'s Check-In History ({bdMember.checkIns.length})
+              </div>
+              <div
+                style={{
+                  maxHeight: 260,
+                  overflowY: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                }}
+              >
+                {[...bdMember.checkIns]
+                  .slice()
+                  .reverse()
+                  .map((ci: any, i: number) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "6px 12px",
+                        borderRadius: 8,
+                        background: "hsl(var(--secondary))",
+                        fontSize: 12,
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: "hsl(var(--foreground))",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {ci.date}
+                      </span>
+                      <span
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ color: "hsl(var(--muted-foreground))" }}>
+                          {ci.time}
+                        </span>
+                        {ci.backdated && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: "1px 6px",
+                              borderRadius: 20,
+                              background: "hsl(38 92% 44% / 0.12)",
+                              color: "hsl(38 92% 44%)",
+                            }}
+                          >
+                            backdated
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -4591,6 +8767,1299 @@ function FeedbackManager({ toast }: any) {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Notifications Manager ─────────────────────────────────────────────────────
+function NotificationsManager({ toast }: any) {
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [subTab, setSubTab] = useState<"broadcast" | "member" | "compose">(
+    "broadcast",
+  );
+
+  // Broadcast (global) notifications
+  const [broadcasts, setBroadcasts] = useState<any[]>([]);
+  const [broadcastsLoading, setBroadcastsLoading] = useState(true);
+
+  // Per-member notifications
+  const [members, setMembers] = useState<any[]>([]);
+  const [selectedMember, setSelectedMember] = useState("");
+  const [memberNotifs, setMemberNotifs] = useState<any[]>([]);
+  const [memberNotifsLoading, setMemberNotifsLoading] = useState(false);
+
+  // Compose
+  const [composeTarget, setComposeTarget] = useState<"all" | "member">("all");
+  const [composeUid, setComposeUid] = useState("");
+  const [composeTitle, setComposeTitle] = useState("");
+  const [composeBody, setComposeBody] = useState("");
+  const [composeType, setComposeType] = useState("announcement");
+  const [sending, setSending] = useState(false);
+
+  // ── Load broadcasts ────────────────────────────────────────────────────────
+  const loadBroadcasts = async () => {
+    setBroadcastsLoading(true);
+    try {
+      const snap = await get(ref(db, "notifications"));
+      if (snap.exists()) {
+        const list = Object.entries(snap.val()).map(
+          ([k, v]: [string, any]) => ({
+            key: k,
+            ...v,
+          }),
+        );
+        setBroadcasts(
+          list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
+        );
+      } else {
+        setBroadcasts([]);
+      }
+    } catch {
+      toast("Failed to load notifications", "error");
+    }
+    setBroadcastsLoading(false);
+  };
+
+  // ── Load members for picker ────────────────────────────────────────────────
+  const loadMembers = async () => {
+    try {
+      const snap = await get(ref(db, "mk2_users"));
+      if (snap.exists()) {
+        const list = Object.entries(snap.val()).map(
+          ([uid, v]: [string, any]) => ({
+            uid,
+            name: v.name || "Unnamed",
+            email: v.email || "",
+          }),
+        );
+        setMembers(list.sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    } catch {
+      /* non-critical */
+    }
+  };
+
+  useEffect(() => {
+    loadBroadcasts();
+    loadMembers();
+  }, []);
+
+  // ── Load per-member notifications ──────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedMember) {
+      setMemberNotifs([]);
+      return;
+    }
+    setMemberNotifsLoading(true);
+    get(ref(db, `users/${selectedMember}/notifications`)).then((snap) => {
+      if (snap.exists()) {
+        const list = Object.entries(snap.val()).map(
+          ([k, v]: [string, any]) => ({
+            key: k,
+            ...v,
+          }),
+        );
+        setMemberNotifs(
+          list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
+        );
+      } else {
+        setMemberNotifs([]);
+      }
+      setMemberNotifsLoading(false);
+    });
+  }, [selectedMember]);
+
+  // ── Delete broadcast ───────────────────────────────────────────────────────
+  const deleteBroadcast = async (key: string) => {
+    if (!confirm("Delete this notification?")) return;
+    await remove(ref(db, `notifications/${key}`));
+    setBroadcasts((prev) => prev.filter((n) => n.key !== key));
+    toast("Deleted", "info");
+  };
+
+  // ── Delete member notification ─────────────────────────────────────────────
+  const deleteMemberNotif = async (key: string) => {
+    if (!confirm("Delete this notification?")) return;
+    await remove(ref(db, `users/${selectedMember}/notifications/${key}`));
+    setMemberNotifs((prev) => prev.filter((n) => n.key !== key));
+    toast("Deleted", "info");
+  };
+
+  // ── Mark member notif as read ──────────────────────────────────────────────
+  const markRead = async (key: string) => {
+    await set(
+      ref(db, `users/${selectedMember}/notifications/${key}/read`),
+      true,
+    );
+    setMemberNotifs((prev) =>
+      prev.map((n) => (n.key === key ? { ...n, read: true } : n)),
+    );
+  };
+
+  // ── Send notification ──────────────────────────────────────────────────────
+  const send = async () => {
+    if (!composeTitle.trim()) return toast("Enter a title", "error");
+    if (!composeBody.trim()) return toast("Enter a message", "error");
+    if (composeTarget === "member" && !composeUid)
+      return toast("Select a member", "error");
+
+    setSending(true);
+    try {
+      const payload = {
+        title: composeTitle,
+        body: composeBody,
+        type: composeType,
+        read: false,
+        createdAt: Date.now(),
+        sentByAdmin: true,
+      };
+
+      if (composeTarget === "all") {
+        // Broadcast to global feed
+        await Promise.resolve(push(ref(db, "notifications"), payload));
+
+        // Then to every member's personal feed
+        const membersSnap = await get(ref(db, "mk2_users"));
+        if (membersSnap.exists()) {
+          const writes = Object.keys(membersSnap.val()).map((uid) =>
+            Promise.resolve(
+              push(ref(db, `users/${uid}/notifications`), payload),
+            ),
+          );
+          await Promise.all(writes);
+        }
+
+        toast(`Broadcast sent to all members ✓`, "success");
+        loadBroadcasts();
+      } else {
+        // Single member
+        await Promise.resolve(
+          push(ref(db, `users/${composeUid}/notifications`), payload),
+        );
+        toast("Notification sent ✓", "success");
+        if (selectedMember === composeUid) {
+          setMemberNotifs((prev) => [
+            { key: Date.now().toString(), ...payload },
+            ...prev,
+          ]);
+        }
+      }
+
+      setComposeTitle("");
+      setComposeBody("");
+      setComposeType("announcement");
+      setComposeUid("");
+    } catch {
+      toast("Send failed", "error");
+    }
+    setSending(false);
+  };
+
+  // ── Shared styles ──────────────────────────────────────────────────────────
+  const TYPE_META: Record<
+    string,
+    { label: string; color: string; bg: string }
+  > = {
+    announcement: {
+      label: "Announcement",
+      color: "hsl(20 100% 50%)",
+      bg: "hsl(20 100% 50% / 0.12)",
+    },
+    challenge: {
+      label: "Challenge",
+      color: "hsl(263 85% 58%)",
+      bg: "hsl(263 85% 58% / 0.12)",
+    },
+    class_cancelled: {
+      label: "Class cancelled",
+      color: "hsl(0 84% 51%)",
+      bg: "hsl(0 84% 51% / 0.12)",
+    },
+    reward: {
+      label: "Reward",
+      color: "hsl(142 72% 37%)",
+      bg: "hsl(142 72% 37% / 0.12)",
+    },
+    general: {
+      label: "General",
+      color: "hsl(var(--muted-foreground))",
+      bg: "hsl(var(--secondary))",
+    },
+  };
+
+  const typeMeta = (type: string) => TYPE_META[type] ?? TYPE_META.general;
+
+  const NotifRow = ({
+    notif,
+    onDelete,
+    onRead,
+    showRead = false,
+  }: {
+    notif: any;
+    onDelete: () => void;
+    onRead?: () => void;
+    showRead?: boolean;
+  }) => {
+    const meta = typeMeta(notif.type);
+    return (
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          padding: "12px 0",
+          borderBottom: "1px solid hsl(var(--border))",
+          opacity: showRead && notif.read ? 0.55 : 1,
+        }}
+      >
+        {/* Type dot */}
+        <div
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: notif.read ? "hsl(var(--border))" : meta.color,
+            flexShrink: 0,
+            marginTop: 5,
+          }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+              marginBottom: 3,
+            }}
+          >
+            <span style={{ fontWeight: 700, fontSize: 13 }}>{notif.title}</span>
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "2px 8px",
+                borderRadius: 20,
+                background: meta.bg,
+                color: meta.color,
+              }}
+            >
+              {meta.label}
+            </span>
+            {showRead && !notif.read && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: 20,
+                  background: "hsl(217 91% 53% / 0.12)",
+                  color: "hsl(217 91% 53%)",
+                }}
+              >
+                Unread
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "hsl(var(--foreground))",
+              marginBottom: 4,
+              lineHeight: 1.5,
+            }}
+          >
+            {notif.body}
+          </div>
+          <div style={{ fontSize: 11, color: "hsl(var(--muted-foreground))" }}>
+            {notif.createdAt
+              ? new Date(notif.createdAt).toLocaleString("en-ZA", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : "—"}
+          </div>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flexShrink: 0,
+            alignItems: "flex-start",
+          }}
+        >
+          {showRead && !notif.read && onRead && (
+            <Btn variant="subtle" size="sm" onClick={onRead}>
+              ✓ Mark read
+            </Btn>
+          )}
+          <Btn variant="danger" size="sm" onClick={onDelete}>
+            Delete
+          </Btn>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+        Notifications
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 20,
+        }}
+      >
+        View system notifications, member alerts, and send new ones.
+      </div>
+
+      {/* Sub-tabs */}
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          padding: 4,
+          borderRadius: 10,
+          background: "hsl(var(--secondary))",
+          width: "fit-content",
+          marginBottom: 24,
+        }}
+      >
+        {[
+          { id: "broadcast" as const, label: "📡 Broadcasts" },
+          { id: "member" as const, label: "👤 Member inbox" },
+          { id: "compose" as const, label: "✉ Send new" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 8,
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "var(--font-body)",
+              fontWeight: 700,
+              fontSize: 12,
+              background: subTab === t.id ? "hsl(20 100% 50%)" : "transparent",
+              color: subTab === t.id ? "#000" : "hsl(var(--muted-foreground))",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── BROADCASTS ── */}
+      {subTab === "broadcast" && (
+        <div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 16,
+              flexWrap: "wrap",
+              gap: 10,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13 }}>
+              Global broadcasts ({broadcasts.length})
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn
+                variant="primary"
+                size="sm"
+                onClick={() => setSubTab("compose")}
+              >
+                + Send new
+              </Btn>
+              <Btn variant="subtle" size="sm" onClick={loadBroadcasts}>
+                ↻ Refresh
+              </Btn>
+            </div>
+          </div>
+
+          <div
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: "4px 16px",
+            }}
+          >
+            {broadcastsLoading ? (
+              <div
+                style={{
+                  padding: "20px 0",
+                  fontSize: 13,
+                  color: "hsl(var(--muted-foreground))",
+                }}
+              >
+                Loading…
+              </div>
+            ) : broadcasts.length === 0 ? (
+              <div
+                style={{
+                  padding: "20px 0",
+                  fontSize: 13,
+                  color: "hsl(var(--muted-foreground))",
+                }}
+              >
+                No broadcasts yet. Use "Send new" to create one.
+              </div>
+            ) : (
+              broadcasts.map((n) => (
+                <NotifRow
+                  key={n.key}
+                  notif={n}
+                  onDelete={() => deleteBroadcast(n.key)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── MEMBER INBOX ── */}
+      {subTab === "member" && (
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={lbl}>Select member</label>
+            <select
+              style={{ ...inp, maxWidth: 400 }}
+              value={selectedMember}
+              onChange={(e) => setSelectedMember(e.target.value)}
+            >
+              <option value="">— Choose a member —</option>
+              {members.map((m) => (
+                <option key={m.uid} value={m.uid}>
+                  {m.name} ({m.email})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedMember && (
+            <div
+              style={{
+                background: "hsl(var(--secondary))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: 12,
+                padding: "4px 16px",
+              }}
+            >
+              {memberNotifsLoading ? (
+                <div
+                  style={{
+                    padding: "20px 0",
+                    fontSize: 13,
+                    color: "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  Loading…
+                </div>
+              ) : memberNotifs.length === 0 ? (
+                <div
+                  style={{
+                    padding: "20px 0",
+                    fontSize: 13,
+                    color: "hsl(var(--muted-foreground))",
+                  }}
+                >
+                  No notifications for this member.
+                </div>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "12px 0 8px",
+                      flexWrap: "wrap",
+                      gap: 8,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: "hsl(var(--muted-foreground))",
+                      }}
+                    >
+                      {memberNotifs.length} notification
+                      {memberNotifs.length !== 1 ? "s" : ""} ·{" "}
+                      {memberNotifs.filter((n) => !n.read).length} unread
+                    </span>
+                    <Btn
+                      variant="subtle"
+                      size="sm"
+                      onClick={async () => {
+                        // Mark all as read
+                        const writes: Promise<any>[] = memberNotifs
+                          .filter((n) => !n.read)
+                          .map((n) =>
+                            set(
+                              ref(
+                                db,
+                                `users/${selectedMember}/notifications/${n.key}/read`,
+                              ),
+                              true,
+                            ),
+                          );
+                        await Promise.all(writes);
+                        setMemberNotifs((prev) =>
+                          prev.map((n) => ({ ...n, read: true })),
+                        );
+                        toast("All marked as read ✓", "success");
+                      }}
+                    >
+                      ✓ Mark all read
+                    </Btn>
+                  </div>
+                  {memberNotifs.map((n) => (
+                    <NotifRow
+                      key={n.key}
+                      notif={n}
+                      showRead
+                      onDelete={() => deleteMemberNotif(n.key)}
+                      onRead={() => markRead(n.key)}
+                    />
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── COMPOSE ── */}
+      {subTab === "compose" && (
+        <div style={{ maxWidth: 560 }}>
+          {/* Target */}
+          <div style={{ marginBottom: 18 }}>
+            <label style={lbl}>Send to</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {(["all", "member"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setComposeTarget(t)}
+                  style={{
+                    padding: "8px 20px",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    border: "1px solid",
+                    borderColor:
+                      composeTarget === t
+                        ? "hsl(20 100% 50%)"
+                        : "hsl(var(--border))",
+                    background:
+                      composeTarget === t ? "hsl(20 100% 50%)" : "transparent",
+                    color:
+                      composeTarget === t ? "#000" : "hsl(var(--foreground))",
+                    fontFamily: "var(--font-body)",
+                  }}
+                >
+                  {t === "all" ? "📡 All members" : "👤 One member"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {composeTarget === "member" && (
+            <div style={{ marginBottom: 14 }}>
+              <label style={lbl}>Member *</label>
+              <select
+                style={inp}
+                value={composeUid}
+                onChange={(e) => setComposeUid(e.target.value)}
+              >
+                <option value="">— Choose member —</option>
+                {members.map((m) => (
+                  <option key={m.uid} value={m.uid}>
+                    {m.name} ({m.email})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Type</label>
+            <select
+              style={inp}
+              value={composeType}
+              onChange={(e) => setComposeType(e.target.value)}
+            >
+              <option value="announcement">Announcement</option>
+              <option value="challenge">Challenge</option>
+              <option value="reward">Reward</option>
+              <option value="general">General</option>
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Title *</label>
+            <input
+              style={inp}
+              placeholder="e.g. Gym closed public holiday"
+              value={composeTitle}
+              onChange={(e) => setComposeTitle(e.target.value)}
+            />
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={lbl}>Message *</label>
+            <textarea
+              style={{ ...inp, minHeight: 90, resize: "vertical" }}
+              placeholder="Write your message here…"
+              value={composeBody}
+              onChange={(e) => setComposeBody(e.target.value)}
+            />
+          </div>
+
+          {/* Preview */}
+          {(composeTitle || composeBody) && (
+            <div
+              style={{
+                marginBottom: 20,
+                padding: "12px 16px",
+                background: "hsl(var(--secondary))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: 10,
+                borderLeft: `3px solid ${typeMeta(composeType).color}`,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  color: "hsl(var(--muted-foreground))",
+                  marginBottom: 6,
+                }}
+              >
+                Preview
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+                {composeTitle || "—"}
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "hsl(var(--foreground))",
+                  lineHeight: 1.5,
+                }}
+              >
+                {composeBody || "—"}
+              </div>
+              <div
+                style={{
+                  marginTop: 6,
+                  fontSize: 10,
+                  color: "hsl(var(--muted-foreground))",
+                }}
+              >
+                {composeTarget === "all"
+                  ? `Will be sent to all ${members.length} members`
+                  : (members.find((m) => m.uid === composeUid)?.name ?? "—")}
+              </div>
+            </div>
+          )}
+
+          <Btn
+            variant="primary"
+            onClick={send}
+            disabled={sending || !composeTitle.trim() || !composeBody.trim()}
+          >
+            {sending
+              ? "Sending…"
+              : composeTarget === "all"
+                ? `📡 Broadcast to all members`
+                : "✉ Send to member"}
+          </Btn>
+
+          {composeTarget === "all" && (
+            <div
+              style={{
+                marginTop: 12,
+                fontSize: 11,
+                color: "hsl(var(--muted-foreground))",
+                padding: "8px 12px",
+                background: "hsl(38 92% 44% / 0.08)",
+                border: "1px solid hsl(38 92% 44% / 0.2)",
+                borderRadius: 8,
+              }}
+            >
+              ⚠ This will add a notification to every member's inbox. Cannot be
+              undone — double-check the message before sending.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Push Notifications Manager ─────────────────────────────────────────────────────
+function PushNotificationsManager({ toast }: any) {
+  const [members, setMembers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [subTab, setSubTab] = useState<"broadcast" | "single">("broadcast");
+
+  // Broadcast form
+  const [bcTitle, setBcTitle] = useState("");
+  const [bcBody, setBcBody] = useState("");
+  const [bcType, setBcType] = useState("announcement");
+  const [bcSending, setBcSending] = useState(false);
+  const [bcResult, setBcResult] = useState<{
+    successCount: number;
+    failureCount: number;
+  } | null>(null);
+
+  // Single member form
+  const [smUid, setSmUid] = useState("");
+  const [smTitle, setSmTitle] = useState("");
+  const [smBody, setSmBody] = useState("");
+  const [smType, setSmType] = useState("announcement");
+  const [smSending, setSmSending] = useState(false);
+
+  // Load members + their token status
+  useEffect(() => {
+    get(ref(db, "mk2_users")).then((snap) => {
+      if (!snap.exists()) {
+        setLoading(false);
+        return;
+      }
+      const list = Object.entries(snap.val()).map(
+        ([uid, v]: [string, any]) => ({
+          uid,
+          name: v.name || "Unnamed",
+          email: v.email || "",
+          fcmToken: v.fcmToken || null,
+          fcmUpdatedAt: v.fcmUpdatedAt || null,
+        }),
+      );
+      setMembers(list.sort((a, b) => a.name.localeCompare(b.name)));
+      setLoading(false);
+    });
+  }, []);
+
+  const withTokens = members.filter((m) => m.fcmToken);
+  const withoutTokens = members.filter((m) => !m.fcmToken);
+  const selectedMember = members.find((m) => m.uid === smUid);
+
+  // ── Broadcast ──────────────────────────────────────────────────────────────
+  const sendBroadcast = async () => {
+    if (!bcTitle.trim()) return toast("Enter a title", "error");
+    if (!bcBody.trim()) return toast("Enter a message", "error");
+    if (withTokens.length === 0)
+      return toast("No members have push enabled", "error");
+
+    setBcSending(true);
+    setBcResult(null);
+    try {
+      const functions = getFunctions(undefined, "europe-west1");
+      const sendFn = httpsCallable(functions, "sendPushBroadcast");
+      const tokens = withTokens.map((m) => m.fcmToken);
+      const result: any = await sendFn({
+        tokens,
+        title: bcTitle,
+        body: bcBody,
+        type: bcType,
+      });
+
+      setBcResult(result.data);
+      toast(
+        `Sent ✓ — ${result.data.successCount} delivered, ${result.data.failureCount} failed`,
+        result.data.failureCount > 0 ? "info" : "success",
+      );
+
+      // Write to notifications/ so the Notifications tab stays in sync
+      await Promise.resolve(
+        push(ref(db, "notifications"), {
+          title: bcTitle,
+          body: bcBody,
+          type: bcType,
+          read: false,
+          createdAt: Date.now(),
+          sentByAdmin: true,
+          pushedToDevices: true,
+          deliveredCount: result.data.successCount,
+        }),
+      );
+
+      setBcTitle("");
+      setBcBody("");
+      setBcType("announcement");
+    } catch (err: any) {
+      toast(err?.message ?? "Broadcast failed", "error");
+    }
+    setBcSending(false);
+  };
+
+  // ── Single member ──────────────────────────────────────────────────────────
+  const sendSingle = async () => {
+    if (!smUid) return toast("Select a member", "error");
+    if (!smTitle.trim()) return toast("Enter a title", "error");
+    if (!smBody.trim()) return toast("Enter a message", "error");
+    if (!selectedMember?.fcmToken)
+      return toast("This member hasn't enabled push notifications", "error");
+
+    setSmSending(true);
+    try {
+      const functions = getFunctions(undefined, "europe-west1");
+      const sendFn = httpsCallable(functions, "sendPushNotification");
+      await sendFn({
+        token: selectedMember.fcmToken,
+        title: smTitle,
+        body: smBody,
+        type: smType,
+      });
+
+      // Write to member's personal inbox too
+      await Promise.resolve(
+        push(ref(db, `users/${smUid}/notifications`), {
+          title: smTitle,
+          body: smBody,
+          type: smType,
+          read: false,
+          createdAt: Date.now(),
+          sentByAdmin: true,
+          pushedToDevice: true,
+        }),
+      );
+
+      toast(`Push sent to ${selectedMember.name} ✓`, "success");
+      setSmUid("");
+      setSmTitle("");
+      setSmBody("");
+    } catch (err: any) {
+      toast(err?.message ?? "Send failed", "error");
+    }
+    setSmSending(false);
+  };
+
+  const TYPE_OPTIONS = [
+    { value: "announcement", label: "Announcement" },
+    { value: "challenge", label: "Challenge" },
+    { value: "reward", label: "Reward" },
+    { value: "class_update", label: "Class update" },
+    { value: "general", label: "General" },
+  ];
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+        Push Notifications
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 16,
+        }}
+      >
+        Send real device push notifications via FCM. Members must have opened
+        the app and accepted notifications.
+      </div>
+
+      {/* Token coverage summary */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(160px,1fr))",
+          gap: 10,
+          marginBottom: 20,
+        }}
+      >
+        {[
+          { label: "Total members", val: members.length, accent: false },
+          { label: "Push enabled", val: withTokens.length, accent: true },
+          { label: "No token yet", val: withoutTokens.length, accent: false },
+        ].map((s) => (
+          <div
+            key={s.label}
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: "14px 18px",
+              borderLeft: s.accent ? "3px solid hsl(20 100% 50%)" : undefined,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 24,
+                fontWeight: 700,
+                color: s.accent ? "hsl(20 100% 50%)" : "hsl(var(--foreground))",
+                lineHeight: 1,
+              }}
+            >
+              {loading ? "—" : s.val}
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "hsl(var(--muted-foreground))",
+                marginTop: 6,
+              }}
+            >
+              {s.label}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Warning if no tokens yet */}
+      {!loading && withTokens.length === 0 && (
+        <div
+          style={{
+            marginBottom: 20,
+            padding: "12px 16px",
+            background: "hsl(38 92% 44% / 0.08)",
+            border: "1px solid hsl(38 92% 44% / 0.25)",
+            borderRadius: 10,
+            fontSize: 12,
+            color: "hsl(38 92% 44%)",
+            lineHeight: 1.7,
+          }}
+        >
+          ⚠ No members have FCM tokens yet. Make sure the updated
+          NotificationSettings.tsx is deployed and members have accepted the
+          notification permission prompt.
+        </div>
+      )}
+
+      {/* Sub-tabs */}
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          padding: 4,
+          borderRadius: 10,
+          background: "hsl(var(--secondary))",
+          width: "fit-content",
+          marginBottom: 24,
+        }}
+      >
+        {[
+          { id: "broadcast" as const, label: "📡 Broadcast to all" },
+          { id: "single" as const, label: "👤 Single member" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 8,
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "var(--font-body)",
+              fontWeight: 700,
+              fontSize: 12,
+              background: subTab === t.id ? "hsl(20 100% 50%)" : "transparent",
+              color: subTab === t.id ? "#000" : "hsl(var(--muted-foreground))",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── BROADCAST ── */}
+      {subTab === "broadcast" && (
+        <div style={{ maxWidth: 560 }}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Type</label>
+            <select
+              style={inp}
+              value={bcType}
+              onChange={(e) => setBcType(e.target.value)}
+            >
+              {TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Title *</label>
+            <input
+              style={inp}
+              placeholder="e.g. Gym closed Saturday"
+              value={bcTitle}
+              onChange={(e) => setBcTitle(e.target.value)}
+            />
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={lbl}>Message *</label>
+            <textarea
+              style={{ ...inp, minHeight: 90, resize: "vertical" }}
+              placeholder="Write your push message…"
+              value={bcBody}
+              onChange={(e) => setBcBody(e.target.value)}
+            />
+          </div>
+
+          {/* Device preview */}
+          {(bcTitle || bcBody) && (
+            <div
+              style={{
+                marginBottom: 20,
+                padding: "12px 16px",
+                background: "hsl(var(--secondary))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: 10,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  color: "hsl(var(--muted-foreground))",
+                  marginBottom: 8,
+                }}
+              >
+                Device preview
+              </div>
+              <div
+                style={{ display: "flex", gap: 10, alignItems: "flex-start" }}
+              >
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    background: "hsl(20 100% 50%)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 18,
+                    flexShrink: 0,
+                  }}
+                >
+                  🏋
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>
+                    {bcTitle || "Title"}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "hsl(var(--muted-foreground))",
+                      marginTop: 2,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {bcBody || "Message"}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: "hsl(var(--muted-foreground))",
+                      marginTop: 4,
+                    }}
+                  >
+                    MK2R · now
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <Btn
+            variant="primary"
+            onClick={sendBroadcast}
+            disabled={bcSending || withTokens.length === 0}
+          >
+            {bcSending
+              ? "Sending…"
+              : `📡 Send to ${withTokens.length} device${withTokens.length !== 1 ? "s" : ""}`}
+          </Btn>
+
+          {bcResult && (
+            <div
+              style={{
+                marginTop: 14,
+                padding: "10px 14px",
+                borderRadius: 8,
+                background: "hsl(142 72% 37% / 0.08)",
+                border: "1px solid hsl(142 72% 37% / 0.25)",
+                fontSize: 12,
+                color: "hsl(142 72% 37%)",
+              }}
+            >
+              ✓ Last send: {bcResult.successCount} delivered ·{" "}
+              {bcResult.failureCount} failed
+            </div>
+          )}
+
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: 11,
+              color: "hsl(var(--muted-foreground))",
+              padding: "8px 12px",
+              background: "hsl(38 92% 44% / 0.06)",
+              border: "1px solid hsl(38 92% 44% / 0.18)",
+              borderRadius: 8,
+            }}
+          >
+            ⚠ This sends a device push AND writes to the Notifications tab.
+            Cannot be undone.
+          </div>
+        </div>
+      )}
+
+      {/* ── SINGLE MEMBER ── */}
+      {subTab === "single" && (
+        <div style={{ maxWidth: 560 }}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Member *</label>
+            <select
+              style={inp}
+              value={smUid}
+              onChange={(e) => setSmUid(e.target.value)}
+            >
+              <option value="">— Choose member —</option>
+              {members.map((m) => (
+                <option key={m.uid} value={m.uid}>
+                  {m.name} ({m.email}) {m.fcmToken ? "✓" : "— no token"}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedMember && (
+            <div
+              style={{
+                marginBottom: 14,
+                padding: "8px 12px",
+                borderRadius: 8,
+                background: "hsl(var(--secondary))",
+                border: "1px solid hsl(var(--border))",
+                fontSize: 12,
+              }}
+            >
+              {selectedMember.fcmToken ? (
+                <span style={{ color: "hsl(142 72% 37%)", fontWeight: 700 }}>
+                  ✓ Push enabled · last updated{" "}
+                  {selectedMember.fcmUpdatedAt
+                    ? new Date(selectedMember.fcmUpdatedAt).toLocaleDateString(
+                        "en-ZA",
+                      )
+                    : "unknown"}
+                </span>
+              ) : (
+                <span style={{ color: "hsl(0 84% 51%)", fontWeight: 700 }}>
+                  ✕ No FCM token — this member hasn't enabled notifications
+                </span>
+              )}
+            </div>
+          )}
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Type</label>
+            <select
+              style={inp}
+              value={smType}
+              onChange={(e) => setSmType(e.target.value)}
+            >
+              {TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Title *</label>
+            <input
+              style={inp}
+              placeholder="e.g. Your reward is expiring soon"
+              value={smTitle}
+              onChange={(e) => setSmTitle(e.target.value)}
+            />
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={lbl}>Message *</label>
+            <textarea
+              style={{ ...inp, minHeight: 90, resize: "vertical" }}
+              placeholder="Write your message…"
+              value={smBody}
+              onChange={(e) => setSmBody(e.target.value)}
+            />
+          </div>
+
+          <Btn
+            variant="primary"
+            onClick={sendSingle}
+            disabled={smSending || !smUid || !selectedMember?.fcmToken}
+          >
+            {smSending ? "Sending…" : "✉ Send push"}
+          </Btn>
+        </div>
+      )}
+
+      {/* Members without tokens — collapsed */}
+      {!loading && withoutTokens.length > 0 && (
+        <details style={{ marginTop: 32 }}>
+          <summary
+            style={{
+              fontSize: 12,
+              color: "hsl(var(--muted-foreground))",
+              cursor: "pointer",
+              userSelect: "none",
+              fontWeight: 700,
+            }}
+          >
+            {withoutTokens.length} member{withoutTokens.length !== 1 ? "s" : ""}{" "}
+            without push token
+          </summary>
+          <div
+            style={{
+              marginTop: 10,
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+            }}
+          >
+            {withoutTokens.map((m) => (
+              <div
+                key={m.uid}
+                style={{
+                  padding: "7px 12px",
+                  borderRadius: 8,
+                  background: "hsl(var(--secondary))",
+                  border: "1px solid hsl(var(--border))",
+                  fontSize: 12,
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ fontWeight: 700 }}>{m.name}</span>
+                <span style={{ color: "hsl(var(--muted-foreground))" }}>
+                  {m.email}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );
@@ -7034,33 +12503,1310 @@ function RewardsManager({ toast }: any) {
   );
 }
 
-// ── Tabs ──────────────────────────────────────────────────────────────────────
-// FIX: Duplicate "packages" id resolved — second entry uses "credits"
-const TABS = [
-  { id: "members", label: "👥 App Users", desc: "Manage user tiers" },
-  { id: "community", label: "💬 Community Chat", desc: "Rooms & polls" },
-  { id: "classes", label: "📅 Classes", desc: "Schedule & bookings" },
-  { id: "credits", label: "🎟 Packages", desc: "Class credit packages" },
-  { id: "checkin", label: "Check-In", desc: "Manual override" },
-  { id: "rewards", label: "🎁 Rewards", desc: "View & redeem rewards" },
-  { id: "gallery", label: "Social Media", desc: "Platforms & uploads" },
-  { id: "news", label: "📢 News & Events", desc: "Post updates" },
-  { id: "ads", label: "📣 Ad Enquiries", desc: "Manage advertising" },
-  { id: "banners", label: "🖼 Ad Banners", desc: "Live banner ads" },
-  { id: "challenges", label: "🏁 Challenges", desc: "Create challenges" },
-  { id: "feedback", label: "💬 Feedback", desc: "App feedback & ratings" },
-  { id: "terms", label: "📋 T&C Records", desc: "Acceptance audit log" },
-  { id: "instagram", label: "📱 Instagram", desc: "Auto-sync setup" },
+const ADMIN_TIER_RULES: Record<
+  string,
+  { max: number; daily: number; label: string; color: string }
+> = {
+  u18: { max: 24, daily: 1, label: "Under 18", color: "hsl(263 85% 58%)" },
+  hybrid_12m: {
+    max: 14,
+    daily: 1,
+    label: "Hybrid 12-month",
+    color: "hsl(217 91% 53%)",
+  },
+  hybrid_6m: {
+    max: 14,
+    daily: 1,
+    label: "Hybrid 6-month",
+    color: "hsl(217 91% 53%)",
+  },
+  hybrid_m2m: {
+    max: 14,
+    daily: 1,
+    label: "Hybrid M-to-M",
+    color: "hsl(217 91% 53%)",
+  },
+  unlimited_12m: {
+    max: 50,
+    daily: 2,
+    label: "Unlimited 12-month",
+    color: "hsl(20 100% 50%)",
+  },
+  unlimited_6m: {
+    max: 50,
+    daily: 2,
+    label: "Unlimited 6-month",
+    color: "hsl(20 100% 50%)",
+  },
+  unlimited_m2m: {
+    max: 50,
+    daily: 2,
+    label: "Unlimited M-to-M",
+    color: "hsl(20 100% 50%)",
+  },
+  basic: {
+    max: 0,
+    daily: 0,
+    label: "Basic (credits)",
+    color: "hsl(var(--muted-foreground))",
+  },
+};
+
+function getTierRule(tier: string) {
+  return ADMIN_TIER_RULES[tier] ?? ADMIN_TIER_RULES.basic;
+}
+
+/** Rolling 30-day window start as YYYY-MM-DD */
+function thirtyDaysAgoKey(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString().split("T")[0];
+}
+
+/** Today as YYYY-MM-DD */
+function todayKey(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
+// ── Usage bar component ───────────────────────────────────────────────────────
+function UsageBar({
+  used,
+  max,
+  color,
+}: {
+  used: number;
+  max: number;
+  color: string;
+}) {
+  const pct = max > 0 ? Math.min(100, (used / max) * 100) : 0;
+  const isWarning = pct >= 80;
+  const isFull = pct >= 100;
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: 6,
+        background: "hsl(var(--border))",
+        borderRadius: 4,
+        overflow: "hidden",
+        marginTop: 4,
+      }}
+    >
+      <div
+        style={{
+          width: `${pct}%`,
+          height: "100%",
+          borderRadius: 4,
+          background: isFull
+            ? "hsl(0 84% 51%)"
+            : isWarning
+              ? "hsl(38 92% 44%)"
+              : color,
+          transition: "width 0.3s ease",
+        }}
+      />
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+function MonthlyUsageReport({ toast }: any) {
+  const [members, setMembers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [tierFilter, setTierFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<"name" | "used" | "pct" | "remaining">(
+    "pct",
+  );
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const since = thirtyDaysAgoKey();
+  const today = todayKey();
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const snap = await get(ref(db, "mk2_users"));
+      if (!snap.exists()) {
+        setMembers([]);
+        setLoading(false);
+        return;
+      }
+
+      const list: any[] = [];
+      Object.entries(snap.val()).forEach(([uid, v]: [string, any]) => {
+        const tier = v.membership ?? "basic";
+        const rules = getTierRule(tier);
+        const bookings: any[] = Array.isArray(v.bookings) ? v.bookings : [];
+
+        // Rolling 30-day count — same logic as assertMonthlyLimit
+        const used = bookings.filter(
+          (b: any) => b.dateKey && b.dateKey >= since && b.dateKey <= today,
+        ).length;
+
+        // Today's bookings for daily limit display
+        const usedToday = bookings.filter(
+          (b: any) => b.dateKey === today,
+        ).length;
+
+        // Credits-based members — show credits remaining instead of monthly limit
+        const isCredits = rules.max === 0;
+
+        list.push({
+          uid,
+          name: v.name || "Unnamed",
+          email: v.email || "",
+          tier,
+          rules,
+          used,
+          usedToday,
+          max: rules.max,
+          remaining: isCredits
+            ? (v.classCredits ?? 0)
+            : Math.max(0, rules.max - used),
+          pct: isCredits
+            ? 0
+            : rules.max > 0
+              ? Math.min(100, (used / rules.max) * 100)
+              : 0,
+          isCredits,
+          classCredits: v.classCredits ?? 0,
+          // Last booking date
+          lastBooked:
+            bookings.length > 0
+              ? bookings.reduce(
+                  (latest: string, b: any) =>
+                    b.dateKey > latest ? b.dateKey : latest,
+                  "",
+                )
+              : null,
+        });
+      });
+
+      setMembers(list);
+    } catch {
+      toast("Failed to load usage data", "error");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  // ── Filter + sort ──────────────────────────────────────────────────────────
+  const tierGroups = ["all", "u18", "hybrid", "unlimited", "basic"];
+
+  const filtered = members
+    .filter((m) => {
+      const matchSearch =
+        !search ||
+        m.name.toLowerCase().includes(search.toLowerCase()) ||
+        m.email.toLowerCase().includes(search.toLowerCase());
+      const matchTier =
+        tierFilter === "all" ||
+        (tierFilter === "hybrid" && m.tier.startsWith("hybrid")) ||
+        (tierFilter === "unlimited" && m.tier.startsWith("unlimited")) ||
+        m.tier === tierFilter;
+      return matchSearch && matchTier;
+    })
+    .sort((a, b) => {
+      let diff = 0;
+      if (sortBy === "name") diff = a.name.localeCompare(b.name);
+      if (sortBy === "used") diff = a.used - b.used;
+      if (sortBy === "pct") diff = a.pct - b.pct;
+      if (sortBy === "remaining") diff = a.remaining - b.remaining;
+      return sortDir === "desc" ? -diff : diff;
+    });
+
+  // ── Summary stats ─────────────────────────────────────────────────────────
+  const atLimit = members.filter((m) => !m.isCredits && m.pct >= 100).length;
+  const nearLimit = members.filter(
+    (m) => !m.isCredits && m.pct >= 80 && m.pct < 100,
+  ).length;
+  const onTrack = members.filter((m) => !m.isCredits && m.pct < 80).length;
+
+  const handleSort = (col: typeof sortBy) => {
+    if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortBy(col);
+      setSortDir("desc");
+    }
+  };
+
+  const SortIcon = ({ col }: { col: typeof sortBy }) =>
+    sortBy === col ? (
+      <span style={{ marginLeft: 4, fontSize: 10 }}>
+        {sortDir === "desc" ? "▼" : "▲"}
+      </span>
+    ) : null;
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+        Monthly Usage Report
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 20,
+        }}
+      >
+        Rolling 30-day window · same calculation as the booking engine
+      </div>
+
+      {/* Summary cards */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(140px,1fr))",
+          gap: 10,
+          marginBottom: 20,
+        }}
+      >
+        {[
+          {
+            label: "At limit",
+            val: atLimit,
+            color: "hsl(0 84% 51%)",
+            accent: atLimit > 0,
+          },
+          {
+            label: "Near limit",
+            val: nearLimit,
+            color: "hsl(38 92% 44%)",
+            accent: nearLimit > 0,
+          },
+          {
+            label: "On track",
+            val: onTrack,
+            color: "hsl(142 72% 37%)",
+            accent: false,
+          },
+          {
+            label: "Total members",
+            val: members.length,
+            color: "hsl(var(--foreground))",
+            accent: false,
+          },
+        ].map((s) => (
+          <div
+            key={s.label}
+            style={{
+              background: "hsl(var(--secondary))",
+              border: `1px solid hsl(var(--border))`,
+              borderRadius: 12,
+              padding: "14px 18px",
+              borderLeft: s.accent ? `3px solid ${s.color}` : undefined,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 24,
+                fontWeight: 700,
+                color: s.accent ? s.color : "hsl(var(--foreground))",
+                lineHeight: 1,
+              }}
+            >
+              {loading ? "—" : s.val}
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "hsl(var(--muted-foreground))",
+                marginTop: 6,
+              }}
+            >
+              {s.label}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          marginBottom: 16,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        {tierGroups.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTierFilter(t)}
+            style={{
+              padding: "5px 12px",
+              borderRadius: 20,
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+              textTransform: "capitalize",
+              background:
+                tierFilter === t ? "hsl(20 100% 50%)" : "hsl(var(--secondary))",
+              color: tierFilter === t ? "#000" : "hsl(var(--foreground))",
+              border:
+                tierFilter === t ? "none" : "1px solid hsl(var(--border))",
+              fontFamily: "var(--font-body)",
+            }}
+          >
+            {t === "all" ? "All tiers" : t}
+          </button>
+        ))}
+        <input
+          style={{ ...inp, width: 180, marginLeft: "auto" }}
+          placeholder="Search name or email…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <Btn variant="subtle" size="sm" onClick={load}>
+          ↻ Refresh
+        </Btn>
+      </div>
+
+      {/* Sort row */}
+      <div
+        style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}
+      >
+        <span
+          style={{
+            fontSize: 11,
+            color: "hsl(var(--muted-foreground))",
+            alignSelf: "center",
+          }}
+        >
+          Sort by:
+        </span>
+        {(
+          [
+            ["name", "Name"],
+            ["pct", "% used"],
+            ["used", "Classes used"],
+            ["remaining", "Remaining"],
+          ] as const
+        ).map(([col, label]) => (
+          <button
+            key={col}
+            onClick={() => handleSort(col)}
+            style={{
+              padding: "4px 10px",
+              borderRadius: 8,
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+              background:
+                sortBy === col ? "hsl(var(--secondary))" : "transparent",
+              color:
+                sortBy === col
+                  ? "hsl(var(--foreground))"
+                  : "hsl(var(--muted-foreground))",
+              border: "1px solid hsl(var(--border))",
+              fontFamily: "var(--font-body)",
+            }}
+          >
+            {label}
+            <SortIcon col={col} />
+          </button>
+        ))}
+      </div>
+
+      {/* Member rows */}
+      {loading ? (
+        <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+          Loading…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+          No members found.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {filtered.map((m) => {
+            const isFull = !m.isCredits && m.pct >= 100;
+            const isWarning = !m.isCredits && m.pct >= 80 && !isFull;
+            const borderColor = isFull
+              ? "hsl(0 84% 51%)"
+              : isWarning
+                ? "hsl(38 92% 44%)"
+                : m.rules.color;
+
+            return (
+              <div
+                key={m.uid}
+                style={{
+                  background: "hsl(var(--secondary))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: 10,
+                  padding: "12px 16px",
+                  borderLeft: `3px solid ${borderColor}`,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    flexWrap: "wrap",
+                    gap: 10,
+                  }}
+                >
+                  {/* Left: member info */}
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: 13,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        marginBottom: 2,
+                      }}
+                    >
+                      {m.name}
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: 20,
+                          background: `${m.rules.color}20`,
+                          color: m.rules.color,
+                        }}
+                      >
+                        {m.rules.label}
+                      </span>
+                      {isFull && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: 20,
+                            background: "hsl(0 84% 51% / 0.12)",
+                            color: "hsl(0 84% 51%)",
+                          }}
+                        >
+                          ⚠ At limit
+                        </span>
+                      )}
+                      {isWarning && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: 20,
+                            background: "hsl(38 92% 44% / 0.12)",
+                            color: "hsl(38 92% 44%)",
+                          }}
+                        >
+                          Near limit
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "hsl(var(--muted-foreground))",
+                        marginBottom: 8,
+                      }}
+                    >
+                      {m.email}
+                      {m.lastBooked && ` · Last booked: ${m.lastBooked}`}
+                    </div>
+
+                    {/* Usage bar — only for tiered members */}
+                    {!m.isCredits && m.max > 0 && (
+                      <>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 11,
+                            marginBottom: 2,
+                          }}
+                        >
+                          <span
+                            style={{ color: "hsl(var(--muted-foreground))" }}
+                          >
+                            {m.used} / {m.max} classes this month
+                          </span>
+                          <span
+                            style={{
+                              fontWeight: 700,
+                              color: isFull
+                                ? "hsl(0 84% 51%)"
+                                : isWarning
+                                  ? "hsl(38 92% 44%)"
+                                  : "hsl(var(--foreground))",
+                            }}
+                          >
+                            {Math.round(m.pct)}%
+                          </span>
+                        </div>
+                        <UsageBar
+                          used={m.used}
+                          max={m.max}
+                          color={m.rules.color}
+                        />
+                      </>
+                    )}
+
+                    {/* Credits-based members */}
+                    {m.isCredits && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "hsl(var(--muted-foreground))",
+                        }}
+                      >
+                        🎟 {m.classCredits} credits remaining · pay-per-class
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right: stats */}
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 16,
+                      flexShrink: 0,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    {!m.isCredits && (
+                      <>
+                        <div style={{ textAlign: "center" }}>
+                          <div
+                            style={{
+                              fontSize: 18,
+                              fontWeight: 700,
+                              color: "hsl(20 100% 50%)",
+                            }}
+                          >
+                            {m.used}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "hsl(var(--muted-foreground))",
+                            }}
+                          >
+                            Used
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "center" }}>
+                          <div
+                            style={{
+                              fontSize: 18,
+                              fontWeight: 700,
+                              color:
+                                m.remaining === 0
+                                  ? "hsl(0 84% 51%)"
+                                  : "hsl(142 72% 37%)",
+                            }}
+                          >
+                            {m.remaining}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "hsl(var(--muted-foreground))",
+                            }}
+                          >
+                            Left
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "center" }}>
+                          <div style={{ fontSize: 18, fontWeight: 700 }}>
+                            {m.usedToday}/{m.rules.daily}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "hsl(var(--muted-foreground))",
+                            }}
+                          >
+                            Today
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Legend */}
+      <div
+        style={{
+          marginTop: 20,
+          padding: "12px 16px",
+          background: "hsl(var(--secondary))",
+          border: "1px solid hsl(var(--border))",
+          borderRadius: 10,
+          fontSize: 11,
+          color: "hsl(var(--muted-foreground))",
+          lineHeight: 1.9,
+        }}
+      >
+        <strong style={{ color: "hsl(var(--foreground))" }}>
+          Tier limits (rolling 30 days):
+        </strong>
+        <br />
+        🟣 Under 18 — 24 classes · CrossFit only · 1/day
+        <br />
+        🔵 Hybrid — 14 classes · all except Open Gym · 1/day
+        <br />
+        🟠 Unlimited — 50 classes · all classes · 2/day
+        <br />⚫ Basic — credits only, no monthly limit
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REPLACE everything from the TABS constant to the end of the file with this.
+// All manager components above (MembersManager, ClassesManager, etc.) are
+// completely untouched — paste this below the last closing brace of
+// ManualCheckInManager (or whichever component is last before TABS).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Sidebar nav config ────────────────────────────────────────────────────────
+const NAV_GROUPS = [
+  {
+    label: "Overview",
+    items: [
+      { id: "dashboard", icon: "ti-layout-dashboard", label: "Dashboard" },
+    ],
+  },
+  {
+    label: "Members",
+    items: [
+      { id: "members", icon: "ti-users", label: "App Users" },
+      { id: "checkin", icon: "ti-circle-check", label: "Check-In" },
+      { id: "rewards", icon: "ti-gift", label: "Rewards" },
+      { id: "usage", icon: "ti-chart-bar", label: "Monthly Usage" },
+      { id: "credits", icon: "ti-ticket", label: "Packages" },
+    ],
+  },
+  {
+    label: "Classes",
+    items: [
+      { id: "classes", icon: "ti-calendar", label: "Schedule" },
+      { id: "exports", icon: "ti-download", label: "Exports" },
+      { id: "pending", icon: "ti-clock-hour-4", label: "Pending Payments" },
+      { id: "cashbooking", icon: "ti-cash", label: "Cash Booking" },
+      { id: "challenges", icon: "ti-trophy", label: "Challenges" },
+    ],
+  },
+  {
+    label: "Content",
+    items: [
+      { id: "news", icon: "ti-news", label: "News & Events" },
+      { id: "gallery", icon: "ti-brand-instagram", label: "Social Media" },
+      { id: "banners", icon: "ti-ad", label: "Ad Banners" },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      { id: "community", icon: "ti-message-circle", label: "Community" },
+      { id: "ads", icon: "ti-speakerphone", label: "Ad Enquiries" },
+      { id: "feedback", icon: "ti-message-dots", label: "Feedback" },
+      { id: "notifications", icon: "ti-bell", label: "Notifications" },
+      { id: "push", icon: "ti-device-mobile", label: "Push Notifications" },
+      { id: "terms", icon: "ti-file-text", label: "T&C Records" },
+      { id: "revenue", icon: "ti-report-money", label: "Revenue" },
+      { id: "instagram", icon: "ti-plug", label: "Instagram" },
+    ],
+  },
 ];
 
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function Dashboard({
+  onNavigate,
+  toast,
+}: {
+  onNavigate: (id: string) => void;
+  toast: any;
+}) {
+  const [stats, setStats] = useState({
+    members: 0,
+    classesToday: 0,
+    rewardsReady: 0,
+    newEnquiries: 0,
+    pendingNews: 0,
+    activeChallenges: 0,
+  });
+  const [todaysClasses, setTodaysClasses] = useState<any[]>([]);
+  const [rewardMembers, setRewardMembers] = useState<any[]>([]);
+  const [recentEnquiries, setRecentEnquiries] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        // Members
+        const membersSnap = await get(ref(db, "mk2_users"));
+        let memberCount = 0;
+        let rewardsReady = 0;
+        const rewardList: any[] = [];
+        if (membersSnap.exists()) {
+          Object.entries(membersSnap.val()).forEach(
+            ([uid, val]: [string, any]) => {
+              memberCount++;
+              const checkIns = Array.isArray(val.checkIns)
+                ? val.checkIns.length
+                : 0;
+              const rewardsMap: Record<string, any> = val.rewards ?? {};
+              const pending = Object.entries(rewardsMap).filter(
+                ([, r]: [string, any]) =>
+                  r.status === "pending" && Date.now() < r.expiresAt,
+              );
+              if (pending.length > 0) {
+                rewardsReady++;
+                rewardList.push({
+                  name: val.name || "Unnamed",
+                  email: val.email || "",
+                  checkIns,
+                  expiresAt: (pending[0][1] as any).expiresAt,
+                });
+              }
+            },
+          );
+        }
+
+        // Today's classes
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayKey = formatDateKey(today);
+        const todayName = getDayName(today);
+        const classesSnap = await get(ref(db, "admin_classes"));
+        let classesToday: any[] = [];
+        if (classesSnap.exists()) {
+          Object.entries(classesSnap.val()).forEach(
+            ([id, val]: [string, any]) => {
+              const matches =
+                val.scheduleType === "date"
+                  ? val.specificDate === todayKey
+                  : val.day === todayName;
+              if (matches) classesToday.push({ id, ...val });
+            },
+          );
+          classesToday.sort((a, b) =>
+            (a.time || "").localeCompare(b.time || ""),
+          );
+        }
+
+        // Ad enquiries
+        const enquiriesSnap = await get(ref(db, "ad_enquiries"));
+        let newEnqs = 0;
+        const enqList: any[] = [];
+        if (enquiriesSnap.exists()) {
+          Object.entries(enquiriesSnap.val()).forEach(
+            ([k, v]: [string, any]) => {
+              if (v.status === "new") newEnqs++;
+              enqList.push({ key: k, ...v });
+            },
+          );
+          enqList.sort(
+            (a, b) =>
+              new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+          );
+        }
+
+        // News drafts
+        const newsSnap = await get(ref(db, "admin_news"));
+        let pendingNews = 0;
+        if (newsSnap.exists()) {
+          Object.values(newsSnap.val()).forEach((v: any) => {
+            if (v.status === "draft") pendingNews++;
+          });
+        }
+
+        // Active challenges
+        const challSnap = await get(ref(db, "challenges"));
+        let activeChallenges = 0;
+        if (challSnap.exists()) {
+          Object.values(challSnap.val()).forEach((v: any) => {
+            if (v.active) activeChallenges++;
+          });
+        }
+
+        setStats({
+          members: memberCount,
+          classesToday: classesToday.length,
+          rewardsReady,
+          newEnquiries: newEnqs,
+          pendingNews,
+          activeChallenges,
+        });
+        setTodaysClasses(classesToday.slice(0, 4));
+        setRewardMembers(rewardList.slice(0, 4));
+        setRecentEnquiries(enqList.slice(0, 3));
+      } catch {
+        toast("Dashboard load error", "error");
+      }
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  const s: any = {
+    card: {
+      background: "hsl(var(--secondary))",
+      border: "1px solid hsl(var(--border))",
+      borderRadius: 12,
+      padding: "14px 18px",
+    },
+    cardTitle: {
+      fontSize: 11,
+      fontWeight: 700,
+      textTransform: "uppercase" as const,
+      letterSpacing: "0.1em",
+      color: "hsl(var(--muted-foreground))",
+      marginBottom: 12,
+    },
+    row: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "7px 0",
+      borderBottom: "1px solid hsl(var(--border))",
+    },
+    rowLast: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "7px 0",
+    },
+    name: { fontWeight: 700, fontSize: 13 },
+    sub: { fontSize: 11, color: "hsl(var(--muted-foreground))", marginTop: 2 },
+  };
+
+  const StatCard = ({ val, label, accent, onClick }: any) => (
+    <div
+      onClick={onClick}
+      style={{
+        ...s.card,
+        cursor: onClick ? "pointer" : "default",
+        borderLeft: accent ? "3px solid hsl(20 100% 50%)" : undefined,
+        transition: "background 0.15s",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 28,
+          fontWeight: 700,
+          color: accent ? "hsl(20 100% 50%)" : "hsl(var(--foreground))",
+          lineHeight: 1,
+        }}
+      >
+        {loading ? "—" : val}
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          color: "hsl(var(--muted-foreground))",
+          marginTop: 6,
+        }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+
+  const Badge = ({ children, color }: any) => (
+    <span
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        padding: "2px 8px",
+        borderRadius: 20,
+        background:
+          color === "green"
+            ? "hsl(142 72% 37% / 0.15)"
+            : color === "amber"
+              ? "hsl(38 92% 44% / 0.15)"
+              : "hsl(20 100% 50% / 0.15)",
+        color:
+          color === "green"
+            ? "hsl(142 72% 37%)"
+            : color === "amber"
+              ? "hsl(38 92% 44%)"
+              : "hsl(20 100% 50%)",
+      }}
+    >
+      {children}
+    </span>
+  );
+
+  const now = new Date();
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+        Good{" "}
+        {now.getHours() < 12
+          ? "morning"
+          : now.getHours() < 17
+            ? "afternoon"
+            : "evening"}{" "}
+        👋
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 20,
+        }}
+      >
+        {now.toLocaleDateString("en-ZA", {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        })}
+      </div>
+
+      {/* Stat grid */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+          gap: 10,
+          marginBottom: 20,
+        }}
+      >
+        <StatCard
+          val={stats.members}
+          label="App users"
+          onClick={() => onNavigate("members")}
+        />
+        <StatCard
+          val={stats.classesToday}
+          label="Classes today"
+          onClick={() => onNavigate("classes")}
+        />
+        <StatCard
+          val={stats.rewardsReady}
+          label="Rewards ready"
+          accent
+          onClick={() => onNavigate("rewards")}
+        />
+        <StatCard
+          val={stats.newEnquiries}
+          label="New enquiries"
+          accent={stats.newEnquiries > 0}
+          onClick={() => onNavigate("ads")}
+        />
+        <StatCard
+          val={stats.pendingNews}
+          label="News drafts"
+          onClick={() => onNavigate("news")}
+        />
+        <StatCard
+          val={stats.activeChallenges}
+          label="Active challenges"
+          onClick={() => onNavigate("challenges")}
+        />
+      </div>
+
+      {/* Three panels */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+          gap: 14,
+        }}
+      >
+        {/* Today's classes */}
+        <div style={s.card}>
+          <div style={s.cardTitle}>📅 Today's classes</div>
+          {loading ? (
+            <div
+              style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
+            >
+              Loading…
+            </div>
+          ) : todaysClasses.length === 0 ? (
+            <div
+              style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
+            >
+              No classes today.
+            </div>
+          ) : (
+            todaysClasses.map((cls, i) => {
+              const isLast = i === todaysClasses.length - 1;
+              const clsTime = cls.time || "";
+              const [hh, mm] = clsTime.split(":").map(Number);
+              const clsDate = new Date();
+              clsDate.setHours(hh, mm, 0, 0);
+              const done = clsDate < now;
+              return (
+                <div key={cls.id} style={isLast ? s.rowLast : s.row}>
+                  <div>
+                    <div style={s.name}>
+                      {cls.name}{" "}
+                      <span
+                        style={{
+                          fontWeight: 400,
+                          color: "hsl(var(--muted-foreground))",
+                        }}
+                      >
+                        · {cls.time}
+                      </span>
+                    </div>
+                    <div style={s.sub}>
+                      {cls.trainer} · {cls.bookedCount ?? 0}/{cls.spots} booked
+                    </div>
+                  </div>
+                  <Badge color={done ? "amber" : "green"}>
+                    {done ? "Done" : "Active"}
+                  </Badge>
+                </div>
+              );
+            })
+          )}
+          {!loading && (
+            <button
+              onClick={() => onNavigate("classes")}
+              style={{
+                marginTop: 12,
+                fontSize: 11,
+                fontWeight: 700,
+                color: "hsl(20 100% 50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              View schedule →
+            </button>
+          )}
+        </div>
+
+        {/* Rewards ready */}
+        <div style={s.card}>
+          <div style={s.cardTitle}>🎁 Rewards ready to redeem</div>
+          {loading ? (
+            <div
+              style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
+            >
+              Loading…
+            </div>
+          ) : rewardMembers.length === 0 ? (
+            <div
+              style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
+            >
+              No pending rewards.
+            </div>
+          ) : (
+            rewardMembers.map((m, i) => {
+              const isLast = i === rewardMembers.length - 1;
+              const daysLeft = Math.max(
+                0,
+                Math.round((m.expiresAt - Date.now()) / 86400000),
+              );
+              return (
+                <div key={m.email} style={isLast ? s.rowLast : s.row}>
+                  <div>
+                    <div style={s.name}>{m.name}</div>
+                    <div style={s.sub}>
+                      Expires in {daysLeft}d · {m.checkIns} check-ins
+                    </div>
+                  </div>
+                  <Badge color={daysLeft < 7 ? "orange" : "green"}>
+                    Redeem
+                  </Badge>
+                </div>
+              );
+            })
+          )}
+          {!loading && (
+            <button
+              onClick={() => onNavigate("rewards")}
+              style={{
+                marginTop: 12,
+                fontSize: 11,
+                fontWeight: 700,
+                color: "hsl(20 100% 50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              Manage rewards →
+            </button>
+          )}
+        </div>
+
+        {/* Ad enquiries */}
+        <div style={s.card}>
+          <div style={s.cardTitle}>📣 Recent ad enquiries</div>
+          {loading ? (
+            <div
+              style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
+            >
+              Loading…
+            </div>
+          ) : recentEnquiries.length === 0 ? (
+            <div
+              style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}
+            >
+              No enquiries yet.
+            </div>
+          ) : (
+            recentEnquiries.map((e, i) => {
+              const isLast = i === recentEnquiries.length - 1;
+              return (
+                <div key={e.key} style={isLast ? s.rowLast : s.row}>
+                  <div>
+                    <div style={s.name}>{e.bizName}</div>
+                    <div style={s.sub}>
+                      {e.contactName} ·{" "}
+                      {new Date(e.timestamp).toLocaleDateString("en-ZA")}
+                    </div>
+                  </div>
+                  <Badge
+                    color={
+                      e.status === "new"
+                        ? "orange"
+                        : e.status === "confirmed"
+                          ? "green"
+                          : "amber"
+                    }
+                  >
+                    {e.status}
+                  </Badge>
+                </div>
+              );
+            })
+          )}
+          {!loading && (
+            <button
+              onClick={() => onNavigate("ads")}
+              style={{
+                marginTop: 12,
+                fontSize: 11,
+                fontWeight: 700,
+                color: "hsl(20 100% 50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              View all enquiries →
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Sidebar item ──────────────────────────────────────────────────────────────
+function SidebarItem({ item, active, onClick, badge }: any) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        width: "100%",
+        padding: "8px 12px",
+        margin: "1px 0",
+        borderRadius: 8,
+        border: "none",
+        cursor: "pointer",
+        fontFamily: "var(--font-body)",
+        fontSize: 13,
+        fontWeight: active ? 700 : 400,
+        background: active ? "hsl(20 100% 50% / 0.12)" : "transparent",
+        color: active ? "hsl(20 100% 50%)" : "hsl(var(--muted-foreground))",
+        textAlign: "left",
+        transition: "all 0.12s",
+      }}
+    >
+      <i
+        className={`ti ${item.icon}`}
+        style={{ fontSize: 16, width: 18, textAlign: "center", flexShrink: 0 }}
+        aria-hidden="true"
+      />
+      <span style={{ flex: 1 }}>{item.label}</span>
+      {badge > 0 && (
+        <span
+          style={{
+            background: "hsl(20 100% 50%)",
+            color: "#000",
+            fontSize: 9,
+            fontWeight: 700,
+            padding: "1px 6px",
+            borderRadius: 10,
+            flexShrink: 0,
+          }}
+        >
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ── Main Admin export ─────────────────────────────────────────────────────────
 export function Admin() {
   const [authed, setAuthed] = useState(
     () => sessionStorage.getItem("mk2admin") === "true",
   );
-  const [tab, setTab] = useState("members");
+  const [tab, setTab] = useState("dashboard");
   const [toastQ, setToastQ] = useState<any>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const { isMobile } = useBreakpoint();
+
+  // Live badge counts
+  const [rewardsCount, setRewardsCount] = useState(0);
+  const [enquiriesCount, setEnquiriesCount] = useState(0);
+
+  useEffect(() => {
+    if (!authed) return;
+    // Rewards badge
+    get(ref(db, "mk2_users")).then((snap) => {
+      if (!snap.exists()) return;
+      let count = 0;
+      Object.values(snap.val()).forEach((val: any) => {
+        const rewardsMap: Record<string, any> = val.rewards ?? {};
+        const pending = Object.values(rewardsMap).filter(
+          (r: any) => r.status === "pending" && Date.now() < r.expiresAt,
+        );
+        if (pending.length > 0) count++;
+      });
+      setRewardsCount(count);
+    });
+    // Enquiries badge
+    get(ref(db, "ad_enquiries")).then((snap) => {
+      if (!snap.exists()) return;
+      const count = Object.values(snap.val()).filter(
+        (v: any) => v.status === "new",
+      ).length;
+      setEnquiriesCount(count);
+    });
+  }, [authed]);
+
   const toast = (msg: string, type: string) => setToastQ({ msg, type });
+
   const login = () => {
     sessionStorage.setItem("mk2admin", "true");
     setAuthed(true);
@@ -7072,117 +13818,278 @@ export function Admin() {
 
   if (!authed) return <AdminLogin onLogin={login} />;
 
-  return (
+  const getBadge = (id: string) => {
+    if (id === "rewards") return rewardsCount;
+    if (id === "ads") return enquiriesCount;
+    return 0;
+  };
+
+  const activeLabel =
+    NAV_GROUPS.flatMap((g) => g.items).find((i) => i.id === tab)?.label ??
+    "Dashboard";
+
+  const Sidebar = () => (
     <div
       style={{
-        minHeight: "100vh",
-        background: "hsl(var(--background))",
-        color: "hsl(var(--foreground))",
-        fontFamily: "var(--font-body)",
-        paddingBottom: 40,
+        width: 220,
+        background: "hsl(var(--card))",
+        borderRight: "1px solid hsl(var(--border))",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        flexShrink: 0,
       }}
     >
-      <nav
+      {/* Brand */}
+      <div
         style={{
-          background: "hsl(0 0% 4%)",
+          padding: "18px 16px 14px",
           borderBottom: "1px solid hsl(var(--border))",
-          padding: "0 24px",
-          height: 56,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          position: "sticky",
-          top: 0,
-          zIndex: 100,
         }}
       >
         <div
           style={{
             fontFamily: "var(--font-display)",
-            fontSize: 20,
+            fontSize: 18,
             letterSpacing: "0.15em",
             color: "hsl(20 100% 50%)",
           }}
         >
-          MK2R ADMIN
+          MK2R
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }}>
-            Management Portal
-          </span>
-          <Btn variant="subtle" size="sm" onClick={logout}>
-            Sign Out
-          </Btn>
-        </div>
-      </nav>
-
-      <div
-        style={{
-          maxWidth: 1060,
-          margin: "0 auto",
-          padding: isMobile ? "20px 14px" : "32px 24px",
-        }}
-      >
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))",
-            gap: 10,
-            marginBottom: 28,
+            fontSize: 10,
+            color: "hsl(var(--muted-foreground))",
+            marginTop: 2,
           }}
         >
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
+          Admin portal
+        </div>
+      </div>
+
+      {/* Nav */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "8px 8px" }}>
+        {NAV_GROUPS.map((group) => (
+          <div key={group.label} style={{ marginBottom: 4 }}>
+            <div
               style={{
-                background:
-                  tab === t.id ? "hsl(20 100% 50%)" : "hsl(var(--card))",
-                color: tab === t.id ? "#000" : "hsl(var(--foreground))",
-                border: `1px solid ${tab === t.id ? "hsl(20 100% 50%)" : "hsl(var(--border))"}`,
-                borderRadius: 10,
-                padding: "14px 16px",
-                textAlign: "left",
-                cursor: "pointer",
-                fontFamily: "var(--font-body)",
-                transition: "all 0.15s",
+                fontSize: 10,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                color: "hsl(var(--muted-foreground))",
+                padding: "10px 12px 4px",
+                opacity: 0.6,
               }}
             >
-              <div style={{ fontWeight: 700, fontSize: 13 }}>{t.label}</div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 3 }}>
-                {t.desc}
-              </div>
-            </button>
-          ))}
-        </div>
+              {group.label}
+            </div>
+            {group.items.map((item) => (
+              <SidebarItem
+                key={item.id}
+                item={item}
+                active={tab === item.id}
+                badge={getBadge(item.id)}
+                onClick={() => {
+                  setTab(item.id);
+                  setSidebarOpen(false);
+                }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
 
-        <motion.div
-          key={tab}
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2 }}
+      {/* Sign out */}
+      <div
+        style={{
+          padding: "10px 8px",
+          borderTop: "1px solid hsl(var(--border))",
+        }}
+      >
+        <SidebarItem
+          item={{ id: "signout", icon: "ti-logout", label: "Sign out" }}
+          active={false}
+          onClick={logout}
+        />
+      </div>
+    </div>
+  );
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        height: "100vh",
+        overflow: "hidden",
+        background: "hsl(var(--background))",
+        color: "hsl(var(--foreground))",
+        fontFamily: "var(--font-body)",
+      }}
+    >
+      {/* Desktop sidebar */}
+      {!isMobile && <Sidebar />}
+
+      {/* Mobile sidebar overlay */}
+      {isMobile && sidebarOpen && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex" }}
+          onClick={() => setSidebarOpen(false)}
+        >
+          <div
+            style={{ width: 220, height: "100%", zIndex: 201 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Sidebar />
+          </div>
+          <div style={{ flex: 1, background: "rgba(0,0,0,0.5)" }} />
+        </div>
+      )}
+
+      {/* Main area */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+          overflow: "hidden",
+        }}
+      >
+        {/* Top bar */}
+        <div
           style={{
+            height: 54,
+            borderBottom: "1px solid hsl(var(--border))",
             background: "hsl(var(--card))",
-            border: "1px solid hsl(var(--border))",
-            borderRadius: 14,
-            padding: isMobile ? 16 : 24,
+            display: "flex",
+            alignItems: "center",
+            padding: "0 20px",
+            gap: 12,
+            flexShrink: 0,
+            position: "sticky",
+            top: 0,
+            zIndex: 100,
           }}
         >
-          {tab === "members" && <MembersManager toast={toast} />}
-          {tab === "community" && <CommunityManager toast={toast} />}
-          {tab === "classes" && <ClassesManager toast={toast} />}
-          {tab === "credits" && <PackagesManager toast={toast} />}
-          {tab === "checkin" && <ManualCheckInManager toast={toast} />}
-          {tab === "gallery" && <SocialMediaManager toast={toast} />}
-          {tab === "rewards" && <RewardsManager toast={toast} />}
-          {tab === "news" && <NewsManager toast={toast} />}
-          {tab === "ads" && <AdEnquiriesManager toast={toast} />}
-          {tab === "feedback" && <FeedbackManager toast={toast} />}
-          {tab === "instagram" && <InstagramSetup />}
-          {tab === "terms" && <TermsManager toast={toast} />}
-          {tab === "banners" && <BannersManager toast={toast} />}
-          {tab === "challenges" && <ChallengesManager toast={toast} />}
-        </motion.div>
+          {isMobile && (
+            <button
+              onClick={() => setSidebarOpen(true)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "hsl(var(--foreground))",
+                fontSize: 20,
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <i className="ti ti-menu-2" aria-label="Open menu" />
+            </button>
+          )}
+          <div style={{ fontWeight: 700, fontSize: 15 }}>{activeLabel}</div>
+          <div
+            style={{
+              marginLeft: "auto",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            {rewardsCount > 0 && (
+              <button
+                onClick={() => setTab("rewards")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "5px 12px",
+                  borderRadius: 20,
+                  background: "hsl(142 72% 37% / 0.12)",
+                  border: "1px solid hsl(142 72% 37% / 0.3)",
+                  color: "hsl(142 72% 37%)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "var(--font-body)",
+                }}
+              >
+                🎁 {rewardsCount} reward{rewardsCount !== 1 ? "s" : ""} ready
+              </button>
+            )}
+            {enquiriesCount > 0 && (
+              <button
+                onClick={() => setTab("ads")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "5px 12px",
+                  borderRadius: 20,
+                  background: "hsl(20 100% 50% / 0.1)",
+                  border: "1px solid hsl(20 100% 50% / 0.3)",
+                  color: "hsl(20 100% 50%)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "var(--font-body)",
+                }}
+              >
+                📣 {enquiriesCount} new enquir
+                {enquiriesCount !== 1 ? "ies" : "y"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Page content */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: isMobile ? "16px 14px" : "28px 28px",
+          }}
+        >
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={tab}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18 }}
+            >
+              {tab === "dashboard" && (
+                <Dashboard onNavigate={setTab} toast={toast} />
+              )}
+              {tab === "members" && <MembersManager toast={toast} />}
+              {tab === "checkin" && <ManualCheckInManager toast={toast} />}
+              {tab === "rewards" && <RewardsManager toast={toast} />}
+              {tab === "credits" && <PackagesManager toast={toast} />}
+              {tab === "classes" && <ClassesManager toast={toast} />}
+              {tab === "pending" && <PendingPaymentsManager toast={toast} />}
+              {tab === "exports" && <BookingExports toast={toast} />}
+              {tab === "challenges" && <ChallengesManager toast={toast} />}
+              {tab === "news" && <NewsManager toast={toast} />}
+              {tab === "gallery" && <SocialMediaManager toast={toast} />}
+              {tab === "banners" && <BannersManager toast={toast} />}
+              {tab === "community" && <CommunityManager toast={toast} />}
+              {tab === "usage" && <MonthlyUsageReport toast={toast} />}
+              {tab === "ads" && <AdEnquiriesManager toast={toast} />}
+              {tab === "cashbooking" && <ManualCashBooking toast={toast} />}
+              {tab === "feedback" && <FeedbackManager toast={toast} />}
+              {tab === "revenue" && <RevenueManager toast={toast} />}
+              {tab === "notifications" && (
+                <NotificationsManager toast={toast} />
+              )}
+              {tab === "push" && <PushNotificationsManager toast={toast} />}
+              {tab === "terms" && <TermsManager toast={toast} />}
+              {tab === "instagram" && <InstagramSetup />}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </div>
 
       {toastQ && <MToast {...toastQ} onDone={() => setToastQ(null)} />}

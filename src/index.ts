@@ -1,4 +1,4 @@
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 
 admin.initializeApp();
@@ -53,7 +53,6 @@ async function sendToAll(
 
     if (tokens.length === 0) return;
 
-    // FCM supports up to 500 tokens per multicast
     const chunks = [];
     for (let i = 0; i < tokens.length; i += 500) {
       chunks.push(tokens.slice(i, i + 500));
@@ -79,14 +78,12 @@ async function sendToAll(
 
 // ════════════════════════════════════════════════════════════════════════════
 // TRIGGER 1 — Class booking confirmed
-// Fires when a booking is written to mk2_users/{uid}/bookings/{bookingId}
 // ════════════════════════════════════════════════════════════════════════════
 export const onBookingConfirmed = functions.database
   .ref("mk2_users/{uid}/bookings/{bookingId}")
   .onCreate(async (snap, context) => {
     const { uid } = context.params;
     const booking = snap.val();
-
     if (!booking) return;
 
     const className = booking.className || "your class";
@@ -102,15 +99,12 @@ export const onBookingConfirmed = functions.database
 
 // ════════════════════════════════════════════════════════════════════════════
 // TRIGGER 2 — New chat message in a room
-// Fires when a message is written to rooms/{roomName}/messages/{msgId}
-// Notifies all members of that room EXCEPT the sender
 // ════════════════════════════════════════════════════════════════════════════
 export const onChatMessage = functions.database
   .ref("rooms/{roomName}/messages/{msgId}")
   .onCreate(async (snap, context) => {
     const { roomName } = context.params;
     const message = snap.val();
-
     if (!message || !message.uid) return;
 
     const senderUid = message.uid;
@@ -119,7 +113,6 @@ export const onChatMessage = functions.database
       message.text ||
       (message.type === "image" ? "📷 Sent an image" : "📹 Sent a video");
 
-    // Find all users who have joined this room
     const usersSnap = await db.ref("mk2_users").get();
     if (!usersSnap.exists()) return;
 
@@ -127,10 +120,7 @@ export const onChatMessage = functions.database
     const notifyPromises: Promise<void>[] = [];
 
     Object.entries(users).forEach(([uid, userData]) => {
-      // Skip sender
       if (uid === senderUid) return;
-
-      // Only notify if user has joined this room
       const joinedRooms = userData.joinedRooms || {};
       if (!joinedRooms[roomName]) return;
 
@@ -149,8 +139,6 @@ export const onChatMessage = functions.database
 
 // ════════════════════════════════════════════════════════════════════════════
 // TRIGGER 3 — Admin announcement / news post
-// Fires when a new item is written to mk2_news/{newsId}
-// Broadcasts to ALL users
 // ════════════════════════════════════════════════════════════════════════════
 export const onNewAnnouncement = functions.database
   .ref("mk2_news/{newsId}")
@@ -169,17 +157,14 @@ export const onNewAnnouncement = functions.database
   });
 
 // ════════════════════════════════════════════════════════════════════════════
-// TRIGGER 4 — Check-in reminder
-// Runs every day at 7:00 AM SAST (05:00 UTC)
-// Sends to users who haven't checked in today
+// TRIGGER 4 — Daily check-in reminder (07:00 SAST)
 // ════════════════════════════════════════════════════════════════════════════
 export const dailyCheckinReminder = functions.pubsub
-  .schedule("0 5 * * *") // 07:00 SAST daily
+  .schedule("0 5 * * *")
   .timeZone("Africa/Johannesburg")
   .onRun(async () => {
     const today = new Date().toDateString();
     const usersSnap = await db.ref("mk2_users").get();
-
     if (!usersSnap.exists()) return;
 
     const users = usersSnap.val() as Record<string, any>;
@@ -188,7 +173,6 @@ export const dailyCheckinReminder = functions.pubsub
     Object.entries(users).forEach(([uid, userData]) => {
       if (!userData.fcmToken) return;
 
-      // Check if user has already checked in today
       const checkIns: any[] = Array.isArray(userData.checkIns)
         ? userData.checkIns
         : [];

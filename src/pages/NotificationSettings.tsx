@@ -10,11 +10,26 @@ import { db } from "@/lib/firebase";
 import { getMessaging, getToken, deleteToken } from "firebase/messaging";
 
 const PREF_KEYS = [
-  { label: "Class reminders", icon: "📅", key: "classReminders", default: true },
-  { label: "Reward milestones", icon: "🏆", key: "rewardMilestones", default: true },
+  {
+    label: "Class reminders",
+    icon: "📅",
+    key: "classReminders",
+    default: true,
+  },
+  {
+    label: "Reward milestones",
+    icon: "🏆",
+    key: "rewardMilestones",
+    default: true,
+  },
   { label: "Workout nudges", icon: "⚡", key: "workoutNudges", default: true },
   { label: "Gym news", icon: "📢", key: "gymNews", default: false },
-  { label: "Check-in streaks", icon: "✅", key: "checkinStreaks", default: true },
+  {
+    label: "Check-in streaks",
+    icon: "✅",
+    key: "checkinStreaks",
+    default: true,
+  },
   { label: "Community", icon: "💬", key: "community", default: false },
 ];
 
@@ -26,6 +41,7 @@ async function registerCommunityToken(uid: string) {
     const token = await getToken(messaging, { vapidKey: FCM_VAPID_KEY });
     if (token) {
       await set(ref(db, `mk2_users/${uid}/fcmToken`), token);
+      await set(ref(db, `mk2_users/${uid}/fcmUpdatedAt`), Date.now());
     }
   } catch (err) {
     console.warn("FCM token registration failed:", err);
@@ -37,12 +53,17 @@ async function unregisterCommunityToken(uid: string) {
     const messaging = getMessaging();
     await deleteToken(messaging);
     await remove(ref(db, `mk2_users/${uid}/fcmToken`));
+    await remove(ref(db, `mk2_users/${uid}/fcmUpdatedAt`));
   } catch (err) {
     console.warn("FCM token unregistration failed:", err);
   }
 }
 
-export function NotificationSettings({ setPage }: { setPage: (p: string) => void }) {
+export function NotificationSettings({
+  setPage,
+}: {
+  setPage: (p: string) => void;
+}) {
   const { user } = useAuth();
   const { isMobile } = useBreakpoint();
   const {
@@ -56,14 +77,15 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
   } = useGeolocation();
 
   const [permissionGranted, setPermissionGranted] = useState(
-    () => "Notification" in window && Notification.permission === "granted"
+    () => "Notification" in window && Notification.permission === "granted",
   );
   const [geoEnabled, setGeoEnabled] = useState(false);
   const [prefs, setPrefs] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(PREF_KEYS.map((p) => [p.key, p.default]))
+    Object.fromEntries(PREF_KEYS.map((p) => [p.key, p.default])),
   );
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
+  // Load saved prefs from Firebase
   useEffect(() => {
     if (!user?.uid) return;
     get(ref(db, `mk2_users/${user.uid}/notificationPrefs`)).then((snap) => {
@@ -72,16 +94,26 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
     });
   }, [user?.uid]);
 
+  // If permission is already granted on mount, ensure token is saved
+  useEffect(() => {
+    if (!user?.uid) return;
+    if ("Notification" in window && Notification.permission === "granted") {
+      registerCommunityToken(user.uid);
+    }
+  }, [user?.uid]);
+
   const togglePref = async (key: string, value: boolean) => {
     if (!user?.uid) return;
     const updated = { ...prefs, [key]: value };
     setPrefs(updated);
     await set(ref(db, `mk2_users/${user.uid}/notificationPrefs`), updated);
 
+    // Community toggle still independently manages the token
     if (key === "community") {
       if (value) {
         const browserPerm = await Notification.requestPermission();
         if (browserPerm === "granted") {
+          setPermissionGranted(true);
           await registerCommunityToken(user.uid);
         }
       } else {
@@ -90,19 +122,24 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
     }
   };
 
+  // ── Updated: saves FCM token for ALL members who accept push ──────────────
   const requestPush = async () => {
-    if (!("Notification" in window)) return;
+    if (!("Notification" in window) || !user?.uid) return;
 
     if (Notification.permission === "granted") {
       setPermissionGranted(true);
+      // Re-register in case the token has rotated
+      await registerCommunityToken(user.uid);
       return;
     }
 
     const result = await Notification.requestPermission();
     if (result === "granted") {
       setPermissionGranted(true);
+      // Save token so admin can target this member via Push panel
+      await registerCommunityToken(user.uid);
       new Notification("MK2 Rivers Fitness 💪", {
-        body: "Notifications enabled!",
+        body: "Notifications enabled! You're all set.",
         icon: "/favicon.ico",
       });
     }
@@ -118,7 +155,7 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
         Notification Settings
       </PageTitle>
 
-      {/* Push notification banner */}
+      {/* Push notification banner — only shown if permission not yet granted */}
       {!permissionGranted && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -139,6 +176,26 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
               <Btn variant="primary" size="sm" onClick={requestPush}>
                 🔔 Enable Notifications
               </Btn>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Confirmed — push is active */}
+      {permissionGranted && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mk2-card mb-4 border-l-[3px]"
+          style={{ borderLeftColor: "hsl(142 72% 37%)" }}
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">✅</span>
+            <div>
+              <div className="font-bold text-sm">Push notifications active</div>
+              <div className="text-muted-foreground text-xs mt-0.5">
+                You'll receive alerts even when the app is closed.
+              </div>
             </div>
           </div>
         </motion.div>
@@ -242,12 +299,10 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
   );
 }
 
-
 // import { useState, useEffect } from "react";
 // import { useAuth } from "@/context/AuthContext";
 // import { useBreakpoint } from "@/hooks/useBreakpoint";
 // import { useGeolocation } from "@/hooks/useGeolocation";
-// import { useNotifications } from "@/hooks/useNotifications";
 // import { Btn } from "@/components/shared/Btn";
 // import { PageTitle } from "@/components/shared/PageTitle";
 // import { motion } from "framer-motion";
@@ -255,86 +310,17 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 // import { db } from "@/lib/firebase";
 // import { getMessaging, getToken, deleteToken } from "firebase/messaging";
 
-// // Helper to format timestamp
-// const formatTime = (timestamp: number) => {
-//   const diff = Date.now() - timestamp;
-//   const minutes = Math.floor(diff / 60000);
-//   const hours = Math.floor(diff / 3600000);
-//   const days = Math.floor(diff / 86400000);
-
-//   if (minutes < 1) return "Just now";
-//   if (minutes < 60) return `${minutes} min ago`;
-//   if (hours < 24) return `${hours} hr ago`;
-//   return `${days} day${days === 1 ? "" : "s"} ago`;
-// };
-
-// const getIcon = (title: string, message: string) => {
-//   const lower = (title + " " + message).toLowerCase();
-//   if (lower.includes("class") || lower.includes("booking")) return "🏋️";
-//   if (lower.includes("reward") || lower.includes("points")) return "🏆";
-//   if (lower.includes("workout") || lower.includes("planner")) return "⚡";
-//   if (lower.includes("check")) return "✅";
-//   if (lower.includes("news")) return "📢";
-//   if (lower.includes("poll")) return "📊";
-//   if (
-//     lower.includes("community") ||
-//     lower.includes("chat") ||
-//     lower.includes("message")
-//   )
-//     return "💬";
-//   if (lower.includes("geo") || lower.includes("location")) return "📍";
-//   return "🔔";
-// };
-
-// const getTypeColor = (title: string, message: string) => {
-//   const lower = (title + " " + message).toLowerCase();
-//   if (lower.includes("class") || lower.includes("booking"))
-//     return "hsl(20 100% 50%)";
-//   if (lower.includes("reward") || lower.includes("points"))
-//     return "hsl(38 92% 44%)";
-//   if (lower.includes("workout") || lower.includes("planner"))
-//     return "hsl(217 91% 53%)";
-//   if (lower.includes("check")) return "hsl(142 72% 37%)";
-//   if (lower.includes("geo") || lower.includes("location"))
-//     return "hsl(187 85% 40%)";
-//   if (lower.includes("news")) return "hsl(263 85% 58%)";
-//   if (
-//     lower.includes("community") ||
-//     lower.includes("chat") ||
-//     lower.includes("poll") ||
-//     lower.includes("message")
-//   )
-//     return "hsl(20 100% 50%)";
-//   return "hsl(var(--muted-foreground))";
-// };
-
 // const PREF_KEYS = [
-//   {
-//     label: "Class reminders",
-//     icon: "📅",
-//     key: "classReminders",
-//     default: true,
-//   },
-//   {
-//     label: "Reward milestones",
-//     icon: "🏆",
-//     key: "rewardMilestones",
-//     default: true,
-//   },
+//   { label: "Class reminders", icon: "📅", key: "classReminders", default: true },
+//   { label: "Reward milestones", icon: "🏆", key: "rewardMilestones", default: true },
 //   { label: "Workout nudges", icon: "⚡", key: "workoutNudges", default: true },
 //   { label: "Gym news", icon: "📢", key: "gymNews", default: false },
-//   {
-//     label: "Check-in streaks",
-//     icon: "✅",
-//     key: "checkinStreaks",
-//     default: true,
-//   },
+//   { label: "Check-in streaks", icon: "✅", key: "checkinStreaks", default: true },
 //   { label: "Community", icon: "💬", key: "community", default: false },
 // ];
 
 // const FCM_VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY as string;
 
-// // ── FCM token helpers – store token at mk2_users/${uid}/fcmToken (singular) ──
 // async function registerCommunityToken(uid: string) {
 //   try {
 //     const messaging = getMessaging();
@@ -357,7 +343,7 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 //   }
 // }
 
-// export function Notifications({ setPage }: { setPage: (p: string) => void }) {
+// export function NotificationSettings({ setPage }: { setPage: (p: string) => void }) {
 //   const { user } = useAuth();
 //   const { isMobile } = useBreakpoint();
 //   const {
@@ -370,22 +356,12 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 //     lat,
 //   } = useGeolocation();
 
-//   const {
-//     notifications,
-//     unreadCount,
-//     loading: notifLoading,
-//     markAsRead,
-//     markAllAsRead,
-//   } = useNotifications(user?.uid || null);
-
-//   // const [permissionGranted, setPermissionGranted] = useState(false);
 //   const [permissionGranted, setPermissionGranted] = useState(
-//     () => "Notification" in window && Notification.permission === "granted",
+//     () => "Notification" in window && Notification.permission === "granted"
 //   );
 //   const [geoEnabled, setGeoEnabled] = useState(false);
-
 //   const [prefs, setPrefs] = useState<Record<string, boolean>>(() =>
-//     Object.fromEntries(PREF_KEYS.map((p) => [p.key, p.default])),
+//     Object.fromEntries(PREF_KEYS.map((p) => [p.key, p.default]))
 //   );
 //   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
@@ -395,14 +371,6 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 //       if (snap.exists()) setPrefs(snap.val());
 //       setPrefsLoaded(true);
 //     });
-//   }, [user?.uid]);
-
-//   // Mark all news as seen when user opens Notifications — clears the bell badge
-//   useEffect(() => {
-//     if (!user?.uid) return;
-//     set(ref(db, `mk2_users/${user.uid}/lastSeenNewsAt`), Date.now()).catch(
-//       () => {},
-//     );
 //   }, [user?.uid]);
 
 //   const togglePref = async (key: string, value: boolean) => {
@@ -423,12 +391,9 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 //     }
 //   };
 
-//   if (!user) return null;
-
 //   const requestPush = async () => {
 //     if (!("Notification" in window)) return;
 
-//     // Already granted — just update state and register token
 //     if (Notification.permission === "granted") {
 //       setPermissionGranted(true);
 //       return;
@@ -444,27 +409,14 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 //     }
 //   };
 
-//   // const requestPush = async () => {
-//   //   if (!("Notification" in window)) return;
-//   //   const result = await Notification.requestPermission();
-//   //   if (result === "granted") {
-//   //     setPermissionGranted(true);
-//   //     new Notification("MK2 Rivers Fitness 💪", {
-//   //       body: "Notifications enabled!",
-//   //       icon: "/favicon.ico",
-//   //     });
-//   //   }
-//   // };
+//   if (!user) return null;
 
 //   return (
 //     <div
 //       className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 py-5" : "px-6 py-10"}`}
 //     >
 //       <PageTitle sub="Stay on top of classes, rewards and reminders">
-//         Notifications{" "}
-//         {unreadCount > 0 && (
-//           <span className="text-primary text-[32px]">({unreadCount})</span>
-//         )}
+//         Notification Settings
 //       </PageTitle>
 
 //       {/* Push notification banner */}
@@ -548,7 +500,7 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 //         </div>
 //       </motion.div>
 
-//       {/* Notification Preferences — saved to Firebase */}
+//       {/* Notification Preferences */}
 //       <motion.div
 //         initial={{ opacity: 0, y: 8 }}
 //         animate={{ opacity: 1, y: 0 }}
@@ -581,75 +533,6 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 //         )}
 //       </motion.div>
 
-//       {/* Notifications list */}
-//       <div className="flex justify-between items-center mb-3">
-//         <div className="font-bold text-sm">Recent ({notifications.length})</div>
-//         {unreadCount > 0 && (
-//           <button
-//             onClick={markAllAsRead}
-//             className="text-xs text-primary bg-transparent border-none cursor-pointer font-bold"
-//           >
-//             Mark all read
-//           </button>
-//         )}
-//       </div>
-
-//       {notifLoading ? (
-//         <div className="text-center py-12 text-muted-foreground text-sm">
-//           Loading notifications…
-//         </div>
-//       ) : notifications.length === 0 ? (
-//         <div className="mk2-card text-center py-12 text-muted-foreground">
-//           No notifications yet. We'll keep you posted!
-//         </div>
-//       ) : (
-//         <div className="flex flex-col gap-3">
-//           {notifications.map((n, i) => {
-//             const icon = getIcon(n.title, n.message);
-//             const color = getTypeColor(n.title, n.message);
-//             return (
-//               <motion.div
-//                 key={n.id}
-//                 initial={{ opacity: 0, x: -8 }}
-//                 animate={{ opacity: 1, x: 0 }}
-//                 transition={{ delay: i * 0.05 }}
-//                 onClick={() => markAsRead(n.id)}
-//                 className="mk2-card cursor-pointer"
-//                 style={{
-//                   borderLeft: `3px solid ${color}`,
-//                   opacity: n.read ? 0.6 : 1,
-//                 }}
-//               >
-//                 <div className="flex items-start gap-3">
-//                   <span className="text-xl shrink-0">{icon}</span>
-//                   <div className="flex-1">
-//                     <div className="flex justify-between items-start gap-2 flex-wrap">
-//                       <div className="font-bold text-sm">{n.title}</div>
-//                       <div className="flex items-center gap-2">
-//                         {!n.read && (
-//                           <div className="w-2 h-2 rounded-full bg-primary" />
-//                         )}
-//                         <div className="text-[10px] text-muted-foreground">
-//                           {formatTime(n.timestamp)}
-//                         </div>
-//                       </div>
-//                     </div>
-//                     <div className="text-xs text-muted-foreground mt-1 leading-relaxed">
-//                       {n.message}
-//                     </div>
-//                     {n.link && (
-//                       <div className="mt-2 text-[10px] font-semibold text-primary">
-//                         Tap to view →
-//                       </div>
-//                     )}
-//                   </div>
-//                 </div>
-//               </motion.div>
-//             );
-//           })}
-//         </div>
-//       )}
-
 //       {/* Back button */}
 //       <div className="mt-8 text-center">
 //         <Btn variant="ghost" onClick={() => setPage("Dashboard")}>
@@ -659,5 +542,3 @@ export function NotificationSettings({ setPage }: { setPage: (p: string) => void
 //     </div>
 //   );
 // }
-
-

@@ -9,6 +9,7 @@ import { ProgressReport } from "@/pages/ProgressTracker";
 import { ClassBooking } from "@/pages/ClassBooking";
 import { CheckIn } from "@/pages/CheckIn";
 import { Membership } from "@/pages/Membership";
+import { Packages } from "@/pages/Packages";
 import { Community } from "@/pages/Community";
 import { Gallery } from "@/pages/Gallery";
 import { NewsEvents } from "@/pages/NewsEvents";
@@ -31,9 +32,9 @@ import { OfflineBanner } from "@/components/shared/OfflineBanner";
 import { motion } from "framer-motion";
 import { BookingSuccess } from "@/pages/BookingSuccess";
 import { BookingCancel } from "@/pages/BookingCancel";
-
 import { Onboarding } from "@/pages/Onboarding";
 import { Admin } from "@/pages/Admin";
+import { ToolsScreen } from "@/pages/Toolscreen"; // <-- NEW IMPORT
 
 function AppContent() {
   const { user, booting, toastData, clearToast } = useAuth();
@@ -42,7 +43,6 @@ function AppContent() {
   usePushNotifications(setPage);
 
   // ── PayFast return URLs ─────────────────────────────────────────────────────
-  // Detected before any auth/boot checks so PayFast redirects always land cleanly.
   const pathname = window.location.pathname;
 
   if (pathname === "/booking-success") {
@@ -142,6 +142,7 @@ function AppContent() {
         {page === "Gallery" && <Gallery />}
         {page === "News" && <NewsEvents />}
         {page === "Membership" && <Membership setPage={setPage} />}
+        {page === "Packages" && <Packages setPage={setPage} />}
         {page === "Account" && <Account setPage={setPage} />}
         {page === "About" && <AboutUs />}
         {page === "Contact" && <Contact />}
@@ -154,7 +155,8 @@ function AppContent() {
         {page === "NotificationSettings" && (
           <NotificationSettings setPage={setPage} />
         )}
-
+        {page === "Tools" && <ToolsScreen setPage={setPage} />}{" "}
+        {/* <-- NEW TOOLS SCREEN */}
         {/* ── Silver tier ─────────────────────────────────────────────────── */}
         {page === "Community" && (
           <MembershipGate
@@ -186,9 +188,8 @@ function AppContent() {
             <PRLogbook />
           </MembershipGate>
         )}
-
         {/* ── Gold tier ───────────────────────────────────────────────────── */}
-        {page === "Workout" && (
+        {page === "WorkoutPlanner" && (
           <MembershipGate
             required="gold"
             feature="AI Workout Planner"
@@ -254,6 +255,5 @@ export default function App() {
     </AuthProvider>
   );
 }
-
 
 
