@@ -2,9 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { logEvent, db, storage } from "@/lib/firebase";
-import { Btn } from "@/components/shared/Btn";
 import { PageTitle } from "@/components/shared/PageTitle";
-import { motion } from "framer-motion";
 import {
   ref,
   push,
@@ -41,15 +39,6 @@ interface Message {
   edited?: boolean;
 }
 
-interface FeedPost {
-  id: number;
-  author: string;
-  color: string;
-  text: string;
-  likes: number;
-  date: string;
-}
-
 interface Room {
   name: string;
   desc: string;
@@ -67,35 +56,6 @@ const FALLBACK_ROOMS: Room[] = [
   },
 ];
 
-// ── Seed feed posts (local only — shown until real feed is implemented) ────────
-
-const SEED_POSTS: FeedPost[] = [
-  {
-    id: 1,
-    author: "Coach Sipho",
-    color: "hsl(20 100% 50%)",
-    text: "Tuesday HIIT was FIRE 🔥 Proud of everyone who pushed through the last round. See you Thursday!",
-    likes: 12,
-    date: "2 days ago",
-  },
-  {
-    id: 2,
-    author: "Nomsa K.",
-    color: "hsl(263 85% 58%)",
-    text: "Just hit my personal best on bench press — 60kg! 6 months ago I couldn't lift 40kg. MK2 family made this possible 💪",
-    likes: 28,
-    date: "3 days ago",
-  },
-  {
-    id: 3,
-    author: "MK2 Admin",
-    color: "hsl(217 91% 53%)",
-    text: "🎉 30-Day Challenge starting next month! Track workouts, earn double points, win prizes. Sign up at reception.",
-    likes: 45,
-    date: "5 days ago",
-  },
-];
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function Community() {
@@ -109,33 +69,9 @@ export function Community() {
     user.name?.split(" ")[0] || user.email?.split("@")[0] || "Member";
   const canChat = user.membership === "gold";
 
-  const [tab, setTab] = useState<"feed" | "chat">("feed");
-
-  // ── Feed state ──────────────────────────────────────────────────────────────
-  const [posts, setPosts] = useState<FeedPost[]>(SEED_POSTS);
-  const [feedText, setFeedText] = useState("");
-
-  const postToFeed = () => {
-    if (!feedText.trim()) return toast("Write something first", "error");
-    logEvent("community_post");
-    setPosts([
-      {
-        id: Date.now(),
-        author: user.name,
-        color: user.color,
-        text: feedText.trim(),
-        likes: 0,
-        date: "Just now",
-      },
-      ...posts,
-    ]);
-    setFeedText("");
-    toast("Posted! 🙌", "success");
-  };
-
   // ── Chat state ──────────────────────────────────────────────────────────────
   const [isChatMobile, setIsChatMobile] = useState(window.innerWidth < 768);
-  const [rooms, setRooms] = useState<Room[]>([]); // ← replaces hardcoded ROOMS
+  const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [polls, setPolls] = useState<any[]>([]);
   const [chatText, setChatText] = useState("");
@@ -198,22 +134,20 @@ export function Community() {
     });
   }, [uid]);
 
-  // ── CHANGED: sync rooms from Firebase community_rooms (live subscription) ──
+  // Sync rooms from Firebase community_rooms (live subscription)
   useEffect(() => {
     const roomsRef = ref(db, "community_rooms");
     return onValue(roomsRef, (snap) => {
       if (snap.exists()) {
         const data = snap.val();
-        // Admin stores as { room_0: {name, desc}, room_1: {name, desc}, ... }
         const list = (Object.values(data) as any[])
-          .filter((r) => r?.name) // guard malformed entries
+          .filter((r) => r?.name)
           .map((r) => ({
             name: r.name as string,
             desc: (r.desc ?? "") as string,
           }));
         setRooms(list);
       } else {
-        // Fallback: admin hasn't written community_rooms to Firebase yet
         setRooms(FALLBACK_ROOMS);
       }
     });
@@ -563,131 +497,20 @@ export function Community() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div
-      className={
-        tab === "chat"
-          ? "h-screen flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-200"
-          : ""
-      }
-    >
-      {/* Feed header */}
-      {tab === "feed" && (
+    <div className="h-screen flex flex-col overflow-hidden bg-background text-foreground transition-colors duration-200">
+      {/* Header */}
+      {!room && (
         <div
-          className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pt-5" : "px-6 pt-10"}`}
+          className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pt-5" : "px-6 pt-10"} pb-2`}
         >
-          <PageTitle sub="Share wins, ask questions, motivate each other">
+          <PageTitle sub="Join a room and chat with the MK2 community">
             Community <span className="text-primary">Chat</span>
           </PageTitle>
         </div>
       )}
 
-      {/* Tab switcher */}
-      <div
-        className={`${
-          tab === "chat"
-            ? "px-4 pt-3 pb-2"
-            : `max-w-[760px] mx-auto ${isMobile ? "px-3.5" : "px-6"}`
-        } mb-3`}
-      >
-        <div className="flex gap-2 bg-muted p-1 rounded-xl w-fit">
-          <button
-            onClick={() => setTab("feed")}
-            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              tab === "feed"
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            📣 Feed
-          </button>
-          <button
-            onClick={() => {
-              if (!canChat) {
-                toast("Upgrade to Gold to unlock Chat Rooms 🔒", "error");
-                return;
-              }
-              setTab("chat");
-            }}
-            className={`relative px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              tab === "chat"
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            💬 Chat Rooms {!canChat && "🔒"}
-            {canChat && totalUnread > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
-                {totalUnread > 99 ? "99+" : totalUnread}
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* ── FEED TAB ──────────────────────────────────────────────────────────── */}
-      {tab === "feed" && (
-        <div
-          className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pb-5" : "px-6 pb-10"}`}
-        >
-          <div className="mk2-card mb-4">
-            <label className="mk2-label">Share with the MK2 Community</label>
-            <textarea
-              className="mk2-textarea mb-3"
-              placeholder="Share a win, ask a question, motivate someone…"
-              value={feedText}
-              onChange={(e) => setFeedText(e.target.value)}
-            />
-            <Btn variant="primary" onClick={postToFeed}>
-              Post to Community
-            </Btn>
-          </div>
-
-          <div className="flex flex-col gap-3.5">
-            {posts.map((p, i) => (
-              <motion.div
-                key={p.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.06 }}
-                className="mk2-card"
-              >
-                <div className="flex items-center gap-2.5 mb-2.5">
-                  <div
-                    className="w-9 h-9 rounded-full flex items-center justify-center font-display text-[15px] text-primary-foreground shrink-0"
-                    style={{ background: p.color }}
-                  >
-                    {p.author[0]}
-                  </div>
-                  <div>
-                    <div className="font-bold text-sm">{p.author}</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {p.date}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-sm leading-relaxed mb-3 text-foreground/80">
-                  {p.text}
-                </div>
-                <button
-                  onClick={() =>
-                    setPosts(
-                      posts.map((x) =>
-                        x.id === p.id ? { ...x, likes: x.likes + 1 } : x,
-                      ),
-                    )
-                  }
-                  className="bg-transparent border border-border rounded-full px-3.5 py-1 text-muted-foreground text-xs cursor-pointer font-body font-semibold hover:border-primary/40 hover:text-primary transition-colors"
-                >
-                  ❤️ {p.likes}
-                </button>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── CHAT TAB ──────────────────────────────────────────────────────────── */}
-      {tab === "chat" && canChat && (
+      {/* Chat */}
+      {canChat ? (
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Sidebar */}
           {(!isChatMobile || !room) && (
@@ -706,7 +529,7 @@ export function Community() {
                 </div>
               </div>
 
-              {/* My Rooms — joined rooms that still exist in Firebase */}
+              {/* My Rooms */}
               {rooms.filter((r) => joinedRooms.includes(r.name)).length > 0 && (
                 <>
                   <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wider">
@@ -726,7 +549,7 @@ export function Community() {
                 </>
               )}
 
-              {/* Discover — rooms not yet joined */}
+              {/* Discover */}
               {rooms.filter((r) => !joinedRooms.includes(r.name)).length >
                 0 && (
                 <>
@@ -747,7 +570,6 @@ export function Community() {
                 </>
               )}
 
-              {/* Empty state while rooms are loading */}
               {rooms.length === 0 && (
                 <p className="text-xs text-muted-foreground mt-4">
                   Loading rooms…
@@ -837,12 +659,21 @@ export function Community() {
                 </>
               ) : (
                 <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground">
-                  <div className="text-5xl mb-4"></div>
+                  <div className="text-5xl mb-4">💬</div>
                   <p>Select a room to start chatting</p>
                 </div>
               )}
             </div>
           )}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center px-6">
+          <div className="text-5xl">🔒</div>
+          <p className="font-bold text-lg text-foreground">Gold Members Only</p>
+          <p className="text-muted-foreground text-sm">
+            Upgrade to Gold to unlock Chat Rooms and connect with the MK2
+            community.
+          </p>
         </div>
       )}
 
@@ -912,16 +743,8 @@ export function Community() {
               <div className="flex gap-3">
                 {[
                   { label: "hrs", value: pollHours, setter: setPollHours },
-                  {
-                    label: "min",
-                    value: pollMinutes,
-                    setter: setPollMinutes,
-                  },
-                  {
-                    label: "sec",
-                    value: pollSeconds,
-                    setter: setPollSeconds,
-                  },
+                  { label: "min", value: pollMinutes, setter: setPollMinutes },
+                  { label: "sec", value: pollSeconds, setter: setPollSeconds },
                 ].map(({ label, value, setter }) => (
                   <div key={label} className="flex-1 text-center">
                     <input
@@ -983,6 +806,8 @@ export function Community() {
 // import PollMessage from "@/components/ui/PollMessage";
 // import MessageMenu from "@/components/ui/MessageMenu";
 
+// // ── Types ─────────────────────────────────────────────────────────────────────
+
 // interface Message {
 //   id: string;
 //   text: string;
@@ -1002,7 +827,14 @@ export function Community() {
 //   date: string;
 // }
 
-// const ROOMS = [
+// interface Room {
+//   name: string;
+//   desc: string;
+// }
+
+// // ── Fallback rooms (used when community_rooms hasn't been written to Firebase yet) ──
+
+// const FALLBACK_ROOMS: Room[] = [
 //   { name: "💬 MK2R General", desc: "News, updates & schedules." },
 //   { name: "🏆 MK2R Competitive Group", desc: "Competition prep & strategy" },
 //   { name: "🔥 MK2R Hyrox", desc: "HYROX training & performance talk" },
@@ -1011,6 +843,8 @@ export function Community() {
 //     desc: "Business, partnerships & growth discussions",
 //   },
 // ];
+
+// // ── Seed feed posts (local only — shown until real feed is implemented) ────────
 
 // const SEED_POSTS: FeedPost[] = [
 //   {
@@ -1039,6 +873,8 @@ export function Community() {
 //   },
 // ];
 
+// // ── Component ─────────────────────────────────────────────────────────────────
+
 // export function Community() {
 //   const { user, toast } = useAuth();
 //   const { isMobile } = useBreakpoint();
@@ -1052,7 +888,7 @@ export function Community() {
 
 //   const [tab, setTab] = useState<"feed" | "chat">("feed");
 
-//   // Feed state
+//   // ── Feed state ──────────────────────────────────────────────────────────────
 //   const [posts, setPosts] = useState<FeedPost[]>(SEED_POSTS);
 //   const [feedText, setFeedText] = useState("");
 
@@ -1074,8 +910,9 @@ export function Community() {
 //     toast("Posted! 🙌", "success");
 //   };
 
-//   // Chat state
+//   // ── Chat state ──────────────────────────────────────────────────────────────
 //   const [isChatMobile, setIsChatMobile] = useState(window.innerWidth < 768);
+//   const [rooms, setRooms] = useState<Room[]>([]); // ← replaces hardcoded ROOMS
 //   const [messages, setMessages] = useState<Message[]>([]);
 //   const [polls, setPolls] = useState<any[]>([]);
 //   const [chatText, setChatText] = useState("");
@@ -1108,6 +945,8 @@ export function Community() {
 
 //   const encodeRoom = (r: string) => encodeURIComponent(r).replace(/\./g, "%2E");
 
+//   // ── Effects ─────────────────────────────────────────────────────────────────
+
 //   // Resize handler
 //   useEffect(() => {
 //     const onResize = () => setIsChatMobile(window.innerWidth < 768);
@@ -1125,7 +964,7 @@ export function Community() {
 //     return () => document.removeEventListener("mousedown", onClick);
 //   }, []);
 
-//   // Notification permission (Community‑scoped) – uses mk2_users path
+//   // Notification permission (Community-scoped)
 //   useEffect(() => {
 //     if (!uid || uid === "guest") return;
 //     const prefRef = ref(db, `mk2_users/${uid}/notificationPrefs/community`);
@@ -1136,7 +975,28 @@ export function Community() {
 //     });
 //   }, [uid]);
 
-//   // Joined rooms – keep mk2_users path
+//   // ── CHANGED: sync rooms from Firebase community_rooms (live subscription) ──
+//   useEffect(() => {
+//     const roomsRef = ref(db, "community_rooms");
+//     return onValue(roomsRef, (snap) => {
+//       if (snap.exists()) {
+//         const data = snap.val();
+//         // Admin stores as { room_0: {name, desc}, room_1: {name, desc}, ... }
+//         const list = (Object.values(data) as any[])
+//           .filter((r) => r?.name) // guard malformed entries
+//           .map((r) => ({
+//             name: r.name as string,
+//             desc: (r.desc ?? "") as string,
+//           }));
+//         setRooms(list);
+//       } else {
+//         // Fallback: admin hasn't written community_rooms to Firebase yet
+//         setRooms(FALLBACK_ROOMS);
+//       }
+//     });
+//   }, []);
+
+//   // Joined rooms
 //   useEffect(() => {
 //     if (!canChat) return;
 //     return onValue(ref(db, `mk2_users/${uid}/joinedRooms`), (snap) => {
@@ -1144,7 +1004,7 @@ export function Community() {
 //     });
 //   }, [uid, canChat]);
 
-//   // Load lastSeen timestamps – mk2_users
+//   // Load lastSeen timestamps
 //   useEffect(() => {
 //     if (!canChat) return;
 //     return onValue(ref(db, `mk2_users/${uid}/roomLastSeen`), (snap) => {
@@ -1152,7 +1012,7 @@ export function Community() {
 //     });
 //   }, [uid, canChat]);
 
-//   // Load clearedBefore – mk2_users
+//   // Load clearedBefore
 //   useEffect(() => {
 //     if (!canChat) return;
 //     return onValue(ref(db, `mk2_users/${uid}/clearedBefore`), (snap) => {
@@ -1195,7 +1055,7 @@ export function Community() {
 //     return () => unsubs.forEach((u) => u());
 //   }, [joinedRooms, lastSeenMap, clearedBeforeMap, uid, canChat]);
 
-//   // Mark room as seen when opened – mk2_users
+//   // Mark room as seen when opened
 //   useEffect(() => {
 //     if (!room || !joinedRooms.includes(room)) return;
 //     const key = encodeRoom(room);
@@ -1204,7 +1064,7 @@ export function Community() {
 //     setLastSeenMap((prev) => ({ ...prev, [key]: now }));
 //   }, [room, joinedRooms, uid]);
 
-//   // Messages – with clearedBefore filtering
+//   // Messages — with clearedBefore filtering
 //   useEffect(() => {
 //     setMessages([]);
 //     if (!room || !joinedRooms.includes(room)) return;
@@ -1231,7 +1091,7 @@ export function Community() {
 //     });
 //   }, [room, joinedRooms, clearedBeforeMap]);
 
-//   // Polls – with clearedBefore filtering
+//   // Polls — with clearedBefore filtering
 //   useEffect(() => {
 //     if (!room || !joinedRooms.includes(room)) return;
 //     return onValue(ref(db, `rooms/${room}/polls`), (snap) => {
@@ -1245,7 +1105,8 @@ export function Community() {
 //     });
 //   }, [room, joinedRooms, clearedBeforeMap]);
 
-//   // Video compression (same as teammate’s)
+//   // ── Helpers ──────────────────────────────────────────────────────────────────
+
 //   const compressVideo = (file: File, targetBytes: number): Promise<File> => {
 //     return new Promise((resolve) => {
 //       if (file.size <= targetBytes) {
@@ -1289,7 +1150,8 @@ export function Community() {
 //     });
 //   };
 
-//   // ── Chat actions ──────────────────────────────────────────────────────────
+//   // ── Chat actions ──────────────────────────────────────────────────────────────
+
 //   const joinRoom = async () => {
 //     if (room) await set(ref(db, `mk2_users/${uid}/joinedRooms/${room}`), true);
 //   };
@@ -1300,7 +1162,6 @@ export function Community() {
 //     setRoom(null);
 //   };
 
-//   // Local clear – mk2_users
 //   const clearRoomLocally = async () => {
 //     if (
 //       !room ||
@@ -1476,6 +1337,8 @@ export function Community() {
 //   const isJoined = !!(room && joinedRooms.includes(room));
 //   let lastDateRef = { value: "" };
 
+//   // ── Render ────────────────────────────────────────────────────────────────────
+
 //   return (
 //     <div
 //       className={
@@ -1489,7 +1352,6 @@ export function Community() {
 //         <div
 //           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pt-5" : "px-6 pt-10"}`}
 //         >
-//           {/* ✅ UPDATED: Page title with "Chat" highlighted */}
 //           <PageTitle sub="Share wins, ask questions, motivate each other">
 //             Community <span className="text-primary">Chat</span>
 //           </PageTitle>
@@ -1539,7 +1401,7 @@ export function Community() {
 //         </div>
 //       </div>
 
-//       {/* FEED TAB */}
+//       {/* ── FEED TAB ──────────────────────────────────────────────────────────── */}
 //       {tab === "feed" && (
 //         <div
 //           className={`max-w-[760px] mx-auto ${isMobile ? "px-3.5 pb-5" : "px-6 pb-10"}`}
@@ -1601,7 +1463,7 @@ export function Community() {
 //         </div>
 //       )}
 
-//       {/* CHAT TAB */}
+//       {/* ── CHAT TAB ──────────────────────────────────────────────────────────── */}
 //       {tab === "chat" && canChat && (
 //         <div className="flex flex-1 min-h-0 overflow-hidden">
 //           {/* Sidebar */}
@@ -1621,13 +1483,15 @@ export function Community() {
 //                 </div>
 //               </div>
 
-//               {joinedRooms.length > 0 && (
+//               {/* My Rooms — joined rooms that still exist in Firebase */}
+//               {rooms.filter((r) => joinedRooms.includes(r.name)).length > 0 && (
 //                 <>
 //                   <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wider">
 //                     My Rooms
 //                   </p>
-//                   {ROOMS.filter((r) => joinedRooms.includes(r.name)).map(
-//                     (r) => (
+//                   {rooms
+//                     .filter((r) => joinedRooms.includes(r.name))
+//                     .map((r) => (
 //                       <RoomCard
 //                         key={r.name}
 //                         room={r}
@@ -1635,23 +1499,37 @@ export function Community() {
 //                         unreadCount={roomMessageCounts[r.name]?.count || 0}
 //                         onClick={() => setRoom(r.name)}
 //                       />
-//                     ),
-//                   )}
+//                     ))}
 //                 </>
 //               )}
 
-//               <p className="text-xs text-muted-foreground mt-4 mb-2 uppercase tracking-wider">
-//                 Discover
-//               </p>
-//               {ROOMS.filter((r) => !joinedRooms.includes(r.name)).map((r) => (
-//                 <RoomCard
-//                   key={r.name}
-//                   room={r}
-//                   active={false}
-//                   unreadCount={0}
-//                   onClick={() => setRoom(r.name)}
-//                 />
-//               ))}
+//               {/* Discover — rooms not yet joined */}
+//               {rooms.filter((r) => !joinedRooms.includes(r.name)).length >
+//                 0 && (
+//                 <>
+//                   <p className="text-xs text-muted-foreground mt-4 mb-2 uppercase tracking-wider">
+//                     Discover
+//                   </p>
+//                   {rooms
+//                     .filter((r) => !joinedRooms.includes(r.name))
+//                     .map((r) => (
+//                       <RoomCard
+//                         key={r.name}
+//                         room={r}
+//                         active={false}
+//                         unreadCount={0}
+//                         onClick={() => setRoom(r.name)}
+//                       />
+//                     ))}
+//                 </>
+//               )}
+
+//               {/* Empty state while rooms are loading */}
+//               {rooms.length === 0 && (
+//                 <p className="text-xs text-muted-foreground mt-4">
+//                   Loading rooms…
+//                 </p>
+//               )}
 //             </div>
 //           )}
 
@@ -1722,12 +1600,11 @@ export function Community() {
 //                         <div ref={bottomRef} />
 //                       </div>
 
-//                       {/* ✅ UPDATED: Poll creation disabled for members */}
 //                       <ChatInput
 //                         text={chatText}
 //                         setText={setChatText}
 //                         sendMessage={sendMessage}
-//                         createPoll={null} // ← Poll button hidden/disabled
+//                         createPoll={null}
 //                         replyTo={replyTo}
 //                         setReplyTo={setReplyTo}
 //                         onFileSelect={handleFileSelect}
@@ -1737,7 +1614,7 @@ export function Community() {
 //                 </>
 //               ) : (
 //                 <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground">
-//                   <div className="text-5xl mb-4">💬</div>
+//                   <div className="text-5xl mb-4"></div>
 //                   <p>Select a room to start chatting</p>
 //                 </div>
 //               )}
@@ -1746,7 +1623,7 @@ export function Community() {
 //         </div>
 //       )}
 
-//       {/* Context menu – only for own messages */}
+//       {/* Context menu — only for own messages */}
 //       {menuMsg && menuMsg.uid === uid && (
 //         <MessageMenu
 //           ref={menuRef}
@@ -1812,8 +1689,16 @@ export function Community() {
 //               <div className="flex gap-3">
 //                 {[
 //                   { label: "hrs", value: pollHours, setter: setPollHours },
-//                   { label: "min", value: pollMinutes, setter: setPollMinutes },
-//                   { label: "sec", value: pollSeconds, setter: setPollSeconds },
+//                   {
+//                     label: "min",
+//                     value: pollMinutes,
+//                     setter: setPollMinutes,
+//                   },
+//                   {
+//                     label: "sec",
+//                     value: pollSeconds,
+//                     setter: setPollSeconds,
+//                   },
 //                 ].map(({ label, value, setter }) => (
 //                   <div key={label} className="flex-1 text-center">
 //                     <input

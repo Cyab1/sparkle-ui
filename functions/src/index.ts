@@ -3,33 +3,33 @@ import { onRequest, onCall } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 
-// ✅ Added: re-export additional PayFast handlers from separate module
 export { payfastWebhook, releaseStalePendingBookings } from "./payfastWebhook";
 
 admin.initializeApp();
 
-// ── Lazy db — NEVER call admin.database() at module level ────────────────────
-// Cloud Run health checks load the module before env vars are set.
-// Calling admin.database() at the top level crashes the health check.
-// Always call db() inside a function body instead.
 function db() {
   return admin.database();
 }
 
-// ── Anthropic config ──────────────────────────────────────────────────────────
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
 
-// ── Quota config ──────────────────────────────────────────────────────────────
+// ── Updated quota config — matches current membership tier names ──────────────
 const QUOTA: Record<string, number> = {
+  // Current tiers
+  unlimited_12m: 100,
+  unlimited_6m: 100,
+  unlimited_m2m: 100,
+  hybrid_12m: 20,
+  hybrid_6m: 20,
+  hybrid_m2m: 20,
+  u18: 20,
+  // Legacy fallbacks
   gold: 100,
   silver: 20,
   basic: 0,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  HELPER: Check + increment AI quota for a user
-// ─────────────────────────────────────────────────────────────────────────────
 async function checkAndIncrementQuota(uid: string): Promise<number> {
   const userSnap = await db().ref(`mk2_users/${uid}`).once("value");
   const user = userSnap.val();
@@ -37,12 +37,17 @@ async function checkAndIncrementQuota(uid: string): Promise<number> {
     throw new functions.https.HttpsError("not-found", "User not found");
 
   const membership = user.membership ?? "basic";
-  const isActive = membership === "silver" || membership === "gold";
-  if (!isActive) {
+
+  // Block only basic (non-member / credits-only)
+  if (membership === "basic") {
     throw new functions.https.HttpsError("permission-denied", "JOIN_GYM");
   }
 
   const total = QUOTA[membership] ?? 0;
+  if (total === 0) {
+    throw new functions.https.HttpsError("permission-denied", "JOIN_GYM");
+  }
+
   const now = new Date();
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
@@ -68,9 +73,6 @@ async function checkAndIncrementQuota(uid: string): Promise<number> {
   return Math.max(0, total - newUsed);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  HELPER: Call Anthropic API
-// ─────────────────────────────────────────────────────────────────────────────
 async function callAnthropic(
   apiKey: string,
   systemPrompt: string,
@@ -110,9 +112,6 @@ async function callAnthropic(
   return text;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  aiChat — unified AI callable
-// ─────────────────────────────────────────────────────────────────────────────
 export const aiChat = onCall(
   {
     region: "europe-west1",
@@ -204,7 +203,6 @@ export const aiChat = onCall(
   },
 );
 
-// ── Helper: Write a notification record for a user ───────────────────────────
 async function writeNotification(
   uid: string,
   title: string,
@@ -212,17 +210,18 @@ async function writeNotification(
   link?: string,
 ) {
   await db()
-    .ref(`mk2_users/${uid}/notifications`)
+    .ref(`users/${uid}/notifications`)
     .push({
       title,
+      body,
       message: body,
       timestamp: Date.now(),
       read: false,
+      createdAt: Date.now(),
       ...(link ? { link } : {}),
     });
 }
 
-// ── Helper: Write notifications for multiple users ────────────────────────────
 async function writeNotificationForAll(
   uidTokenPairs: { uid: string }[],
   title: string,
@@ -235,13 +234,11 @@ async function writeNotificationForAll(
   await Promise.all(writes);
 }
 
-// ── Helper: Get FCM token for a single user ───────────────────────────────────
 async function getUserToken(uid: string): Promise<string | null> {
   const snap = await db().ref(`mk2_users/${uid}/fcmToken`).once("value");
   return snap.val() as string | null;
 }
 
-// ── Helper: Get user notification preferences ─────────────────────────────────
 async function getUserPrefs(uid: string): Promise<Record<string, boolean>> {
   const snap = await db()
     .ref(`mk2_users/${uid}/notificationPrefs`)
@@ -249,7 +246,6 @@ async function getUserPrefs(uid: string): Promise<Record<string, boolean>> {
   return snap.val() || {};
 }
 
-// ── Helper: Send push to a list of tokens ────────────────────────────────────
 async function sendToTokens(tokens: string[], title: string, body: string) {
   if (tokens.length === 0) return;
 
@@ -289,7 +285,6 @@ async function sendToTokens(tokens: string[], title: string, body: string) {
   await Promise.all(cleanupPromises);
 }
 
-// ── Helper: Send push + in-app to a single user ───────────────────────────────
 async function sendToUser(
   uid: string,
   title: string,
@@ -302,7 +297,6 @@ async function sendToUser(
   console.log(`Notification sent + written for ${uid}`);
 }
 
-// ── Helper: Send push + in-app to all users (with preference filter) ──────────
 async function sendToAllUsers(
   title: string,
   body: string,
@@ -328,9 +322,6 @@ async function sendToAllUsers(
   await sendToTokens(tokens, title, body);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  onClassBookingCreate
-// ─────────────────────────────────────────────────────────────────────────────
 export const onClassBookingCreate = functions.database.onValueCreated(
   {
     ref: "/class_bookings/{classDay}/{userId}",
@@ -467,9 +458,6 @@ export const onNewsPostCreate = functions.database.onValueCreated(
   },
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  checkinReminder
-// ─────────────────────────────────────────────────────────────────────────────
 export const checkinReminder = onSchedule(
   {
     schedule: "0 9 * * 1-6",
@@ -515,9 +503,6 @@ export const checkinReminder = onSchedule(
   },
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  PayFast Webhook (legacy handler — kept for backwards compatibility)
-// ─────────────────────────────────────────────────────────────────────────────
 export const payfastNotify = onRequest(
   { region: "europe-west1" },
   async (req: any, res: any) => {
@@ -729,9 +714,6 @@ export const payfastNotify = onRequest(
   },
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Log Personal Record
-// ─────────────────────────────────────────────────────────────────────────────
 export const logPR = onCall({ region: "europe-west1" }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid)
@@ -779,9 +761,6 @@ export const logPR = onCall({ region: "europe-west1" }, async (request) => {
   return { success: true, key: newRef.key };
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  sendPushNotification — single member push (called from admin panel)
-// ─────────────────────────────────────────────────────────────────────────────
 export const sendPushNotification = onCall(
   { region: "europe-west1" },
   async (request) => {
@@ -819,9 +798,6 @@ export const sendPushNotification = onCall(
   },
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  sendPushBroadcast — broadcast to all members (called from admin panel)
-// ─────────────────────────────────────────────────────────────────────────────
 export const sendPushBroadcast = onCall(
   { region: "europe-west1" },
   async (request) => {
@@ -905,9 +881,14 @@ export const sendPushBroadcast = onCall(
 // export { payfastWebhook, releaseStalePendingBookings } from "./payfastWebhook";
 
 // admin.initializeApp();
-// function getDb() { return admin.database(); }
-// const db = getDb();
-// // const db = admin.database();
+
+// // ── Lazy db — NEVER call admin.database() at module level ────────────────────
+// // Cloud Run health checks load the module before env vars are set.
+// // Calling admin.database() at the top level crashes the health check.
+// // Always call db() inside a function body instead.
+// function db() {
+//   return admin.database();
+// }
 
 // // ── Anthropic config ──────────────────────────────────────────────────────────
 // const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
@@ -924,7 +905,7 @@ export const sendPushBroadcast = onCall(
 // //  HELPER: Check + increment AI quota for a user
 // // ─────────────────────────────────────────────────────────────────────────────
 // async function checkAndIncrementQuota(uid: string): Promise<number> {
-//   const userSnap = await db.ref(`mk2_users/${uid}`).once("value");
+//   const userSnap = await db().ref(`mk2_users/${uid}`).once("value");
 //   const user = userSnap.val();
 //   if (!user)
 //     throw new functions.https.HttpsError("not-found", "User not found");
@@ -939,7 +920,7 @@ export const sendPushBroadcast = onCall(
 //   const now = new Date();
 //   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-//   const quotaRef = db.ref(`mk2_users/${uid}/aiQuota`);
+//   const quotaRef = db().ref(`mk2_users/${uid}/aiQuota`);
 //   const quotaSnap = await quotaRef.once("value");
 //   const quota = quotaSnap.val() || { used: 0, month };
 
@@ -1104,13 +1085,15 @@ export const sendPushBroadcast = onCall(
 //   body: string,
 //   link?: string,
 // ) {
-//   await db.ref(`mk2_users/${uid}/notifications`).push({
-//     title,
-//     message: body,
-//     timestamp: Date.now(),
-//     read: false,
-//     ...(link ? { link } : {}),
-//   });
+//   await db()
+//     .ref(`mk2_users/${uid}/notifications`)
+//     .push({
+//       title,
+//       message: body,
+//       timestamp: Date.now(),
+//       read: false,
+//       ...(link ? { link } : {}),
+//     });
 // }
 
 // // ── Helper: Write notifications for multiple users ────────────────────────────
@@ -1128,13 +1111,15 @@ export const sendPushBroadcast = onCall(
 
 // // ── Helper: Get FCM token for a single user ───────────────────────────────────
 // async function getUserToken(uid: string): Promise<string | null> {
-//   const snap = await db.ref(`mk2_users/${uid}/fcmToken`).once("value");
+//   const snap = await db().ref(`mk2_users/${uid}/fcmToken`).once("value");
 //   return snap.val() as string | null;
 // }
 
 // // ── Helper: Get user notification preferences ─────────────────────────────────
 // async function getUserPrefs(uid: string): Promise<Record<string, boolean>> {
-//   const snap = await db.ref(`mk2_users/${uid}/notificationPrefs`).once("value");
+//   const snap = await db()
+//     .ref(`mk2_users/${uid}/notificationPrefs`)
+//     .once("value");
 //   return snap.val() || {};
 // }
 
@@ -1161,7 +1146,7 @@ export const sendPushBroadcast = onCall(
 //     ) {
 //       const badToken = unique[idx];
 //       cleanupPromises.push(
-//         db
+//         db()
 //           .ref("mk2_users")
 //           .once("value")
 //           .then((snap) =>
@@ -1178,7 +1163,7 @@ export const sendPushBroadcast = onCall(
 //   await Promise.all(cleanupPromises);
 // }
 
-// // ── Helper: Send push + in‑app to a single user ──────────────────────────────
+// // ── Helper: Send push + in-app to a single user ───────────────────────────────
 // async function sendToUser(
 //   uid: string,
 //   title: string,
@@ -1191,14 +1176,14 @@ export const sendPushBroadcast = onCall(
 //   console.log(`Notification sent + written for ${uid}`);
 // }
 
-// // ── Helper: Send push + in‑app to all users (with preference filter) ──────────
+// // ── Helper: Send push + in-app to all users (with preference filter) ──────────
 // async function sendToAllUsers(
 //   title: string,
 //   body: string,
 //   prefKey?: string,
 //   link?: string,
 // ) {
-//   const usersSnap = await db.ref("mk2_users").once("value");
+//   const usersSnap = await db().ref("mk2_users").once("value");
 //   const tokens: string[] = [];
 //   const eligibleUids: { uid: string }[] = [];
 
@@ -1219,14 +1204,6 @@ export const sendPushBroadcast = onCall(
 
 // // ─────────────────────────────────────────────────────────────────────────────
 // //  onClassBookingCreate
-// //
-// //  Bug fixed: This trigger was firing ALONGSIDE payfastNotify's sendToUser
-// //  call for paid bookings, causing every paid class booking to send TWO
-// //  "Class Booking Confirmed" notifications.
-// //
-// //  Fix: Check if the booking record has paid: true — if so, payfastNotify
-// //  already sent the notification, so we skip it here to avoid the duplicate.
-// //  This trigger only handles free/credit bookings (paid: false or missing).
 // // ─────────────────────────────────────────────────────────────────────────────
 // export const onClassBookingCreate = functions.database.onValueCreated(
 //   {
@@ -1239,8 +1216,6 @@ export const sendPushBroadcast = onCall(
 //     const classDay = event.params.classDay;
 //     const bookingData = event.data.val();
 
-//     // ✅ Skip if this booking was created by payfastNotify (paid: true)
-//     // payfastNotify sends its own confirmation notification — don't duplicate it
 //     if (bookingData?.paid === true) {
 //       console.log(
 //         `onClassBookingCreate: skipping paid booking for ${userId} — payfastNotify handles notification`,
@@ -1276,7 +1251,7 @@ export const sendPushBroadcast = onCall(
 //     };
 //     if (!message) return null;
 
-//     const usersSnap = await db.ref("mk2_users").once("value");
+//     const usersSnap = await db().ref("mk2_users").once("value");
 //     const tokens: string[] = [];
 //     const eligibleUids: { uid: string }[] = [];
 
@@ -1313,7 +1288,7 @@ export const sendPushBroadcast = onCall(
 //     const roomId = event.params.roomId;
 //     if (!poll) return null;
 
-//     const usersSnap = await db.ref("mk2_users").once("value");
+//     const usersSnap = await db().ref("mk2_users").once("value");
 //     const tokens: string[] = [];
 //     const eligibleUids: { uid: string }[] = [];
 
@@ -1337,14 +1312,6 @@ export const sendPushBroadcast = onCall(
 //   },
 // );
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  onNewsPostCreate
-// //
-// //  Bug fixed: Was firing for draft posts too, notifying all members about
-// //  news that wasn't published yet.
-// //
-// //  Fix: Check status field — only send notification if status === "published"
-// // ─────────────────────────────────────────────────────────────────────────────
 // export const onNewsPostCreate = functions.database.onValueCreated(
 //   {
 //     ref: "/admin_news/{newsId}",
@@ -1358,7 +1325,6 @@ export const sendPushBroadcast = onCall(
 //       status?: string;
 //     };
 
-//     // ✅ Don't notify members about draft posts
 //     if (news?.status === "draft") {
 //       console.log(
 //         "onNewsPostCreate: skipping draft post — no notification sent",
@@ -1376,11 +1342,11 @@ export const sendPushBroadcast = onCall(
 // );
 
 // // ─────────────────────────────────────────────────────────────────────────────
-// //  checkinReminder — Mon–Sat only, only notifies booked members
+// //  checkinReminder
 // // ─────────────────────────────────────────────────────────────────────────────
 // export const checkinReminder = onSchedule(
 //   {
-//     schedule: "0 9 * * 1-6", // Mon–Sat only, 09:00 SAST
+//     schedule: "0 9 * * 1-6",
 //     timeZone: "Africa/Johannesburg",
 //     region: "europe-west1",
 //   },
@@ -1390,7 +1356,7 @@ export const sendPushBroadcast = onCall(
 //     );
 //     const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
-//     const bookingsSnap = await db.ref("class_bookings").once("value");
+//     const bookingsSnap = await db().ref("class_bookings").once("value");
 //     if (!bookingsSnap.exists()) return;
 
 //     const bookedUids = new Set<string>();
@@ -1408,10 +1374,6 @@ export const sendPushBroadcast = onCall(
 //       return;
 //     }
 
-//     console.log(
-//       `checkinReminder: notifying ${bookedUids.size} booked member(s) for ${todayKey}`,
-//     );
-
 //     const sends = [...bookedUids].map(async (uid) => {
 //       const prefs = await getUserPrefs(uid);
 //       if (prefs.classReminders === false) return;
@@ -1428,7 +1390,7 @@ export const sendPushBroadcast = onCall(
 // );
 
 // // ─────────────────────────────────────────────────────────────────────────────
-// //  PayFast Webhook
+// //  PayFast Webhook (legacy handler — kept for backwards compatibility)
 // // ─────────────────────────────────────────────────────────────────────────────
 // export const payfastNotify = onRequest(
 //   { region: "europe-west1" },
@@ -1473,12 +1435,11 @@ export const sendPushBroadcast = onCall(
 //     const credits = parseInt(data.custom_str3 ?? "0");
 //     const paymentType = data.custom_str4;
 
-//     // ── CLASS BOOKING ──────────────────────────────────────────────────────
 //     if (paymentType === "class_booking") {
 //       const bookingId = uid;
 //       const price = parseFloat(data.amount);
 
-//       const bookingRef = db.ref(`mk2_bookings/${bookingId}`);
+//       const bookingRef = db().ref(`mk2_bookings/${bookingId}`);
 //       const bookingSnap = await bookingRef.get();
 //       if (!bookingSnap.exists()) {
 //         console.error(`Booking ${bookingId} not found`);
@@ -1511,16 +1472,14 @@ export const sendPushBroadcast = onCall(
 //         category,
 //         trainer,
 //       } = booking;
-//       const userSnap = await db.ref(`mk2_users/${userId}`).get();
+//       const userSnap = await db().ref(`mk2_users/${userId}`).get();
 //       const userData = userSnap.val();
 //       if (!userData) throw new Error("User not found");
 
 //       const safeKey = (str: string) => str.replace(/[^a-zA-Z0-9_-]/g, "_");
 //       const classBookingKey = `${safeKey(className)}_${dateKey}`;
 
-//       // ✅ paid: true is the flag that tells onClassBookingCreate to skip
-//       //    its own notification — this is the single source of truth
-//       await db.ref(`class_bookings/${classBookingKey}/${userId}`).set({
+//       await db().ref(`class_bookings/${classBookingKey}/${userId}`).set({
 //         name: userData.name,
 //         email: userData.email,
 //         bookedAt: Date.now(),
@@ -1538,17 +1497,19 @@ export const sendPushBroadcast = onCall(
 //         price,
 //       };
 //       const existingBookings = userData.bookings || [];
-//       await db
+//       await db()
 //         .ref(`mk2_users/${userId}/bookings`)
 //         .set([...existingBookings, newBooking]);
 
 //       if (classId) {
-//         await db.ref(`admin_classes/${classId}`).transaction((current) => {
-//           if (current) current.bookedCount = (current.bookedCount || 0) + 1;
-//           return current;
-//         });
+//         await db()
+//           .ref(`admin_classes/${classId}`)
+//           .transaction((current) => {
+//             if (current) current.bookedCount = (current.bookedCount || 0) + 1;
+//             return current;
+//           });
 //       } else {
-//         const classesSnap = await db.ref("admin_classes").once("value");
+//         const classesSnap = await db().ref("admin_classes").once("value");
 //         let foundId: string | null = null;
 //         classesSnap.forEach((child) => {
 //           const cls = child.val();
@@ -1561,14 +1522,12 @@ export const sendPushBroadcast = onCall(
 //           }
 //         });
 //         if (foundId) {
-//           await db
+//           await db()
 //             .ref(`admin_classes/${foundId}/bookedCount`)
 //             .transaction((c) => (c || 0) + 1);
 //         }
 //       }
 
-//       // ✅ Only payfastNotify sends this notification for paid bookings.
-//       //    onClassBookingCreate skips it because paid: true is set above.
 //       await sendToUser(
 //         userId,
 //         "Class Booking Confirmed 🏋️",
@@ -1581,24 +1540,25 @@ export const sendPushBroadcast = onCall(
 //       return;
 //     }
 
-//     // ── CREDITS PURCHASE ───────────────────────────────────────────────────
 //     if (paymentType === "credits") {
 //       if (!uid) {
 //         res.status(400).send("Missing uid");
 //         return;
 //       }
 
-//       const credRef = db.ref(`mk2_users/${uid}/classCredits`);
+//       const credRef = db().ref(`mk2_users/${uid}/classCredits`);
 //       const snap = await credRef.once("value");
 //       const current = snap.exists() ? (snap.val() as number) : 0;
 //       await credRef.set(current + credits);
 
-//       await db.ref(`mk2_users/${uid}/creditHistory`).push({
-//         amount: credits,
-//         type: "payfast_purchase",
-//         note: `PayFast: ${data.item_name} (${data.m_payment_id})`,
-//         timestamp: Date.now(),
-//       });
+//       await db()
+//         .ref(`mk2_users/${uid}/creditHistory`)
+//         .push({
+//           amount: credits,
+//           type: "payfast_purchase",
+//           note: `PayFast: ${data.item_name} (${data.m_payment_id})`,
+//           timestamp: Date.now(),
+//         });
 
 //       await sendToUser(
 //         uid,
@@ -1611,20 +1571,21 @@ export const sendPushBroadcast = onCall(
 //       return;
 //     }
 
-//     // ── MEMBERSHIP UPGRADE ─────────────────────────────────────────────────
 //     if (paymentType === "membership") {
 //       if (!uid) {
 //         res.status(400).send("Missing uid");
 //         return;
 //       }
 
-//       await db.ref(`mk2_users/${uid}/membership`).set(refId);
-//       await db.ref(`mk2_users/${uid}/membershipHistory`).push({
-//         tier: refId,
-//         type: "payfast_upgrade",
-//         note: `PayFast: ${data.item_name} (${data.m_payment_id})`,
-//         timestamp: Date.now(),
-//       });
+//       await db().ref(`mk2_users/${uid}/membership`).set(refId);
+//       await db()
+//         .ref(`mk2_users/${uid}/membershipHistory`)
+//         .push({
+//           tier: refId,
+//           type: "payfast_upgrade",
+//           note: `PayFast: ${data.item_name} (${data.m_payment_id})`,
+//           timestamp: Date.now(),
+//         });
 
 //       await sendToUser(
 //         uid,
@@ -1667,7 +1628,7 @@ export const sendPushBroadcast = onCall(
 //     }
 //   }
 
-//   const userSnap = await db.ref(`mk2_users/${uid}`).once("value");
+//   const userSnap = await db().ref(`mk2_users/${uid}`).once("value");
 //   const user = userSnap.val();
 //   if (!user)
 //     throw new functions.https.HttpsError("not-found", "User not found");
@@ -1688,16 +1649,16 @@ export const sendPushBroadcast = onCall(
 //     timestamp: Date.now(),
 //   };
 
-//   const newRef = await db.ref("pr_logbook").push(prData);
+//   const newRef = await db().ref("pr_logbook").push(prData);
 //   return { success: true, key: newRef.key };
 // });
 
+// // ─────────────────────────────────────────────────────────────────────────────
+// //  sendPushNotification — single member push (called from admin panel)
+// // ─────────────────────────────────────────────────────────────────────────────
 // export const sendPushNotification = onCall(
 //   { region: "europe-west1" },
 //   async (request) => {
-//     // Optional: restrict to authenticated admins only
-//     // if (!request.auth) throw new functions.https.HttpsError("unauthenticated", "Login required");
-
 //     const { token, title, body, type } = request.data as {
 //       token: string;
 //       title: string;
@@ -1733,9 +1694,7 @@ export const sendPushBroadcast = onCall(
 // );
 
 // // ─────────────────────────────────────────────────────────────────────────────
-// //  sendPushBroadcast — send to multiple FCM tokens (all members)
-// //  Called by admin PushNotificationsManager (broadcast tab)
-// //  Chunks into batches of 500 (FCM multicast limit)
+// //  sendPushBroadcast — broadcast to all members (called from admin panel)
 // // ─────────────────────────────────────────────────────────────────────────────
 // export const sendPushBroadcast = onCall(
 //   { region: "europe-west1" },
@@ -1754,7 +1713,6 @@ export const sendPushBroadcast = onCall(
 //       );
 //     }
 
-//     // Chunk into batches of 500 (FCM multicast limit)
 //     const chunks: string[][] = [];
 //     for (let i = 0; i < tokens.length; i += 500) {
 //       chunks.push(tokens.slice(i, i + 500));
@@ -1784,7 +1742,6 @@ export const sendPushBroadcast = onCall(
 //       successCount += response.successCount;
 //       failureCount += response.failureCount;
 
-//       // Clean up invalid tokens automatically
 //       response.responses.forEach((resp, idx) => {
 //         if (
 //           !resp.success &&
@@ -1793,7 +1750,7 @@ export const sendPushBroadcast = onCall(
 //         ) {
 //           const badToken = chunk[idx];
 //           cleanupPromises.push(
-//             db
+//             db()
 //               .ref("mk2_users")
 //               .once("value")
 //               .then((snap) =>

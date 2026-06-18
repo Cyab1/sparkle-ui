@@ -6,6 +6,7 @@ export interface Notification {
   id: string;
   title: string;
   message: string;
+  body?: string; // ← added for compatibility with admin‑sent notifications
   read: boolean;
   timestamp: number;
   link?: string;
@@ -28,10 +29,12 @@ export function useNotifications(userId: string | null) {
     const unsub = onValue(notifRef, (snap) => {
       if (snap.exists()) {
         const data = snap.val();
+        // Map and normalise: use body if present, otherwise fall back to message
         const list: Notification[] = Object.entries(data).map(
           ([id, val]: [string, any]) => ({
             id,
             ...val,
+            message: val.body || val.message || "",
           }),
         );
         list.sort((a, b) => b.timestamp - a.timestamp);

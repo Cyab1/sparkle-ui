@@ -476,7 +476,7 @@ export function ClassBooking({ setPage }: { setPage?: (p: string) => void }) {
   const bookedDates = new Set<string>(
     user.bookings.map((b: any) => b.dateKey).filter(Boolean),
   );
-  const isMember = user.membership === "silver" || user.membership === "gold";
+  const isMember = user.membership !== "basic" && user.membership !== undefined;
   const isChargeable = (cls: any) =>
     Boolean(cls.chargeNonMembers) && Number(cls.price) > 0;
 

@@ -133,7 +133,9 @@ export function PRLogbook() {
     () => new Date().toISOString().split("T")[0],
   );
 
+  // ─── UPDATED: useEffect guards check editingPR directly ──────────────
   useEffect(() => {
+    if (editingPR) return;
     if (parentEx && formCat) {
       const variants = getVariants(formCat, parentEx);
       if (variants.length === 1) setExerciseId(variants[0].exercise_id);
@@ -141,12 +143,13 @@ export function PRLogbook() {
         setExerciseId(variants[0]?.exercise_id || "");
       else setExerciseId("");
     }
-  }, [parentEx, formCat]);
+  }, [parentEx, formCat, editingPR]);
 
   useEffect(() => {
+    if (editingPR) return;
     const parents = getParentExercises(formCat);
     setParentEx(parents[0] || "");
-  }, [formCat]);
+  }, [formCat, editingPR]);
 
   useEffect(() => {
     loadPRs();
@@ -194,9 +197,11 @@ export function PRLogbook() {
     const ex = getExerciseById(pr.exercise_id);
     if (!ex) return;
 
-    setEditingPR(pr);
-    setFormCat(pr.category as Category);
+    // Clear first so effect guard sees a change
+    setEditingPR(null);
+    setTimeout(() => setEditingPR(pr), 0);
 
+    setFormCat(pr.category as Category);
     const parent = getParentName(pr.exercise);
     setParentEx(parent);
     setExerciseId(pr.exercise_id);
@@ -809,7 +814,7 @@ export function PRLogbook() {
   );
 }
 
-// import { useState, useEffect } from "react";
+// import { useState, useEffect, useRef } from "react";
 // import { ref, set, get, push, remove } from "firebase/database";
 // import { db } from "@/lib/firebase";
 // import { useAuth } from "@/context/AuthContext";
@@ -923,10 +928,17 @@ export function PRLogbook() {
 //   const [prs, setPrs] = useState<PR[]>([]);
 //   const [loading, setLoading] = useState(true);
 //   const [showModal, setShowModal] = useState(false);
-//   const [editingPR, setEditingPR] = useState<PR | null>(null); // ✅ track which PR is being edited
+//   const [editingPR, setEditingPR] = useState<PR | null>(null);
 //   const [category, setCategory] = useState<Category | "all">("all");
 //   const [saving, setSaving] = useState(false);
-//   const [deleting, setDeleting] = useState<string | null>(null); // ✅ track which PR is being deleted
+//   const [deleting, setDeleting] = useState<string | null>(null);
+//   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
+
+//   // Guards the formCat -> parentEx auto-reset effect below so it only runs
+//   // for user-driven category changes, not when startEdit() is populating
+//   // the form to edit an existing PR (which sets formCat/parentEx/exerciseId
+//   // together and must not have parentEx clobbered back to a default).
+//   const isEditingRef = useRef(false);
 
 //   // Form state
 //   const [formCat, setFormCat] = useState<Category>("Weightlifting");
@@ -944,6 +956,7 @@ export function PRLogbook() {
 //   );
 
 //   useEffect(() => {
+//     if (isEditingRef.current) return;
 //     if (parentEx && formCat) {
 //       const variants = getVariants(formCat, parentEx);
 //       if (variants.length === 1) setExerciseId(variants[0].exercise_id);
@@ -954,13 +967,32 @@ export function PRLogbook() {
 //   }, [parentEx, formCat]);
 
 //   useEffect(() => {
+//     if (isEditingRef.current) return;
 //     const parents = getParentExercises(formCat);
 //     setParentEx(parents[0] || "");
 //   }, [formCat]);
 
+//   // Clears the edit guard after both effects above have had a chance to
+//   // run for the render where startEdit() populated the form. Runs last
+//   // because it has no dependency array entries tying it to formCat/parentEx
+//   // specifically — React flushes effects in declaration order each commit,
+//   // so by the time this runs, the two guarded effects above already saw
+//   // isEditingRef.current === true and bailed out for this commit.
+//   useEffect(() => {
+//     isEditingRef.current = false;
+//   }, [editingPR]);
+
 //   useEffect(() => {
 //     loadPRs();
 //   }, []);
+
+//   // Close menu when clicking outside
+//   useEffect(() => {
+//     if (!openMenuKey) return;
+//     const close = () => setOpenMenuKey(null);
+//     document.addEventListener("click", close);
+//     return () => document.removeEventListener("click", close);
+//   }, [openMenuKey]);
 
 //   const loadPRs = async () => {
 //     setLoading(true);
@@ -992,15 +1024,14 @@ export function PRLogbook() {
 //   const pacePreview =
 //     isRun && runDist && parsedSec != null ? calcPace(parsedSec, runDist) : null;
 
-//   // ✅ Pre-populate form when editing an existing PR
 //   const startEdit = (pr: PR) => {
 //     const ex = getExerciseById(pr.exercise_id);
 //     if (!ex) return;
 
+//     isEditingRef.current = true;
 //     setEditingPR(pr);
 //     setFormCat(pr.category as Category);
 
-//     // Set parent exercise from the exercise name
 //     const parent = getParentName(pr.exercise);
 //     setParentEx(parent);
 //     setExerciseId(pr.exercise_id);
@@ -1048,10 +1079,8 @@ export function PRLogbook() {
 
 //     try {
 //       if (editingPR) {
-//         // ✅ Update the specific PR being edited (by its firebaseKey)
 //         await set(ref(db, `${PR_PATH}/${editingPR.firebaseKey}`), prData);
 //       } else {
-//         // Check if a PR already exists for this user + exercise + level
 //         const existing = prs.find(
 //           (p) =>
 //             p.uid === user.uid &&
@@ -1075,7 +1104,6 @@ export function PRLogbook() {
 //     setSaving(false);
 //   };
 
-//   // ✅ Delete a PR by its firebaseKey
 //   const deletePR = async (pr: PR) => {
 //     if (
 //       !confirm(
@@ -1223,10 +1251,123 @@ export function PRLogbook() {
 //                     return (
 //                       <div
 //                         key={pr.firebaseKey}
-//                         className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors"
+//                         className="bg-card border border-border rounded-xl p-4 hover:border-primary/30 transition-colors relative"
 //                       >
+//                         {/* ⋮ Three-dot menu */}
+//                         <div className="absolute top-3 right-3">
+//                           <button
+//                             onClick={(e) => {
+//                               e.stopPropagation();
+//                               setOpenMenuKey(
+//                                 openMenuKey === pr.firebaseKey
+//                                   ? null
+//                                   : pr.firebaseKey,
+//                               );
+//                             }}
+//                             className="p-1.5 rounded-lg border-none bg-transparent cursor-pointer transition-all"
+//                             style={{ color: "hsl(var(--muted-foreground))" }}
+//                             onMouseEnter={(e) => {
+//                               (
+//                                 e.currentTarget as HTMLButtonElement
+//                               ).style.background = "hsl(var(--secondary))";
+//                               (
+//                                 e.currentTarget as HTMLButtonElement
+//                               ).style.color = "hsl(var(--foreground))";
+//                             }}
+//                             onMouseLeave={(e) => {
+//                               (
+//                                 e.currentTarget as HTMLButtonElement
+//                               ).style.background = "transparent";
+//                               (
+//                                 e.currentTarget as HTMLButtonElement
+//                               ).style.color = "hsl(var(--muted-foreground))";
+//                             }}
+//                             aria-label="Options"
+//                           >
+//                             {/* Vertical dots SVG */}
+//                             <svg
+//                               width="16"
+//                               height="16"
+//                               viewBox="0 0 24 24"
+//                               fill="currentColor"
+//                               aria-hidden="true"
+//                             >
+//                               <circle cx="12" cy="5" r="1.8" />
+//                               <circle cx="12" cy="12" r="1.8" />
+//                               <circle cx="12" cy="19" r="1.8" />
+//                             </svg>
+//                           </button>
+
+//                           {/* Dropdown */}
+//                           {openMenuKey === pr.firebaseKey && (
+//                             <div
+//                               className="absolute right-0 top-9 z-50 bg-card border border-border rounded-xl overflow-hidden"
+//                               style={{
+//                                 minWidth: "130px",
+//                                 boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+//                               }}
+//                               onClick={(e) => e.stopPropagation()}
+//                             >
+//                               <button
+//                                 onClick={() => {
+//                                   setOpenMenuKey(null);
+//                                   startEdit(pr);
+//                                 }}
+//                                 className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm font-body border-none bg-transparent cursor-pointer transition-colors text-foreground"
+//                                 onMouseEnter={(e) =>
+//                                   ((
+//                                     e.currentTarget as HTMLButtonElement
+//                                   ).style.background = "hsl(var(--secondary))")
+//                                 }
+//                                 onMouseLeave={(e) =>
+//                                   ((
+//                                     e.currentTarget as HTMLButtonElement
+//                                   ).style.background = "transparent")
+//                                 }
+//                               >
+//                                 ✏️ Edit PR
+//                               </button>
+//                               <div className="h-px bg-border" />
+//                               <button
+//                                 onClick={() => {
+//                                   setOpenMenuKey(null);
+//                                   deletePR(pr);
+//                                 }}
+//                                 disabled={deleting === pr.firebaseKey}
+//                                 className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm font-body border-none bg-transparent cursor-pointer transition-colors"
+//                                 style={{
+//                                   color:
+//                                     deleting === pr.firebaseKey
+//                                       ? "hsl(var(--muted-foreground))"
+//                                       : "hsl(0 84% 51%)",
+//                                 }}
+//                                 onMouseEnter={(e) => {
+//                                   if (deleting !== pr.firebaseKey)
+//                                     (
+//                                       e.currentTarget as HTMLButtonElement
+//                                     ).style.background =
+//                                       "hsl(0 84% 51% / 0.08)";
+//                                 }}
+//                                 onMouseLeave={(e) =>
+//                                   ((
+//                                     e.currentTarget as HTMLButtonElement
+//                                   ).style.background = "transparent")
+//                                 }
+//                               >
+//                                 {deleting === pr.firebaseKey
+//                                   ? "Deleting…"
+//                                   : "🗑 Delete"}
+//                               </button>
+//                             </div>
+//                           )}
+//                         </div>
+
+//                         {/* Card content */}
 //                         <div className="flex items-start justify-between mb-2">
-//                           <div className="flex-1 min-w-0">
+//                           <div
+//                             className="flex-1 min-w-0"
+//                             style={{ paddingRight: "32px" }}
+//                           >
 //                             <div className="font-bold text-sm text-foreground">
 //                               {pr.exercise}
 //                             </div>
@@ -1254,41 +1395,6 @@ export function PRLogbook() {
 //                             📌 {pr.notes}
 //                           </div>
 //                         )}
-
-//                         {/* ✅ Edit & Delete buttons */}
-//                         <div className="flex gap-2 mt-3 pt-3 border-t border-border">
-//                           <button
-//                             onClick={() => startEdit(pr)}
-//                             className="flex-1 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer transition-all font-body"
-//                             style={{
-//                               background: "transparent",
-//                               color: "hsl(20 100% 50%)",
-//                               borderColor: "hsl(20 100% 50% / 0.4)",
-//                             }}
-//                           >
-//                             ✏️ Edit
-//                           </button>
-//                           <button
-//                             onClick={() => deletePR(pr)}
-//                             disabled={deleting === pr.firebaseKey}
-//                             className="flex-1 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer transition-all font-body"
-//                             style={{
-//                               background: "transparent",
-//                               color:
-//                                 deleting === pr.firebaseKey
-//                                   ? "hsl(var(--muted-foreground))"
-//                                   : "hsl(0 84% 51%)",
-//                               borderColor:
-//                                 deleting === pr.firebaseKey
-//                                   ? "hsl(var(--border))"
-//                                   : "hsl(0 84% 51% / 0.4)",
-//                             }}
-//                           >
-//                             {deleting === pr.firebaseKey
-//                               ? "Deleting…"
-//                               : "🗑 Delete"}
-//                           </button>
-//                         </div>
 //                       </div>
 //                     );
 //                   })}

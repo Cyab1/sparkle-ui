@@ -108,8 +108,10 @@ export function NotificationsInbox({
       ) : (
         <div className="flex flex-col gap-3">
           {notifications.map((n, i) => {
-            const icon = getIcon(n.title, n.message);
-            const color = getTypeColor(n.title, n.message);
+            // Use body if available, otherwise fall back to message (for older notifications)
+            const content = n.body || n.message;
+            const icon = getIcon(n.title, content);
+            const color = getTypeColor(n.title, content);
             return (
               <motion.div
                 key={n.id}
@@ -138,7 +140,7 @@ export function NotificationsInbox({
                       </div>
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      {n.message}
+                      {content}
                     </div>
                     {n.link && (
                       <div className="mt-2 text-[10px] font-semibold text-primary">

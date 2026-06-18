@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { PageTitle } from "@/components/shared/PageTitle";
 import { motion, AnimatePresence } from "framer-motion";
@@ -107,6 +107,28 @@ function isCutoffPassed(cutoff: string): boolean {
   return new Date(cutoff) < new Date();
 }
 
+// ── Swipe hook ────────────────────────────────────────────────────────────────
+
+function useSwipe(onSwipeLeft: () => void, onSwipeRight: () => void) {
+  const startX = useRef<number | null>(null);
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    startX.current = e.touches[0].clientX;
+  };
+
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (startX.current === null) return;
+    const diff = startX.current - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 40) {
+      if (diff > 0) onSwipeLeft();
+      else onSwipeRight();
+    }
+    startX.current = null;
+  };
+
+  return { onTouchStart, onTouchEnd };
+}
+
 // ── NewsCard ──────────────────────────────────────────────────────────────────
 
 function NewsCard({ n, index }: { n: NewsItem; index: number }) {
@@ -136,11 +158,11 @@ function NewsCard({ n, index }: { n: NewsItem; index: number }) {
     >
       {/* Hero image */}
       {n.imageUrl && (
-        <div className="w-full overflow-hidden" style={{ height: 180 }}>
+        <div className="w-full overflow-hidden">
           <img
             src={n.imageUrl}
             alt={n.title}
-            className="w-full h-full object-cover"
+            className="w-full h-auto object-contain"
           />
         </div>
       )}
@@ -197,7 +219,7 @@ function NewsCard({ n, index }: { n: NewsItem; index: number }) {
 
         {/* Description */}
         {desc && (
-          <div className="text-sm text-muted-foreground leading-relaxed flex-1">
+          <div className="text-sm text-muted-foreground leading-relaxed flex-1 whitespace-pre-wrap">
             <AnimatePresence mode="wait">
               {expanded ? (
                 <motion.span
@@ -242,6 +264,7 @@ function NewsCard({ n, index }: { n: NewsItem; index: number }) {
                 href={n.registrationLink}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wide transition-colors"
                 style={{
                   background: cutoffPassed
@@ -263,6 +286,7 @@ function NewsCard({ n, index }: { n: NewsItem; index: number }) {
                 href={n.paymentLink}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-colors hover:bg-white/5"
                 style={{
                   border: "1px solid hsl(217 91% 53% / 0.5)",
@@ -286,6 +310,11 @@ export function NewsEvents() {
   const [filter, setFilter] = useState("All");
   const [adminNews, setAdminNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [swipeIndex, setSwipeIndex] = useState(0);
+  const swipeHandlers = useSwipe(
+    () => setSwipeIndex((i) => Math.min(i + 1, filtered.length - 1)),
+    () => setSwipeIndex((i) => Math.max(i - 1, 0)),
+  );
 
   useEffect(() => {
     const newsRef = ref(db, "admin_news");
@@ -294,7 +323,6 @@ export function NewsEvents() {
         const data = snap.val();
         const list: NewsItem[] = Object.entries(data)
           .map(([id, val]: [string, any]) => ({ id, ...val }))
-          // ✅ Only show published posts to members — drafts stay admin-only
           .filter((item) => item.status !== "draft");
         list.sort((a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
         setAdminNews(list);
@@ -310,6 +338,11 @@ export function NewsEvents() {
   const filters = ["All", ...Array.from(new Set(NEWS.map((n) => n.type)))];
   const filtered =
     filter === "All" ? NEWS : NEWS.filter((n) => n.type === filter);
+
+  // Reset swipe index when filter changes
+  useEffect(() => {
+    setSwipeIndex(0);
+  }, [filter]);
 
   return (
     <div
@@ -356,7 +389,78 @@ export function NewsEvents() {
         <div className="text-center py-12 text-muted-foreground text-sm">
           No posts yet.
         </div>
+      ) : isMobile ? (
+        // Mobile: swipeable single-card view
+        <div
+          {...swipeHandlers}
+          className="relative overflow-hidden"
+          style={{ touchAction: "pan-y" }}
+        >
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={filtered[swipeIndex]?.id}
+              initial={{ opacity: 0, x: 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -40 }}
+              transition={{ duration: 0.22 }}
+            >
+              <NewsCard n={filtered[swipeIndex]} index={0} />
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Dot indicators */}
+          <div className="flex justify-center gap-1.5 mt-4">
+            {filtered.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setSwipeIndex(i)}
+                className="border-none cursor-pointer p-0 transition-all"
+                style={{
+                  width: i === swipeIndex ? 20 : 6,
+                  height: 6,
+                  borderRadius: 3,
+                  background:
+                    i === swipeIndex
+                      ? "hsl(20 100% 50%)"
+                      : "hsl(var(--border))",
+                }}
+              />
+            ))}
+          </div>
+
+          {/* Prev / Next arrows */}
+          <div className="flex justify-between mt-4 px-1">
+            <button
+              onClick={() => setSwipeIndex((i) => Math.max(i - 1, 0))}
+              disabled={swipeIndex === 0}
+              className="text-xs font-bold px-4 py-2 rounded-xl border-none cursor-pointer transition-all disabled:opacity-30"
+              style={{
+                background: "hsl(var(--secondary))",
+                color: "hsl(var(--foreground))",
+              }}
+            >
+              ← Prev
+            </button>
+            <span className="text-xs text-muted-foreground self-center">
+              {swipeIndex + 1} / {filtered.length}
+            </span>
+            <button
+              onClick={() =>
+                setSwipeIndex((i) => Math.min(i + 1, filtered.length - 1))
+              }
+              disabled={swipeIndex === filtered.length - 1}
+              className="text-xs font-bold px-4 py-2 rounded-xl border-none cursor-pointer transition-all disabled:opacity-30"
+              style={{
+                background: "hsl(var(--secondary))",
+                color: "hsl(var(--foreground))",
+              }}
+            >
+              Next →
+            </button>
+          </div>
+        </div>
       ) : (
+        // Desktop: grid layout
         <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
           {filtered.map((n, i) => (
             <NewsCard key={n.id} n={n} index={i} />

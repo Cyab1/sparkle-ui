@@ -56,12 +56,12 @@ const NAV_GROUPS = [
   },
 ];
 
-// ── Mobile bottom nav — HOME | CLASSES | WORKOUTS | PROGRESS | MORE ──────────
+// ── Mobile bottom nav — HOME | CLASSES | TOOLS | GALLERY | MORE ──────────────
 const BOTTOM_TABS = [
   { id: "Dashboard", icon: "home", label: "Home" },
   { id: "Classes", icon: "calendar_month", label: "Classes" },
-  { id: "WorkoutPlanner", icon: "fitness_center", label: "Workouts" },
-  { id: "Progress", icon: "trending_up", label: "Progress" },
+  { id: "Tools", icon: "auto_awesome", label: "Tools" },
+  { id: "Gallery", icon: "photo_library", label: "Gallery" },
   { id: "__more__", icon: "menu", label: "More" },
 ];
 
@@ -74,15 +74,9 @@ export const TOOL_PAGES = [
   { id: "Progress", label: "📈 Progress Report" },
 ];
 
-// ── More drawer — Tools section + Gym + Settings ──────────────────────────────
-const MORE_TOOLS = [
-  { id: "Tools", label: "⚡ All Tools" },
-  { id: "BMR", label: "🔥 BMR Calculator" },
-  { id: "WorkoutPlanner", label: "💪 AI Workout Planner" },
-  { id: "Nutrition", label: "🥗 AI Nutrition Coach" },
-  { id: "InBody", label: "📊 InBody Assessment" },
-  { id: "Progress", label: "📈 Progress Report" },
-];
+// ── More drawer ───────────────────────────────────────────────────────────────
+// Tools and Gallery are now direct bottom tabs, so they are intentionally
+// excluded from the More drawer to avoid redundancy.
 
 const MORE_GYM = [
   { id: "Checkin", label: "✅ Gym Check-In" },
@@ -91,7 +85,6 @@ const MORE_GYM = [
   { id: "Community", label: "💬 Community" },
   { id: "News", label: "📢 News & Events" },
   { id: "Membership", label: "💳 Membership" },
-  { id: "Gallery", label: "📸 Gallery" },
   { id: "Account", label: "👤 My Account" },
 ];
 
@@ -129,6 +122,32 @@ export function Layout({ children, page, setPage }: LayoutProps) {
     });
   }, [user]);
 
+  // ─── Fix 1: Prevent body scroll shift when drawer opens ──────────────
+  useEffect(() => {
+    if (showMore) {
+      const scrollY = window.scrollY;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = "100%";
+      document.body.style.overflowY = "scroll";
+    } else {
+      const scrollY = document.body.style.top;
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      document.body.style.overflowY = "";
+      if (scrollY) {
+        window.scrollTo(0, parseInt(scrollY || "0") * -1);
+      }
+    }
+    return () => {
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      document.body.style.overflowY = "";
+    };
+  }, [showMore]);
+
   const navigate = (id: string) => {
     setPage(id);
     setShowMore(false);
@@ -137,7 +156,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 
   if (!user) return null;
 
-  // A page is "in bottom tabs" if it's one of the 4 real tab ids
+  // Real tab ids (excludes __more__)
   const realTabIds = BOTTOM_TABS.filter((t) => t.id !== "__more__").map(
     (t) => t.id,
   );
@@ -328,11 +347,12 @@ export function Layout({ children, page, setPage }: LayoutProps) {
       )}
 
       {/* ── Page content ───────────────────────────────────────────────── */}
+      {/* Fix 2: Remove y:6 to avoid reflow jump */}
       <motion.div
         key={page}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.22, ease: "easeOut" }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
         style={
           isMobile
             ? { paddingBottom: "calc(72px + env(safe-area-inset-bottom, 0px))" }
@@ -342,7 +362,51 @@ export function Layout({ children, page, setPage }: LayoutProps) {
         {children}
       </motion.div>
 
-      {/* ── Mobile bottom nav — 4 tabs + More ─────────────────────────── */}
+      {/* ── Partner footer ─────────────────────────────────────────────── */}
+      <div
+        className="w-full flex items-center justify-center gap-3 py-4 px-4"
+        style={{
+          borderTop: "1px solid hsl(var(--border))",
+          marginTop: "auto",
+          paddingBottom: isMobile
+            ? "calc(80px + env(safe-area-inset-bottom, 0px))"
+            : "1.5rem",
+        }}
+      >
+        <span
+          className="text-[10px] uppercase tracking-widest font-bold"
+          style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}
+        >
+          Technology powered by
+        </span>
+        <a
+          href="https://www.dsmart.co.za"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 no-underline group transition-opacity hover:opacity-80"
+        >
+          <div
+            className="flex items-center justify-center rounded-lg px-2.5 py-1"
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+            }}
+          >
+            <span
+              className="font-display font-bold tracking-widest uppercase"
+              style={{
+                fontSize: 11,
+                color: "hsl(20 100% 50%)",
+                letterSpacing: "0.15em",
+              }}
+            >
+              DSmart
+            </span>
+          </div>
+        </a>
+      </div>
+
+      {/* ── Mobile bottom nav — Home | Classes | Tools | Gallery | More ── */}
       {isMobile && (
         <nav
           className="fixed bottom-0 left-0 right-0 z-[200] bg-background/98 border-t border-border flex backdrop-blur-xl"
@@ -369,11 +433,11 @@ export function Layout({ children, page, setPage }: LayoutProps) {
                 }}
                 className="flex-1 flex flex-col items-center justify-center gap-0.5 bg-transparent border-none cursor-pointer transition-colors duration-150"
               >
-                {/* Active pill indicator */}
                 <div className="relative flex items-center justify-center">
                   {active && (
                     <motion.div
                       layoutId="tab-indicator"
+                      layout="position"
                       className="absolute rounded-full"
                       style={{
                         background: "hsl(20 100% 50% / 0.15)",
@@ -443,36 +507,6 @@ export function Layout({ children, page, setPage }: LayoutProps) {
               </div>
 
               <div className="px-5 pt-3 pb-2">
-                {/* ── Tools ───────────────────────────────────────────── */}
-                <div className="mb-5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                      Tools
-                    </span>
-                    <span
-                      className="text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider"
-                      style={{ background: "hsl(20 100% 50%)", color: "#000" }}
-                    >
-                      NEW
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {MORE_TOOLS.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => navigate(p.id)}
-                        className={`bg-secondary border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left transition-colors active:scale-95 ${
-                          page === p.id
-                            ? "border-primary/50 bg-primary/10 text-primary"
-                            : "border-border hover:border-primary/30"
-                        }`}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 {/* ── Gym ─────────────────────────────────────────────── */}
                 <div className="mb-5">
                   <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
@@ -554,7 +588,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   );
 // }
 
-// // ── Desktop nav groups (unchanged) ───────────────────────────────────────────
+// // ── Desktop nav groups ────────────────────────────────────────────────────────
 // const NAV_GROUPS = [
 //   {
 //     label: "Main",
@@ -592,16 +626,16 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   },
 // ];
 
-// // ── Bottom nav — matches Image 1: HOME | CLASSES | WORKOUTS | PROGRESS | PROFILE
+// // ── Mobile bottom nav — HOME | CLASSES | TOOLS | GALLERY | MORE ──────────────
 // const BOTTOM_TABS = [
 //   { id: "Dashboard", icon: "home", label: "Home" },
 //   { id: "Classes", icon: "calendar_month", label: "Classes" },
-//   { id: "WorkoutPlanner", icon: "fitness_center", label: "Workouts" },
-//   { id: "Progress", icon: "trending_up", label: "Progress" },
-//   { id: "Account", icon: "account_circle", label: "Profile" },
+//   { id: "Tools", icon: "auto_awesome", label: "Tools" },
+//   { id: "Gallery", icon: "photo_library", label: "Gallery" },
+//   { id: "__more__", icon: "menu", label: "More" },
 // ];
 
-// // ── Tools pages (accessible from desktop nav / More drawer) ──────────────────
+// // ── TOOL_PAGES — exported so Toolscreen.tsx can import it ────────────────────
 // export const TOOL_PAGES = [
 //   { id: "BMR", label: "🔥 BMR Calculator" },
 //   { id: "WorkoutPlanner", label: "⚡ AI Workout Planner" },
@@ -610,21 +644,27 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //   { id: "Progress", label: "📈 Progress Report" },
 // ];
 
-// // ── More drawer pages (desktop / overflow) ────────────────────────────────────
-// const MORE_PAGES = [
-//   { id: "Checkin", label: "✅ Gym Check-In", group: "gym" },
-//   { id: "Leaderboard", label: "🏅 Leaderboard", group: "gym" },
-//   { id: "PRLogbook", label: "🏆 PR Logbook", group: "gym" },
-//   { id: "Community", label: "💬 Community", group: "gym" },
-//   { id: "News", label: "📢 News & Events", group: "gym" },
-//   { id: "Membership", label: "💳 Membership", group: "gym" },
-//   { id: "Gallery", label: "📸 Gallery", group: "gym" },
-//   { id: "NotificationSettings", label: "🔔 Notifications", group: "settings" },
-//   { id: "About", label: "About Us", group: "settings" },
-//   { id: "Contact", label: "Contact Us", group: "settings" },
-//   { id: "Advertise", label: "📣 Advertise", group: "settings" },
-//   { id: "Terms", label: "T&Cs", group: "settings" },
-//   { id: "Privacy", label: "Privacy Policy", group: "settings" },
+// // ── More drawer ───────────────────────────────────────────────────────────────
+// // Tools and Gallery are now direct bottom tabs, so they are intentionally
+// // excluded from the More drawer to avoid redundancy.
+
+// const MORE_GYM = [
+//   { id: "Checkin", label: "✅ Gym Check-In" },
+//   { id: "Leaderboard", label: "🏅 Leaderboard" },
+//   { id: "PRLogbook", label: "🏆 PR Logbook" },
+//   { id: "Community", label: "💬 Community" },
+//   { id: "News", label: "📢 News & Events" },
+//   { id: "Membership", label: "💳 Membership" },
+//   { id: "Account", label: "👤 My Account" },
+// ];
+
+// const MORE_SETTINGS = [
+//   { id: "NotificationSettings", label: "🔔 Notifications" },
+//   { id: "About", label: "About Us" },
+//   { id: "Contact", label: "Contact Us" },
+//   { id: "Advertise", label: "📣 Advertise" },
+//   { id: "Terms", label: "T&Cs" },
+//   { id: "Privacy", label: "Privacy Policy" },
 // ];
 
 // interface LayoutProps {
@@ -660,16 +700,18 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 
 //   if (!user) return null;
 
-//   // A page is "in bottom tabs" if it matches one of the 5 tab ids
-//   const bottomTabIds = BOTTOM_TABS.map((t) => t.id);
-//   const isMoreActive = showMore || !bottomTabIds.includes(page);
+//   // Real tab ids (excludes __more__)
+//   const realTabIds = BOTTOM_TABS.filter((t) => t.id !== "__more__").map(
+//     (t) => t.id,
+//   );
+//   const isMoreActive = showMore || !realTabIds.includes(page);
 
 //   return (
 //     <div
 //       className="min-h-screen bg-background text-foreground font-body"
 //       style={{ overflowX: "hidden", maxWidth: "100vw" }}
 //     >
-//       {/* ── Desktop nav ──────────────────────────────────────────────── */}
+//       {/* ── Desktop nav ────────────────────────────────────────────────── */}
 //       {!isMobile && (
 //         <nav className="sticky top-0 z-[200] bg-background/95 backdrop-blur-xl border-b border-border px-5 h-[58px] flex items-center justify-between gap-4">
 //           {/* Logo */}
@@ -789,7 +831,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         </nav>
 //       )}
 
-//       {/* ── Mobile top bar ────────────────────────────────────────────── */}
+//       {/* ── Mobile top bar ─────────────────────────────────────────────── */}
 //       {isMobile && (
 //         <div
 //           className="sticky top-0 z-[200] bg-background/97 border-b border-border px-4 flex items-center justify-between"
@@ -848,7 +890,7 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         </div>
 //       )}
 
-//       {/* ── Page content ─────────────────────────────────────────────── */}
+//       {/* ── Page content ───────────────────────────────────────────────── */}
 //       <motion.div
 //         key={page}
 //         initial={{ opacity: 0, y: 6 }}
@@ -863,7 +905,51 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         {children}
 //       </motion.div>
 
-//       {/* ── Mobile bottom nav — 5 tabs matching Image 1 ───────────────── */}
+//       {/* ── Partner footer ─────────────────────────────────────────────── */}
+//       <div
+//         className="w-full flex items-center justify-center gap-3 py-4 px-4"
+//         style={{
+//           borderTop: "1px solid hsl(var(--border))",
+//           marginTop: "auto",
+//           paddingBottom: isMobile
+//             ? "calc(80px + env(safe-area-inset-bottom, 0px))"
+//             : "1.5rem",
+//         }}
+//       >
+//         <span
+//           className="text-[10px] uppercase tracking-widest font-bold"
+//           style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}
+//         >
+//           Technology powered by
+//         </span>
+//         <a
+//           href="https://www.dsmart.co.za"
+//           target="_blank"
+//           rel="noopener noreferrer"
+//           className="flex items-center gap-1.5 no-underline group transition-opacity hover:opacity-80"
+//         >
+//           <div
+//             className="flex items-center justify-center rounded-lg px-2.5 py-1"
+//             style={{
+//               background: "hsl(var(--secondary))",
+//               border: "1px solid hsl(var(--border))",
+//             }}
+//           >
+//             <span
+//               className="font-display font-bold tracking-widest uppercase"
+//               style={{
+//                 fontSize: 11,
+//                 color: "hsl(20 100% 50%)",
+//                 letterSpacing: "0.15em",
+//               }}
+//             >
+//               DSmart
+//             </span>
+//           </div>
+//         </a>
+//       </div>
+
+//       {/* ── Mobile bottom nav — Home | Classes | Tools | Gallery | More ── */}
 //       {isMobile && (
 //         <nav
 //           className="fixed bottom-0 left-0 right-0 z-[200] bg-background/98 border-t border-border flex backdrop-blur-xl"
@@ -874,23 +960,27 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //           }}
 //         >
 //           {BOTTOM_TABS.map((t) => {
-//             const active = page === t.id;
+//             const isMore = t.id === "__more__";
+//             const active = isMore ? isMoreActive : page === t.id && !showMore;
+
 //             return (
 //               <button
 //                 key={t.id}
 //                 onClick={() => {
-//                   setShowMore(false);
-//                   navigate(t.id);
+//                   if (isMore) {
+//                     setShowMore((v) => !v);
+//                   } else {
+//                     setShowMore(false);
+//                     navigate(t.id);
+//                   }
 //                 }}
 //                 className="flex-1 flex flex-col items-center justify-center gap-0.5 bg-transparent border-none cursor-pointer transition-colors duration-150"
-//                 style={{ paddingBottom: 0 }}
 //               >
-//                 {/* Active indicator dot */}
 //                 <div className="relative flex items-center justify-center">
 //                   {active && (
 //                     <motion.div
 //                       layoutId="tab-indicator"
-//                       className="absolute inset-0 rounded-full"
+//                       className="absolute rounded-full"
 //                       style={{
 //                         background: "hsl(20 100% 50% / 0.15)",
 //                         width: 36,
@@ -924,61 +1014,83 @@ export function Layout({ children, page, setPage }: LayoutProps) {
 //         </nav>
 //       )}
 
-//       {/* ── More drawer (reachable from desktop or deep links) ────────── */}
+//       {/* ── More drawer ────────────────────────────────────────────────── */}
 //       <AnimatePresence>
 //         {isMobile && showMore && (
 //           <motion.div
 //             initial={{ opacity: 0 }}
 //             animate={{ opacity: 1 }}
 //             exit={{ opacity: 0 }}
-//             className="fixed inset-0 z-[201] bg-black/85 flex items-end"
+//             className="fixed inset-0 z-[201] bg-black/80 flex items-end"
 //             onClick={() => setShowMore(false)}
 //           >
 //             <motion.div
 //               initial={{ y: "100%" }}
 //               animate={{ y: 0 }}
 //               exit={{ y: "100%" }}
-//               transition={{ type: "spring", damping: 26, stiffness: 300 }}
-//               className="w-full bg-card rounded-t-2xl p-5 border border-border overflow-y-auto"
+//               transition={{ type: "spring", damping: 28, stiffness: 300 }}
+//               className="w-full bg-card rounded-t-2xl border border-border overflow-y-auto"
 //               style={{
-//                 maxHeight: "80vh",
-//                 paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
+//                 maxHeight: "82vh",
+//                 paddingBottom: "calc(80px + env(safe-area-inset-bottom, 0px))",
 //               }}
 //               onClick={(e) => e.stopPropagation()}
 //             >
-//               {/* Gym */}
-//               <div className="mb-5">
-//                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
-//                   Gym
-//                 </div>
-//                 <div className="grid grid-cols-2 gap-2">
-//                   {MORE_PAGES.filter((p) => p.group === "gym").map((p) => (
-//                     <button
-//                       key={p.id}
-//                       onClick={() => navigate(p.id)}
-//                       className="bg-secondary border border-border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left hover:border-primary/30 transition-colors active:scale-95"
-//                     >
-//                       {p.label}
-//                     </button>
-//                   ))}
-//                 </div>
+//               {/* Handle bar */}
+//               <div className="flex justify-center pt-3 pb-1">
+//                 <div
+//                   className="rounded-full"
+//                   style={{
+//                     width: 36,
+//                     height: 4,
+//                     background: "hsl(var(--border))",
+//                   }}
+//                 />
 //               </div>
 
-//               {/* Settings */}
-//               <div>
-//                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
-//                   Settings & Info
+//               <div className="px-5 pt-3 pb-2">
+//                 {/* ── Gym ─────────────────────────────────────────────── */}
+//                 <div className="mb-5">
+//                   <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
+//                     Gym
+//                   </div>
+//                   <div className="grid grid-cols-2 gap-2">
+//                     {MORE_GYM.map((p) => (
+//                       <button
+//                         key={p.id}
+//                         onClick={() => navigate(p.id)}
+//                         className={`bg-secondary border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left transition-colors active:scale-95 ${
+//                           page === p.id
+//                             ? "border-primary/50 bg-primary/10 text-primary"
+//                             : "border-border hover:border-primary/30"
+//                         }`}
+//                       >
+//                         {p.label}
+//                       </button>
+//                     ))}
+//                   </div>
 //                 </div>
-//                 <div className="grid grid-cols-2 gap-2">
-//                   {MORE_PAGES.filter((p) => p.group === "settings").map((p) => (
-//                     <button
-//                       key={p.id}
-//                       onClick={() => navigate(p.id)}
-//                       className="bg-secondary border border-border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left hover:border-primary/30 transition-colors active:scale-95"
-//                     >
-//                       {p.label}
-//                     </button>
-//                   ))}
+
+//                 {/* ── Settings & Info ──────────────────────────────────── */}
+//                 <div>
+//                   <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
+//                     Settings & Info
+//                   </div>
+//                   <div className="grid grid-cols-2 gap-2">
+//                     {MORE_SETTINGS.map((p) => (
+//                       <button
+//                         key={p.id}
+//                         onClick={() => navigate(p.id)}
+//                         className={`bg-secondary border rounded-xl p-3.5 font-body font-bold text-sm text-foreground cursor-pointer text-left transition-colors active:scale-95 ${
+//                           page === p.id
+//                             ? "border-primary/50 bg-primary/10 text-primary"
+//                             : "border-border hover:border-primary/30"
+//                         }`}
+//                       >
+//                         {p.label}
+//                       </button>
+//                     ))}
+//                   </div>
 //                 </div>
 //               </div>
 //             </motion.div>

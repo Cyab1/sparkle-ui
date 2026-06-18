@@ -8329,6 +8329,15 @@ function AdEnquiriesManager({ toast }: any) {
     toast(`Status updated to ${status}`, "success");
   };
 
+  // New function to save admin notes
+  const updateNote = async (key: string, note: string) => {
+    await set(ref(db, `ad_enquiries/${key}/adminNote`), note);
+    setEnquiries((prev) =>
+      prev.map((e) => (e.key === key ? { ...e, adminNote: note } : e)),
+    );
+    toast("Note saved", "success");
+  };
+
   const deleteEnquiry = async (key: string) => {
     if (!confirm("Delete this enquiry?")) return;
     await remove(ref(db, `ad_enquiries/${key}`));
@@ -8345,6 +8354,27 @@ function AdEnquiriesManager({ toast }: any) {
 
   const filtered =
     filter === "all" ? enquiries : enquiries.filter((e) => e.status === filter);
+
+  // Style helpers for label and textarea
+  const lblStyle = {
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.5px",
+    color: "hsl(var(--muted-foreground))",
+    display: "block",
+    marginBottom: 4,
+  };
+  const inpStyle = {
+    width: "100%",
+    padding: "8px 10px",
+    background: "hsl(var(--background))",
+    border: "1px solid hsl(var(--border))",
+    borderRadius: 8,
+    fontFamily: "inherit",
+    fontSize: 12,
+    color: "hsl(var(--foreground))",
+  };
 
   return (
     <div>
@@ -8502,6 +8532,22 @@ function AdEnquiriesManager({ toast }: any) {
                 >
                   ✉ Reply via email →
                 </a>
+
+                {/* Progress notes section – auto‑saves on blur */}
+                <div style={{ marginTop: 10 }}>
+                  <label style={lblStyle}>Progress notes</label>
+                  <textarea
+                    style={{
+                      ...inpStyle,
+                      minHeight: 56,
+                      resize: "vertical",
+                      marginTop: 4,
+                    }}
+                    placeholder="e.g. Called 12 Jun — interested in 3-month banner…"
+                    defaultValue={e.adminNote ?? ""}
+                    onBlur={(ev) => updateNote(e.key, ev.target.value)}
+                  />
+                </div>
               </div>
             );
           })}
@@ -11638,25 +11684,44 @@ function RewardsManager({ toast }: any) {
           )
           .map(([id, r]: [string, any]) => ({ id, ...r }));
         const lastRedeemedAt = redemptions[0]?.redeemedAt ?? 0;
+
+        // ========== FIXED cycleCheckIns calculation ==========
         let cycleCheckIns = 0;
         if (Array.isArray(val.checkIns)) {
-          cycleCheckIns = val.checkIns.filter((ci: any) => {
-            const ts =
-              typeof ci === "number"
-                ? ci
-                : typeof ci === "string"
-                  ? new Date(ci).getTime()
-                  : 0;
-            return ts > lastRedeemedAt;
-          }).length;
+          if (lastRedeemedAt === 0) {
+            // No redemptions yet — all check-ins count
+            cycleCheckIns = val.checkIns.length;
+          } else {
+            cycleCheckIns = val.checkIns.filter((ci: any) => {
+              // Handle {date, time} objects — parse DD/MM/YYYY
+              if (typeof ci === "object" && ci?.date) {
+                const parts = ci.date.split("/");
+                if (parts.length === 3) {
+                  const ts = new Date(
+                    `${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`,
+                  ).getTime();
+                  return ts > lastRedeemedAt;
+                }
+                return false;
+              }
+              // Handle raw timestamps or ISO strings
+              const ts =
+                typeof ci === "number"
+                  ? ci
+                  : typeof ci === "string"
+                    ? new Date(ci).getTime()
+                    : 0;
+              return ts > lastRedeemedAt;
+            }).length;
+          }
         } else {
           cycleCheckIns =
-            lastRedeemedAt > 0
-              ? totalCheckIns -
-                Math.floor(totalCheckIns / CHECKINS_REQUIRED) *
-                  CHECKINS_REQUIRED
-              : totalCheckIns;
+            typeof val.checkIns === "number"
+              ? val.checkIns % CHECKINS_REQUIRED
+              : 0;
         }
+        // ====================================================
+
         const rewardReady =
           cycleCheckIns >= CHECKINS_REQUIRED || pendingRewards.length > 0;
         const pct = Math.min(100, (cycleCheckIns / CHECKINS_REQUIRED) * 100);
@@ -13172,6 +13237,747 @@ function MonthlyUsageReport({ toast }: any) {
   );
 }
 
+// ── AdsManager — paste into Admin.tsx above the NAV_GROUPS constant ──────────
+function AdsManager({
+  toast,
+}: {
+  toast: (msg: string, type?: string) => void;
+}) {
+  const blank = {
+    bizName: "",
+    headline: "",
+    tagline: "",
+    link: "",
+    imageUrl: "",
+    startDate: "",
+    expiryDate: "",
+    status: "draft" as "draft" | "published",
+  };
+
+  const [ads, setAds] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<any | null>(null);
+  const [form, setForm] = useState(blank);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [filter, setFilter] = useState<
+    "all" | "published" | "draft" | "expired"
+  >("all");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const f = (k: string) => (e: any) =>
+    setForm((p) => ({ ...p, [k]: e.target.value }));
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function isExpired(ad: any) {
+    if (!ad.expiryDate) return false;
+    return new Date(ad.expiryDate).getTime() < Date.now();
+  }
+
+  function adStatus(ad: any) {
+    if (isExpired(ad)) return "expired";
+    return ad.status ?? "draft";
+  }
+
+  const STATUS_STYLE: Record<string, { bg: string; color: string }> = {
+    published: { bg: "hsl(142 72% 37% / 0.12)", color: "hsl(142 72% 37%)" },
+    draft: { bg: "hsl(38 92% 44% / 0.12)", color: "hsl(38 92% 44%)" },
+    expired: { bg: "hsl(0 0% 50% / 0.12)", color: "hsl(0 0% 55%)" },
+  };
+
+  // ── Load ───────────────────────────────────────────────────────────────────
+  const load = async () => {
+    setLoading(true);
+    try {
+      const snap = await get(ref(db, "dashboard_ads"));
+      if (snap.exists()) {
+        const list = Object.entries(snap.val()).map(
+          ([k, v]: [string, any]) => ({
+            id: k,
+            ...v,
+          }),
+        );
+        setAds(list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)));
+      } else {
+        setAds([]);
+      }
+    } catch {
+      toast("Failed to load ads", "error");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  // ── Image upload ───────────────────────────────────────────────────────────
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/"))
+      return toast("Image files only", "error");
+    if (file.size > 5 * 1024 * 1024) return toast("Max 5 MB", "error");
+
+    setUploading(true);
+    setUploadProgress(0);
+    try {
+      const storage = getStorage();
+      const path = `ads/${Date.now()}_${file.name.replace(/\s/g, "_")}`;
+      const sRef = storageRef(storage, path);
+      const task = uploadBytesResumable(sRef, file);
+      task.on(
+        "state_changed",
+        (s) =>
+          setUploadProgress(
+            Math.round((s.bytesTransferred / s.totalBytes) * 100),
+          ),
+        () => {
+          toast("Upload failed", "error");
+          setUploading(false);
+        },
+        async () => {
+          const url = await getDownloadURL(task.snapshot.ref);
+          setForm((p) => ({ ...p, imageUrl: url }));
+          toast("Image uploaded ✓", "success");
+          setUploading(false);
+        },
+      );
+    } catch {
+      toast("Upload error", "error");
+      setUploading(false);
+    }
+  };
+
+  // ── Save ───────────────────────────────────────────────────────────────────
+  const save = async (status: "published" | "draft") => {
+    if (!form.bizName || !form.headline) {
+      return toast("Business name and headline are required", "error");
+    }
+    if (status === "published" && !form.expiryDate) {
+      return toast("Set an expiry date before publishing", "error");
+    }
+    const payload = { ...form, status, createdAt: Date.now() };
+    try {
+      if (editing) {
+        await set(ref(db, `dashboard_ads/${editing.id}`), payload);
+        toast("Ad updated ✓", "success");
+      } else {
+        const newRef = push(ref(db, "dashboard_ads"));
+        await set(newRef, payload);
+        toast(
+          status === "published" ? "Ad published ✓" : "Draft saved ✓",
+          "success",
+        );
+      }
+      setShowForm(false);
+      setEditing(null);
+      setForm(blank);
+      load();
+    } catch {
+      toast("Save failed", "error");
+    }
+  };
+
+  // ── Delete ─────────────────────────────────────────────────────────────────
+  const del = async (id: string) => {
+    if (!confirm("Delete this ad permanently?")) return;
+    await remove(ref(db, `dashboard_ads/${id}`));
+    setAds((prev) => prev.filter((a) => a.id !== id));
+    toast("Deleted", "info");
+  };
+
+  // ── Toggle publish/pause ───────────────────────────────────────────────────
+  const togglePublish = async (ad: any) => {
+    if (ad.status === "published") {
+      await set(ref(db, `dashboard_ads/${ad.id}/status`), "draft");
+      toast("Ad paused", "info");
+    } else {
+      if (!ad.expiryDate)
+        return toast("Set expiry date before publishing", "error");
+      await set(ref(db, `dashboard_ads/${ad.id}/status`), "published");
+      toast("Ad published ✓", "success");
+    }
+    load();
+  };
+
+  // ── Start edit ─────────────────────────────────────────────────────────────
+  const startEdit = (ad: any) => {
+    setEditing(ad);
+    setForm({
+      bizName: ad.bizName ?? "",
+      headline: ad.headline ?? "",
+      tagline: ad.tagline ?? "",
+      link: ad.link ?? "",
+      imageUrl: ad.imageUrl ?? "",
+      startDate: ad.startDate ?? "",
+      expiryDate: ad.expiryDate ?? "",
+      status: ad.status ?? "draft",
+    });
+    setShowForm(true);
+  };
+
+  const cancel = () => {
+    setShowForm(false);
+    setEditing(null);
+    setForm(blank);
+  };
+
+  // ── Filtered list ──────────────────────────────────────────────────────────
+  const filtered =
+    filter === "all" ? ads : ads.filter((a) => adStatus(a) === filter);
+
+  // ── Mini preview (what it looks like on the dashboard) ────────────────────
+  const AdPreview = ({ ad }: { ad: any }) => (
+    <div
+      style={{
+        borderRadius: 12,
+        overflow: "hidden",
+        border: "1px solid hsl(var(--border))",
+        background: "hsl(var(--card))",
+        position: "relative",
+        minHeight: 72,
+      }}
+    >
+      {ad.imageUrl && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundImage: `url(${ad.imageUrl})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            opacity: 0.15,
+          }}
+        />
+      )}
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 14px",
+        }}
+      >
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: 900,
+            padding: "2px 6px",
+            borderRadius: 6,
+            background: "hsl(38 92% 50% / 0.15)",
+            color: "hsl(38 92% 50%)",
+            border: "1px solid hsl(38 92% 50% / 0.3)",
+            letterSpacing: "0.08em",
+            flexShrink: 0,
+          }}
+        >
+          AD
+        </span>
+        {ad.imageUrl && (
+          <img
+            src={ad.imageUrl}
+            alt=""
+            style={{
+              width: 40,
+              height: 40,
+              objectFit: "cover",
+              borderRadius: 6,
+              flexShrink: 0,
+            }}
+          />
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: 700,
+              fontSize: 12,
+              color: "hsl(var(--foreground))",
+            }}
+          >
+            {ad.headline || ad.bizName || "—"}
+          </div>
+          {ad.tagline && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "hsl(var(--muted-foreground))",
+                marginTop: 2,
+              }}
+            >
+              {ad.tagline}
+            </div>
+          )}
+        </div>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            padding: "4px 10px",
+            borderRadius: 8,
+            background: "hsl(20 100% 50%)",
+            color: "#000",
+            flexShrink: 0,
+          }}
+        >
+          Learn More
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  return (
+    <div>
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+          flexWrap: "wrap",
+          gap: 10,
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>
+            Dashboard Ads ({ads.length})
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: "hsl(var(--muted-foreground))",
+              marginTop: 3,
+            }}
+          >
+            Shown once per session · auto-dismissed after 8 seconds
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {(["all", "published", "draft", "expired"] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setFilter(s)}
+              style={{
+                padding: "5px 12px",
+                borderRadius: 20,
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: "pointer",
+                textTransform: "capitalize",
+                background:
+                  filter === s ? "hsl(20 100% 50%)" : "hsl(var(--secondary))",
+                color: filter === s ? "#000" : "hsl(var(--foreground))",
+                border: filter === s ? "none" : "1px solid hsl(var(--border))",
+                fontFamily: "var(--font-body)",
+              }}
+            >
+              {s}
+            </button>
+          ))}
+          <Btn variant="subtle" size="sm" onClick={load}>
+            ↻ Refresh
+          </Btn>
+          <Btn
+            variant="primary"
+            size="sm"
+            onClick={() => (showForm ? cancel() : setShowForm(true))}
+          >
+            {showForm ? "✕ Cancel" : "+ New Ad"}
+          </Btn>
+        </div>
+      </div>
+
+      {/* How it works */}
+      <div
+        style={{
+          marginBottom: 16,
+          padding: "10px 14px",
+          borderRadius: 10,
+          background: "hsl(175 80% 44% / 0.07)",
+          border: "1px solid hsl(175 80% 44% / 0.2)",
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          lineHeight: 1.6,
+        }}
+      >
+        💡{" "}
+        <strong style={{ color: "hsl(var(--foreground))" }}>
+          How ads work:
+        </strong>{" "}
+        The most recently created published ad is shown once per user per
+        session at the top of their dashboard. It auto-dismisses after{" "}
+        <strong style={{ color: "hsl(var(--foreground))" }}>8 seconds</strong>{" "}
+        with a countdown timer. Ads stop showing after their expiry date.
+      </div>
+
+      {/* Form */}
+      <AnimatePresence>
+        {showForm && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            style={{
+              background: "hsl(var(--secondary))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: 20,
+              marginBottom: 20,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 16 }}>
+              {editing ? "✏️ Edit Ad" : "➕ New Ad"}
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
+              <div>
+                <label style={lbl}>Business Name *</label>
+                <input
+                  style={inp}
+                  placeholder="e.g. Kinetic Sports"
+                  value={form.bizName}
+                  onChange={f("bizName")}
+                />
+              </div>
+              <div>
+                <label style={lbl}>Headline *</label>
+                <input
+                  style={inp}
+                  placeholder="e.g. 20% off this month"
+                  value={form.headline}
+                  onChange={f("headline")}
+                />
+              </div>
+              <div>
+                <label style={lbl}>Tagline</label>
+                <input
+                  style={inp}
+                  placeholder="Short supporting text"
+                  value={form.tagline}
+                  onChange={f("tagline")}
+                />
+              </div>
+              <div>
+                <label style={lbl}>CTA Link</label>
+                <input
+                  style={inp}
+                  placeholder="https://..."
+                  value={form.link}
+                  onChange={f("link")}
+                />
+              </div>
+              <div>
+                <label style={lbl}>Start Date</label>
+                <input
+                  style={inp}
+                  type="date"
+                  value={form.startDate}
+                  onChange={f("startDate")}
+                />
+              </div>
+              <div>
+                <label style={lbl}>Expiry Date *</label>
+                <input
+                  style={inp}
+                  type="date"
+                  value={form.expiryDate}
+                  onChange={f("expiryDate")}
+                />
+              </div>
+            </div>
+
+            {/* Image upload */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Ad Image (optional)</label>
+              {form.imageUrl ? (
+                <div style={{ position: "relative", width: "fit-content" }}>
+                  <img
+                    src={form.imageUrl}
+                    alt="Preview"
+                    style={{
+                      width: 200,
+                      height: 100,
+                      objectFit: "cover",
+                      borderRadius: 8,
+                    }}
+                  />
+                  <button
+                    onClick={() => setForm((p) => ({ ...p, imageUrl: "" }))}
+                    style={{
+                      position: "absolute",
+                      top: 4,
+                      right: 4,
+                      background: "rgba(0,0,0,0.6)",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "50%",
+                      width: 22,
+                      height: 22,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={handleFile}
+                  />
+                  <button
+                    onClick={() => fileRef.current?.click()}
+                    disabled={uploading}
+                    style={{
+                      padding: "10px 20px",
+                      borderRadius: 8,
+                      border: "1px dashed hsl(var(--border))",
+                      background: "hsl(var(--card))",
+                      cursor: uploading ? "not-allowed" : "pointer",
+                      fontSize: 13,
+                      color: "hsl(var(--muted-foreground))",
+                      fontFamily: "var(--font-body)",
+                    }}
+                  >
+                    {uploading
+                      ? `Uploading… ${uploadProgress}%`
+                      : "📁 Upload image (max 5MB)"}
+                  </button>
+                  {uploading && (
+                    <div
+                      style={{
+                        marginTop: 8,
+                        height: 4,
+                        background: "hsl(var(--border))",
+                        borderRadius: 2,
+                        overflow: "hidden",
+                        width: 200,
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${uploadProgress}%`,
+                          background: "hsl(20 100% 50%)",
+                          borderRadius: 2,
+                          transition: "width 0.2s",
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Live preview */}
+            {(form.headline || form.bizName) && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ ...lbl, marginBottom: 8 }}>Dashboard Preview</div>
+                <AdPreview ad={form} />
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <Btn
+                variant="primary"
+                onClick={() => save("published")}
+                disabled={uploading}
+              >
+                🚀 Publish
+              </Btn>
+              <Btn
+                variant="subtle"
+                onClick={() => save("draft")}
+                disabled={uploading}
+              >
+                💾 Save Draft
+              </Btn>
+              <Btn variant="ghost" onClick={cancel}>
+                Cancel
+              </Btn>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Ads list */}
+      {loading ? (
+        <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+          Loading…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+          No ads found.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtered.map((ad) => {
+            const status = adStatus(ad);
+            const sc = STATUS_STYLE[status] ?? STATUS_STYLE.draft;
+            return (
+              <div
+                key={ad.id}
+                style={{
+                  background: "hsl(var(--secondary))",
+                  border: "1px solid hsl(var(--border))",
+                  borderLeft: `3px solid ${sc.color}`,
+                  borderRadius: 10,
+                  padding: "14px 16px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    flexWrap: "wrap",
+                    gap: 10,
+                    marginBottom: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    {ad.imageUrl && (
+                      <img
+                        src={ad.imageUrl}
+                        alt=""
+                        style={{
+                          width: 52,
+                          height: 40,
+                          objectFit: "cover",
+                          borderRadius: 6,
+                          flexShrink: 0,
+                        }}
+                      />
+                    )}
+                    <div>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          fontSize: 14,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {ad.bizName}
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: 20,
+                            background: sc.bg,
+                            color: sc.color,
+                            textTransform: "capitalize",
+                          }}
+                        >
+                          {status}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          marginTop: 3,
+                          color: "hsl(var(--foreground))",
+                        }}
+                      >
+                        {ad.headline}
+                        {ad.tagline && (
+                          <span
+                            style={{
+                              color: "hsl(var(--muted-foreground))",
+                              marginLeft: 6,
+                            }}
+                          >
+                            — {ad.tagline}
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "hsl(var(--muted-foreground))",
+                          marginTop: 4,
+                        }}
+                      >
+                        {ad.startDate && `From ${ad.startDate}`}
+                        {ad.startDate && ad.expiryDate && " · "}
+                        {ad.expiryDate && `Expires ${ad.expiryDate}`}
+                        {isExpired(ad) && (
+                          <span
+                            style={{
+                              color: "hsl(0 84% 51%)",
+                              marginLeft: 6,
+                              fontWeight: 700,
+                            }}
+                          >
+                            ✕ Expired
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {!isExpired(ad) && (
+                      <Btn
+                        variant={ad.status === "published" ? "subtle" : "green"}
+                        size="sm"
+                        onClick={() => togglePublish(ad)}
+                      >
+                        {ad.status === "published" ? "⏸ Pause" : "🚀 Publish"}
+                      </Btn>
+                    )}
+                    <Btn
+                      variant="subtle"
+                      size="sm"
+                      onClick={() => startEdit(ad)}
+                    >
+                      ✏️ Edit
+                    </Btn>
+                    <Btn variant="danger" size="sm" onClick={() => del(ad.id)}>
+                      Delete
+                    </Btn>
+                  </div>
+                </div>
+
+                {/* Mini dashboard preview */}
+                <AdPreview ad={ad} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // REPLACE everything from the TABS constant to the end of the file with this.
 // All manager components above (MembersManager, ClassesManager, etc.) are
@@ -13213,6 +14019,7 @@ const NAV_GROUPS = [
       { id: "news", icon: "ti-news", label: "News & Events" },
       { id: "gallery", icon: "ti-brand-instagram", label: "Social Media" },
       { id: "banners", icon: "ti-ad", label: "Ad Banners" },
+      { id: "dashboard_ads", icon: "ti-speakerphone", label: "Dashboard Ads" },
     ],
   },
   {
@@ -13999,6 +14806,26 @@ export function Admin() {
               alignItems: "center",
             }}
           >
+            {isMobile && tab !== "dashboard" && (
+              <button
+                onClick={() => setTab("dashboard")}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "hsl(var(--foreground))",
+                  fontSize: 20,
+                  padding: 0,
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                <i
+                  className="ti ti-arrow-left"
+                  aria-label="Back to dashboard"
+                />
+              </button>
+            )}
             {rewardsCount > 0 && (
               <button
                 onClick={() => setTab("rewards")}
@@ -14075,6 +14902,7 @@ export function Admin() {
               {tab === "news" && <NewsManager toast={toast} />}
               {tab === "gallery" && <SocialMediaManager toast={toast} />}
               {tab === "banners" && <BannersManager toast={toast} />}
+              {tab === "dashboard_ads" && <AdsManager toast={toast} />}
               {tab === "community" && <CommunityManager toast={toast} />}
               {tab === "usage" && <MonthlyUsageReport toast={toast} />}
               {tab === "ads" && <AdEnquiriesManager toast={toast} />}
