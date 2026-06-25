@@ -26,9 +26,7 @@ import {
   getDayName,
 } from "@/pages/ClassBooking";
 
-
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
-
 
 const DAYS = [
   "Monday",
@@ -15068,9 +15066,18 @@ function SidebarItem({ item, active, onClick, badge }: any) {
 
 // ── Main Admin export ─────────────────────────────────────────────────────────
 export function Admin() {
-  const [authed, setAuthed] = useState(
-    () => sessionStorage.getItem("mk2admin") === "true",
-  );
+  const SESSION_DURATION = 4 * 60 * 60 * 1000; // 4 hours
+
+  const [authed, setAuthed] = useState(() => {
+    const isAuthed = sessionStorage.getItem("mk2admin") === "true";
+    const loginTime = parseInt(sessionStorage.getItem("mk2admin_time") ?? "0");
+    if (isAuthed && Date.now() - loginTime > SESSION_DURATION) {
+      sessionStorage.removeItem("mk2admin");
+      sessionStorage.removeItem("mk2admin_time");
+      return false;
+    }
+    return isAuthed;
+  });
   const [tab, setTab] = useState("dashboard");
   const [toastQ, setToastQ] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -15109,6 +15116,7 @@ export function Admin() {
 
   const login = () => {
     sessionStorage.setItem("mk2admin", "true");
+    sessionStorage.setItem("mk2admin_time", Date.now().toString());
     setAuthed(true);
   };
   const logout = () => {
@@ -15211,6 +15219,17 @@ export function Admin() {
           borderTop: "1px solid hsl(var(--border))",
         }}
       >
+        <div
+          style={{
+            padding: "6px 12px 2px",
+            fontSize: 10,
+            color: "hsl(var(--muted-foreground))",
+            opacity: 0.5,
+            fontFamily: "var(--font-body)",
+          }}
+        >
+          v1.0.0 · MK2R Admin
+        </div>
         <SidebarItem
           item={{ id: "signout", icon: "ti-logout", label: "Sign out" }}
           active={false}

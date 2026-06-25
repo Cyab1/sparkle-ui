@@ -163,7 +163,13 @@ export function Account({ setPage }: { setPage: (p: string) => void }) {
         >
           {mc.label}
         </span>
-        <Btn variant="danger" size="sm" onClick={logout}>
+        <Btn
+          variant="danger"
+          size="sm"
+          onClick={() => {
+            if (window.confirm("Are you sure you want to sign out?")) logout();
+          }}
+        >
           Sign Out
         </Btn>
       </div>
