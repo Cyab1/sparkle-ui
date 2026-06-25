@@ -19,9 +19,11 @@ out
 # Environment variables (CRITICAL)
 .env
 .env.local
-.env*.local
 .env.production
 .env.development
+functions/.env
+functions/env.production
+functions/.env.production
 
 # Firebase (CRITICAL – prevents exposing config/secrets)
 .runtimeconfig.json
