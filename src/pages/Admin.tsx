@@ -19,13 +19,16 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
 import { QRScanner } from "@/components/shared/QRScanner";
+import { DeletionRequestManager } from "@/components/DeletionRequests";
 import {
   buildBookingKey,
   formatDateKey,
   getDayName,
 } from "@/pages/ClassBooking";
 
-const ADMIN_PASSWORD = "MK2R@2026";
+
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
+
 
 const DAYS = [
   "Monday",
@@ -6563,6 +6566,485 @@ function MembersManager({ toast }: any) {
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Delete confirmation modal ─────────────────────────────────────────────
+// Requires typing the member's name to confirm — too destructive for a
+// plain window.confirm(). Only cleans up Realtime Database records; the
+// Firebase Auth login itself is NOT deleted here (see warning in UI) —
+// that requires a Cloud Function using the Admin SDK
+// (admin.auth().deleteUser(uid)), which cannot run from client code.
+function DeleteAccountModal({
+  member,
+  onClose,
+  onDeleted,
+  toast,
+}: {
+  member: any;
+  onClose: () => void;
+  onDeleted: (uid: string) => void;
+  toast: any;
+}) {
+  const [confirmText, setConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const canDelete = confirmText.trim() === member.name;
+
+  const handleDelete = async () => {
+    if (!canDelete) return;
+    setDeleting(true);
+    try {
+      // 1. Remove the member's profile record.
+      await remove(ref(db, `mk2_users/${member.uid}`));
+
+      // 2. Remove their notification inbox.
+      await remove(ref(db, `users/${member.uid}/notifications`));
+
+      // 3. Scan class_bookings/* and class_waitlist/* and remove any entry
+      //    keyed by this uid. These are nested under booking keys we don't
+      //    know in advance, so we have to read the parent node and filter.
+      const [bookingsSnap, waitlistSnap] = await Promise.all([
+        get(ref(db, "class_bookings")),
+        get(ref(db, "class_waitlist")),
+      ]);
+
+      const cleanupPromises: Promise<any>[] = [];
+
+      if (bookingsSnap.exists()) {
+        Object.entries(bookingsSnap.val()).forEach(
+          ([bookingKey, entries]: [string, any]) => {
+            if (entries && entries[member.uid] !== undefined) {
+              cleanupPromises.push(
+                remove(ref(db, `class_bookings/${bookingKey}/${member.uid}`)),
+              );
+            }
+          },
+        );
+      }
+
+      if (waitlistSnap.exists()) {
+        Object.entries(waitlistSnap.val()).forEach(
+          ([bookingKey, entries]: [string, any]) => {
+            if (entries && entries[member.uid] !== undefined) {
+              cleanupPromises.push(
+                remove(ref(db, `class_waitlist/${bookingKey}/${member.uid}`)),
+              );
+            }
+          },
+        );
+      }
+
+      await Promise.all(cleanupPromises);
+
+      toast(
+        `${member.name}'s data deleted ✓ — their login still exists until removed via Cloud Function`,
+        "info",
+      );
+      onDeleted(member.uid);
+      onClose();
+    } catch {
+      toast("Delete failed — try again", "error");
+    }
+    setDeleting(false);
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.7)",
+        zIndex: 200,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "hsl(var(--card))",
+          border: "1px solid hsl(0 84% 51% / 0.4)",
+          borderRadius: 16,
+          padding: 28,
+          width: "100%",
+          maxWidth: 460,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 20,
+            color: "hsl(0 84% 51%)",
+            marginBottom: 4,
+          }}
+        >
+          ⚠ Delete Account Data
+        </div>
+        <div
+          style={{
+            fontSize: 13,
+            color: "hsl(var(--muted-foreground))",
+            marginBottom: 16,
+            lineHeight: 1.6,
+          }}
+        >
+          This permanently removes <strong>{member.name}</strong>'s profile,
+          credits, points, check-ins, rewards, bookings and notifications from
+          the database. This cannot be undone.
+        </div>
+
+        <div
+          style={{
+            marginBottom: 16,
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "hsl(38 92% 44% / 0.08)",
+            border: "1px solid hsl(38 92% 44% / 0.25)",
+            fontSize: 12,
+            color: "hsl(38 92% 44%)",
+            lineHeight: 1.6,
+          }}
+        >
+          ⚠ <strong>Their login is NOT deleted by this action.</strong> This
+          only removes database records. To fully delete the account (Firebase
+          Auth login), a developer needs to run a Cloud Function — this can't be
+          done from the admin panel directly.
+        </div>
+
+        <label style={lbl}>Type "{member.name}" to confirm</label>
+        <input
+          style={{ ...inp, marginBottom: 18 }}
+          placeholder={member.name}
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          autoFocus
+        />
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn
+            variant="danger"
+            onClick={handleDelete}
+            disabled={!canDelete || deleting}
+          >
+            {deleting ? "Deleting…" : "🗑 Delete Account Data"}
+          </Btn>
+          <Btn variant="subtle" onClick={onClose} disabled={deleting}>
+            Cancel
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── App Members Manager (app subscription tier: basic/silver/gold) ───────────
+// Distinct from MembersManager — that page manages `membership`, the gym
+// CONTRACT tier (u18 / hybrid_* / unlimited_*) used for class booking rules.
+// This page manages `appMembership`, the APP SUBSCRIPTION tier (basic /
+// silver / gold) used for push notifications, community chat, AI credits,
+// and PayFast billing — see Membership.tsx.
+function AppMembersManager({ toast }: any) {
+  const [members, setMembers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState<string | null>(null);
+  const [migrated, setMigrated] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+
+  const APP_TIER_CONFIG: Record<string, { color: string; label: string }> = {
+    basic: { color: "hsl(var(--muted-foreground))", label: "Basic (Free)" },
+    silver: { color: "#cbd5e1", label: "Silver" },
+    gold: { color: "hsl(38 92% 50%)", label: "Gold" },
+  };
+  const getTierCfg = (tier: string) =>
+    APP_TIER_CONFIG[tier] ?? APP_TIER_CONFIG.basic;
+
+  const loadMembers = async () => {
+    setLoading(true);
+    try {
+      const snap = await get(ref(db, "mk2_users"));
+      if (!snap.exists()) {
+        setMembers([]);
+        setLoading(false);
+        return;
+      }
+
+      const raw = snap.val();
+      const LEGACY_APP_TIERS = ["basic", "silver", "gold"];
+      const migrations: Array<{ uid: string; value: string }> = [];
+
+      const list = Object.entries(raw).map(([uid, val]: [string, any]) => {
+        let appMembership = val.appMembership;
+        if (!appMembership && LEGACY_APP_TIERS.includes(val.membership)) {
+          appMembership = val.membership;
+          migrations.push({ uid, value: appMembership });
+        }
+        return {
+          uid,
+          name: val.name || "Unnamed",
+          email: val.email || "",
+          appMembership: appMembership ?? "basic",
+          aiTotal: val.aiQuota?.total ?? 0,
+          aiRemaining: val.aiQuota?.remaining ?? 0,
+          createdAt: val.createdAt ?? 0,
+        };
+      });
+
+      if (migrations.length > 0 && !migrated) {
+        await Promise.all(
+          migrations.map((m) =>
+            set(ref(db, `mk2_users/${m.uid}/appMembership`), m.value),
+          ),
+        );
+        toast(
+          `Migrated ${migrations.length} member${migrations.length !== 1 ? "s" : ""} to the new App Membership field ✓`,
+          "info",
+        );
+        setMigrated(true);
+      }
+
+      setMembers(list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)));
+    } catch {
+      toast("Failed to load app members", "error");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadMembers();
+  }, []);
+
+  const setTier = async (uid: string, tier: string) => {
+    setSaving(uid);
+    try {
+      await set(ref(db, `mk2_users/${uid}/appMembership`), tier);
+      setMembers((prev) =>
+        prev.map((m) => (m.uid === uid ? { ...m, appMembership: tier } : m)),
+      );
+      toast(`App tier updated to ${getTierCfg(tier).label} ✓`, "success");
+    } catch {
+      toast("Update failed", "error");
+    }
+    setSaving(null);
+  };
+
+  const handleDeleted = (uid: string) => {
+    setMembers((prev) => prev.filter((m) => m.uid !== uid));
+  };
+
+  const filtered = members.filter(
+    (m) =>
+      m.name?.toLowerCase().includes(search.toLowerCase()) ||
+      m.email?.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const groupCounts = {
+    basic: members.filter((m) => m.appMembership === "basic").length,
+    silver: members.filter((m) => m.appMembership === "silver").length,
+    gold: members.filter((m) => m.appMembership === "gold").length,
+  };
+
+  return (
+    <div>
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+          flexWrap: "wrap",
+          gap: 10,
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 15 }}>
+          📱 App Members ({members.length})
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            style={{ ...inp, width: 200 }}
+            placeholder="Search name or email…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <Btn variant="subtle" size="sm" onClick={loadMembers}>
+            ↻ Refresh
+          </Btn>
+        </div>
+      </div>
+
+      <div
+        style={{
+          fontSize: 12,
+          color: "hsl(var(--muted-foreground))",
+          marginBottom: 16,
+        }}
+      >
+        App subscription tier (Basic / Silver / Gold) — controls push
+        notifications, community chat, AI credits and PayFast billing. This is
+        separate from the member's gym contract tier under{" "}
+        <strong style={{ color: "hsl(20 100% 50%)" }}>Membership Tiers</strong>.
+      </div>
+
+      {/* Group summary pills */}
+      <div
+        style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}
+      >
+        <div
+          style={{
+            background: "hsl(var(--secondary))",
+            border: "1px solid hsl(var(--border))",
+            borderRadius: 8,
+            padding: "6px 14px",
+            fontSize: 12,
+            fontWeight: 700,
+            color: "hsl(var(--muted-foreground))",
+          }}
+        >
+          Total: {members.length}
+        </div>
+        {(["basic", "silver", "gold"] as const).map((tierId) => {
+          const cfg = getTierCfg(tierId);
+          return (
+            <div
+              key={tierId}
+              style={{
+                background: `${cfg.color}15`,
+                border: `1px solid ${cfg.color}40`,
+                borderRadius: 8,
+                padding: "6px 14px",
+                fontSize: 12,
+                fontWeight: 700,
+                color: cfg.color,
+              }}
+            >
+              {cfg.label}: {groupCounts[tierId]}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Member list */}
+      {loading ? (
+        <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+          Loading members…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ color: "hsl(var(--muted-foreground))", fontSize: 13 }}>
+          No members found.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {filtered.map((m) => {
+            const cfg = getTierCfg(m.appMembership);
+            return (
+              <div
+                key={m.uid}
+                style={{
+                  background: "hsl(var(--secondary))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: 10,
+                  padding: "12px 16px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  borderLeft: `3px solid ${cfg.color}`,
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      fontWeight: 700,
+                      fontSize: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    {m.name || "Unnamed"}
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: "2px 8px",
+                        borderRadius: 20,
+                        background: `${cfg.color}20`,
+                        color: cfg.color,
+                      }}
+                    >
+                      {cfg.label}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "hsl(var(--muted-foreground))",
+                      marginTop: 2,
+                    }}
+                  >
+                    {m.email}
+                    {m.appMembership !== "basic" &&
+                      ` · 🤖 ${m.aiRemaining}/${m.aiTotal} AI credits`}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <select
+                    value={m.appMembership ?? "basic"}
+                    onChange={(e) => setTier(m.uid, e.target.value)}
+                    disabled={saving === m.uid}
+                    style={{
+                      ...inp,
+                      width: "auto",
+                      padding: "6px 10px",
+                      fontSize: 12,
+                      borderColor: cfg.color,
+                      color: cfg.color,
+                    }}
+                  >
+                    <option value="basic">Basic (Free)</option>
+                    <option value="silver">Silver</option>
+                    <option value="gold">Gold</option>
+                  </select>
+                  {saving === m.uid && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: "hsl(var(--muted-foreground))",
+                      }}
+                    >
+                      Saving…
+                    </span>
+                  )}
+                  <Btn
+                    variant="danger"
+                    size="sm"
+                    onClick={() => setDeleteTarget(m)}
+                  >
+                    🗑 Delete
+                  </Btn>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <DeleteAccountModal
+          member={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={handleDeleted}
+          toast={toast}
+        />
       )}
     </div>
   );
@@ -13996,7 +14478,9 @@ const NAV_GROUPS = [
   {
     label: "Members",
     items: [
-      { id: "members", icon: "ti-users", label: "App Users" },
+      { id: "members", icon: "ti-users", label: "Membership Tiers" },
+      { id: "app_members", icon: "ti-app-window", label: "App Members" },
+      { id: "deletions", icon: "ti-trash", label: "Deletion Requests" },
       { id: "checkin", icon: "ti-circle-check", label: "Check-In" },
       { id: "rewards", icon: "ti-gift", label: "Rewards" },
       { id: "usage", icon: "ti-chart-bar", label: "Monthly Usage" },
@@ -14553,7 +15037,16 @@ function SidebarItem({ item, active, onClick, badge }: any) {
         style={{ fontSize: 16, width: 18, textAlign: "center", flexShrink: 0 }}
         aria-hidden="true"
       />
-      <span style={{ flex: 1 }}>{item.label}</span>
+      <span
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          whiteSpace: "nowrap",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {item.label}
+      </span>
       {badge > 0 && (
         <span
           style={{
@@ -14688,6 +15181,9 @@ export function Admin() {
                 color: "hsl(var(--muted-foreground))",
                 padding: "10px 12px 4px",
                 opacity: 0.6,
+                overflow: "hidden",
+                whiteSpace: "nowrap",
+                textOverflow: "ellipsis",
               }}
             >
               {group.label}
@@ -14745,7 +15241,7 @@ export function Admin() {
           onClick={() => setSidebarOpen(false)}
         >
           <div
-            style={{ width: 220, height: "100%", zIndex: 201 }}
+            style={{ width: "min(220px, 75vw)", height: "100%", zIndex: 201 }}
             onClick={(e) => e.stopPropagation()}
           >
             <Sidebar />
@@ -14789,12 +15285,13 @@ export function Admin() {
                 cursor: "pointer",
                 color: "hsl(var(--foreground))",
                 fontSize: 20,
-                padding: 0,
+                padding: 4,
                 display: "flex",
                 alignItems: "center",
               }}
+              aria-label="Open menu"
             >
-              <i className="ti ti-menu-2" aria-label="Open menu" />
+              <i className="ti ti-menu-2" aria-hidden="true" />
             </button>
           )}
           <div style={{ fontWeight: 700, fontSize: 15 }}>{activeLabel}</div>
@@ -14815,18 +15312,17 @@ export function Admin() {
                   cursor: "pointer",
                   color: "hsl(var(--foreground))",
                   fontSize: 20,
-                  padding: 0,
+                  padding: 4,
                   display: "flex",
                   alignItems: "center",
                 }}
+                aria-label="Back to dashboard"
               >
-                <i
-                  className="ti ti-arrow-left"
-                  aria-label="Back to dashboard"
-                />
+                <i className="ti ti-arrow-left" aria-hidden="true" />
               </button>
             )}
-            {rewardsCount > 0 && (
+            {/* Hide verbose pills on mobile — badges on sidebar items are enough */}
+            {!isMobile && rewardsCount > 0 && (
               <button
                 onClick={() => setTab("rewards")}
                 style={{
@@ -14847,7 +15343,7 @@ export function Admin() {
                 🎁 {rewardsCount} reward{rewardsCount !== 1 ? "s" : ""} ready
               </button>
             )}
-            {enquiriesCount > 0 && (
+            {!isMobile && enquiriesCount > 0 && (
               <button
                 onClick={() => setTab("ads")}
                 style={{
@@ -14892,6 +15388,8 @@ export function Admin() {
                 <Dashboard onNavigate={setTab} toast={toast} />
               )}
               {tab === "members" && <MembersManager toast={toast} />}
+              {tab === "deletions" && <DeletionRequestManager toast={toast} />}
+              {tab === "app_members" && <AppMembersManager toast={toast} />}
               {tab === "checkin" && <ManualCheckInManager toast={toast} />}
               {tab === "rewards" && <RewardsManager toast={toast} />}
               {tab === "credits" && <PackagesManager toast={toast} />}
