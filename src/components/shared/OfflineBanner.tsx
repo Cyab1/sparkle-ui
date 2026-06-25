@@ -1,50 +1,58 @@
 import { useState, useEffect } from "react";
-import { ref, onValue } from "firebase/database";
-import { db } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
 
 export function OfflineBanner() {
-  const [online, setOnline] = useState(navigator.onLine);
-  const [firebaseOk, setFirebaseOk] = useState(true);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [showBack, setShowBack] = useState(false);
 
   useEffect(() => {
-    const goOnline = () => setOnline(true);
-    const goOffline = () => setOnline(false);
-    window.addEventListener("online", goOnline);
+    const goOffline = () => {
+      setIsOnline(false);
+      setShowBack(false);
+    };
+    const goOnline = () => {
+      setIsOnline(true);
+      setShowBack(true);
+      setTimeout(() => setShowBack(false), 3000);
+    };
+
     window.addEventListener("offline", goOffline);
-
-    // Firebase .info/connected — built-in Firebase connection state
-    const connRef = ref(db, ".info/connected");
-    const unsub = onValue(connRef, (snap) => {
-      setFirebaseOk(snap.val() === true);
-    });
-
+    window.addEventListener("online", goOnline);
     return () => {
-      window.removeEventListener("online", goOnline);
       window.removeEventListener("offline", goOffline);
-      unsub();
+      window.removeEventListener("online", goOnline);
     };
   }, []);
 
-  const show = !online || !firebaseOk;
-  const msg = !online
-    ? "📵 No internet connection — some features may not work"
-    : "⏳ Connecting to server — please wait…";
-
   return (
     <AnimatePresence>
-      {show && (
+      {(!isOnline || showBack) && (
         <motion.div
-          initial={{ y: -48, opacity: 0 }}
+          initial={{ y: -60, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          exit={{ y: -48, opacity: 0 }}
-          className="fixed top-0 left-0 right-0 z-[999] flex items-center justify-center py-2.5 px-4 text-xs font-bold font-body"
+          exit={{ y: -60, opacity: 0 }}
           style={{
-            background: !online ? "hsl(0 84% 45%)" : "hsl(38 92% 44%)",
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            padding: "10px 16px",
+            background: isOnline ? "hsl(142 72% 37%)" : "hsl(0 84% 51%)",
             color: "#fff",
+            fontSize: 13,
+            fontWeight: 700,
+            fontFamily: "var(--font-body)",
+            textAlign: "center",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
           }}
         >
-          {msg}
+          {isOnline
+            ? "✅ You're back online!"
+            : "⚠ No internet connection — some features may not work"}
         </motion.div>
       )}
     </AnimatePresence>

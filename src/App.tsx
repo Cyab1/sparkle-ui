@@ -29,6 +29,7 @@ import { Privacy } from "@/pages/Privacy";
 import { Advertise } from "@/pages/Advertise";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { OfflineBanner } from "@/components/shared/OfflineBanner";
+import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { motion } from "framer-motion";
 import { BookingSuccess } from "@/pages/BookingSuccess";
 import { BookingCancel } from "@/pages/BookingCancel";
@@ -80,21 +81,36 @@ function AppContent() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.4 }}
           className="text-center"
         >
-          <div className="font-display text-[32px] text-primary tracking-[0.15em]">
-            MK2 RIVERS
-          </div>
+          <motion.div
+            animate={{ opacity: [1, 0.4, 1] }}
+            transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+            className="font-display text-[32px] text-primary tracking-[0.15em]"
+          >
+            MK2 RIVERS FITNESS
+          </motion.div>
           <div className="text-muted-foreground text-xs mt-1.5 font-body">
-            Connecting…
+            Loading your experience…
           </div>
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: "100%" }}
+            transition={{ duration: 2, ease: "easeInOut" }}
+            style={{
+              height: 2,
+              background: "hsl(20 100% 50%)",
+              borderRadius: 2,
+              marginTop: 16,
+            }}
+          />
         </motion.div>
       </div>
     );
   }
-
   if (!user) {
     return (
       <>
@@ -250,10 +266,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
-
-
