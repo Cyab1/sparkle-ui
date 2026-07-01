@@ -11,8 +11,9 @@ function db() {
   return admin.database();
 }
 
-const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
+// ── Updated OpenAI config ──────────────────────────────────────
+const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_MODEL = "gpt-4o-mini";
 
 // ── Updated quota config — matches current membership tier names ──────────────
 const QUOTA: Record<string, number> = {
@@ -73,37 +74,36 @@ async function checkAndIncrementQuota(uid: string): Promise<number> {
   return Math.max(0, total - newUsed);
 }
 
-async function callAnthropic(
+// ── Updated OpenAI caller ──────────────────────────────────────
+async function callOpenAI(
   apiKey: string,
   systemPrompt: string,
   messages: any[],
 ): Promise<string> {
-  const response = await fetch(ANTHROPIC_API_URL, {
+  const response = await fetch(OPENAI_API_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: ANTHROPIC_MODEL,
+      model: OPENAI_MODEL,
       max_tokens: 1500,
-      system: systemPrompt,
-      messages,
+      messages: [{ role: "system", content: systemPrompt }, ...messages],
     }),
   });
 
   if (!response.ok) {
     const err = await response.text();
-    console.error("Anthropic API error:", response.status, err);
+    console.error("OpenAI API error:", response.status, err);
     throw new functions.https.HttpsError(
       "internal",
-      `Anthropic API error: ${response.status}`,
+      `OpenAI API error: ${response.status}`,
     );
   }
 
   const data = await response.json();
-  const text = data.content?.find((b: any) => b.type === "text")?.text ?? "";
+  const text = data.choices?.[0]?.message?.content ?? "";
 
   if (!text) {
     throw new functions.https.HttpsError("internal", "EMPTY_RESPONSE");
@@ -115,7 +115,7 @@ async function callAnthropic(
 export const aiChat = onCall(
   {
     region: "europe-west1",
-    secrets: ["ANTHROPIC_API_KEY"],
+    secrets: ["OPENAI_API_KEY"],
     timeoutSeconds: 120,
     memory: "512MiB",
   },
@@ -137,7 +137,7 @@ export const aiChat = onCall(
 
     const quotaRemaining = await checkAndIncrementQuota(uid);
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new functions.https.HttpsError(
         "internal",
@@ -149,6 +149,7 @@ export const aiChat = onCall(
       systemPrompt ||
       "You are a helpful fitness assistant at MK2 Rivers Fitness, South Africa.";
 
+    // ── Updated InBody extraction (OpenAI format, no PDF) ──
     if (mode === "inbody_extract") {
       if (!fileData || !mediaType) {
         throw new functions.https.HttpsError(
@@ -157,36 +158,32 @@ export const aiChat = onCall(
         );
       }
 
-      const contentBlock = isPDF
-        ? {
-            type: "document",
-            source: {
-              type: "base64",
-              media_type: "application/pdf",
-              data: fileData,
-            },
-          }
-        : {
-            type: "image",
-            source: { type: "base64", media_type: mediaType, data: fileData },
-          };
+      if (isPDF) {
+        throw new functions.https.HttpsError(
+          "invalid-argument",
+          "PDF extraction is not supported with the current AI provider — please upload an image instead.",
+        );
+      }
 
       const messages = [
         {
           role: "user",
           content: [
-            contentBlock,
             {
               type: "text",
               text:
                 prompt ||
                 `Extract InBody values as JSON with keys: weight, bodyFat, muscleMass, fatMass, visceralFat, totalBodyWater. Respond ONLY with the JSON object.`,
             },
+            {
+              type: "image_url",
+              image_url: { url: `data:${mediaType};base64,${fileData}` },
+            },
           ],
         },
       ];
 
-      const response = await callAnthropic(apiKey, sysPrompt, messages);
+      const response = await callOpenAI(apiKey, sysPrompt, messages);
       return { response, quotaRemaining };
     }
 
@@ -198,7 +195,7 @@ export const aiChat = onCall(
     }
 
     const messages = [{ role: "user", content: prompt }];
-    const response = await callAnthropic(apiKey, sysPrompt, messages);
+    const response = await callOpenAI(apiKey, sysPrompt, messages);
     return { response, quotaRemaining };
   },
 );
@@ -877,33 +874,33 @@ export const sendPushBroadcast = onCall(
 // import { onSchedule } from "firebase-functions/v2/scheduler";
 // import * as admin from "firebase-admin";
 
-// // ✅ Added: re-export additional PayFast handlers from separate module
 // export { payfastWebhook, releaseStalePendingBookings } from "./payfastWebhook";
 
 // admin.initializeApp();
 
-// // ── Lazy db — NEVER call admin.database() at module level ────────────────────
-// // Cloud Run health checks load the module before env vars are set.
-// // Calling admin.database() at the top level crashes the health check.
-// // Always call db() inside a function body instead.
 // function db() {
 //   return admin.database();
 // }
 
-// // ── Anthropic config ──────────────────────────────────────────────────────────
 // const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 // const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
 
-// // ── Quota config ──────────────────────────────────────────────────────────────
+// // ── Updated quota config — matches current membership tier names ──────────────
 // const QUOTA: Record<string, number> = {
+//   // Current tiers
+//   unlimited_12m: 100,
+//   unlimited_6m: 100,
+//   unlimited_m2m: 100,
+//   hybrid_12m: 20,
+//   hybrid_6m: 20,
+//   hybrid_m2m: 20,
+//   u18: 20,
+//   // Legacy fallbacks
 //   gold: 100,
 //   silver: 20,
 //   basic: 0,
 // };
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  HELPER: Check + increment AI quota for a user
-// // ─────────────────────────────────────────────────────────────────────────────
 // async function checkAndIncrementQuota(uid: string): Promise<number> {
 //   const userSnap = await db().ref(`mk2_users/${uid}`).once("value");
 //   const user = userSnap.val();
@@ -911,12 +908,17 @@ export const sendPushBroadcast = onCall(
 //     throw new functions.https.HttpsError("not-found", "User not found");
 
 //   const membership = user.membership ?? "basic";
-//   const isActive = membership === "silver" || membership === "gold";
-//   if (!isActive) {
+
+//   // Block only basic (non-member / credits-only)
+//   if (membership === "basic") {
 //     throw new functions.https.HttpsError("permission-denied", "JOIN_GYM");
 //   }
 
 //   const total = QUOTA[membership] ?? 0;
+//   if (total === 0) {
+//     throw new functions.https.HttpsError("permission-denied", "JOIN_GYM");
+//   }
+
 //   const now = new Date();
 //   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
@@ -942,9 +944,6 @@ export const sendPushBroadcast = onCall(
 //   return Math.max(0, total - newUsed);
 // }
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  HELPER: Call Anthropic API
-// // ─────────────────────────────────────────────────────────────────────────────
 // async function callAnthropic(
 //   apiKey: string,
 //   systemPrompt: string,
@@ -984,9 +983,6 @@ export const sendPushBroadcast = onCall(
 //   return text;
 // }
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  aiChat — unified AI callable
-// // ─────────────────────────────────────────────────────────────────────────────
 // export const aiChat = onCall(
 //   {
 //     region: "europe-west1",
@@ -1078,7 +1074,6 @@ export const sendPushBroadcast = onCall(
 //   },
 // );
 
-// // ── Helper: Write a notification record for a user ───────────────────────────
 // async function writeNotification(
 //   uid: string,
 //   title: string,
@@ -1086,17 +1081,18 @@ export const sendPushBroadcast = onCall(
 //   link?: string,
 // ) {
 //   await db()
-//     .ref(`mk2_users/${uid}/notifications`)
+//     .ref(`users/${uid}/notifications`)
 //     .push({
 //       title,
+//       body,
 //       message: body,
 //       timestamp: Date.now(),
 //       read: false,
+//       createdAt: Date.now(),
 //       ...(link ? { link } : {}),
 //     });
 // }
 
-// // ── Helper: Write notifications for multiple users ────────────────────────────
 // async function writeNotificationForAll(
 //   uidTokenPairs: { uid: string }[],
 //   title: string,
@@ -1109,13 +1105,11 @@ export const sendPushBroadcast = onCall(
 //   await Promise.all(writes);
 // }
 
-// // ── Helper: Get FCM token for a single user ───────────────────────────────────
 // async function getUserToken(uid: string): Promise<string | null> {
 //   const snap = await db().ref(`mk2_users/${uid}/fcmToken`).once("value");
 //   return snap.val() as string | null;
 // }
 
-// // ── Helper: Get user notification preferences ─────────────────────────────────
 // async function getUserPrefs(uid: string): Promise<Record<string, boolean>> {
 //   const snap = await db()
 //     .ref(`mk2_users/${uid}/notificationPrefs`)
@@ -1123,7 +1117,6 @@ export const sendPushBroadcast = onCall(
 //   return snap.val() || {};
 // }
 
-// // ── Helper: Send push to a list of tokens ────────────────────────────────────
 // async function sendToTokens(tokens: string[], title: string, body: string) {
 //   if (tokens.length === 0) return;
 
@@ -1163,7 +1156,6 @@ export const sendPushBroadcast = onCall(
 //   await Promise.all(cleanupPromises);
 // }
 
-// // ── Helper: Send push + in-app to a single user ───────────────────────────────
 // async function sendToUser(
 //   uid: string,
 //   title: string,
@@ -1176,7 +1168,6 @@ export const sendPushBroadcast = onCall(
 //   console.log(`Notification sent + written for ${uid}`);
 // }
 
-// // ── Helper: Send push + in-app to all users (with preference filter) ──────────
 // async function sendToAllUsers(
 //   title: string,
 //   body: string,
@@ -1202,9 +1193,6 @@ export const sendPushBroadcast = onCall(
 //   await sendToTokens(tokens, title, body);
 // }
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  onClassBookingCreate
-// // ─────────────────────────────────────────────────────────────────────────────
 // export const onClassBookingCreate = functions.database.onValueCreated(
 //   {
 //     ref: "/class_bookings/{classDay}/{userId}",
@@ -1341,9 +1329,6 @@ export const sendPushBroadcast = onCall(
 //   },
 // );
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  checkinReminder
-// // ─────────────────────────────────────────────────────────────────────────────
 // export const checkinReminder = onSchedule(
 //   {
 //     schedule: "0 9 * * 1-6",
@@ -1389,9 +1374,6 @@ export const sendPushBroadcast = onCall(
 //   },
 // );
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  PayFast Webhook (legacy handler — kept for backwards compatibility)
-// // ─────────────────────────────────────────────────────────────────────────────
 // export const payfastNotify = onRequest(
 //   { region: "europe-west1" },
 //   async (req: any, res: any) => {
@@ -1603,9 +1585,6 @@ export const sendPushBroadcast = onCall(
 //   },
 // );
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  Log Personal Record
-// // ─────────────────────────────────────────────────────────────────────────────
 // export const logPR = onCall({ region: "europe-west1" }, async (request) => {
 //   const uid = request.auth?.uid;
 //   if (!uid)
@@ -1653,9 +1632,6 @@ export const sendPushBroadcast = onCall(
 //   return { success: true, key: newRef.key };
 // });
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  sendPushNotification — single member push (called from admin panel)
-// // ─────────────────────────────────────────────────────────────────────────────
 // export const sendPushNotification = onCall(
 //   { region: "europe-west1" },
 //   async (request) => {
@@ -1693,9 +1669,6 @@ export const sendPushBroadcast = onCall(
 //   },
 // );
 
-// // ─────────────────────────────────────────────────────────────────────────────
-// //  sendPushBroadcast — broadcast to all members (called from admin panel)
-// // ─────────────────────────────────────────────────────────────────────────────
 // export const sendPushBroadcast = onCall(
 //   { region: "europe-west1" },
 //   async (request) => {
